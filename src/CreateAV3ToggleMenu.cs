@@ -5,6 +5,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using VRC.SDK3.Avatars.Components;
+using UnityEditor.Animations;
 
 public class CreateAV3ToggleMenu : EditorWindow
 {
@@ -52,6 +53,52 @@ public class CreateAV3ToggleMenu : EditorWindow
         return name;
     }
 
+    private static string GetAssetFolder(Object asset)
+    {
+        string path = AssetDatabase.GetAssetPath(asset);
+        return path.Substring(0, path.LastIndexOf("/"));
+    }
+
+    private string GetAnimationsFolderPath()
+    {
+        var descriptor = FindAvatarDescriptor(Target);
+        var path = GetAssetFolder(descriptor.expressionParameters) + "/Animations";
+        if (AssetDatabase.IsValidFolder(path))
+            return path;
+        path = GetAssetFolder(descriptor.expressionsMenu) + "/Animations";
+        if (AssetDatabase.IsValidFolder(path))
+            return path;
+        return GetAssetFolder(descriptor.baseAnimationLayers[4].animatorController) + "/Animations";
+    }
+
+    private string CanCreateToggle()
+    {
+        var descriptor = FindAvatarDescriptor(Target);
+        if (descriptor == null)
+            return "No Avatar Descriptor Found";
+        if (AssetDatabase.GetAssetPath(descriptor.expressionParameters) == "")
+            return "No Custom Parameters Found";
+        if (AssetDatabase.GetAssetPath(descriptor.expressionsMenu) == "")
+            return "No Custom Menu Found";
+        var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
+        if (AssetDatabase.GetAssetPath(fxLayer) == "")
+            return "No Custom FxLayer Found";
+        if (descriptor.expressionParameters.FindParameter(ToggleName) != null)
+            return "Parameter Exists Already";
+        if (fxLayer.layers.Any(l => l.name == ToggleName))
+            return "Layer Exists Already";
+        if (fxLayer.parameters.Any(p => p.name == ToggleName))
+            return "Layer Parameter Exists Already";
+        var path = GetAnimationsFolderPath();
+        if (AssetDatabase.LoadAssetAtPath<AnimationClip>(path + "/" + ToggleName + "On.anim") != null)
+            return "Toggle On Animation Exists Already";
+        if (AssetDatabase.LoadAssetAtPath<AnimationClip>(path + "/" + ToggleName + "Off.anim") != null)
+            return "Toggle Off Animation Exists Already";
+        if (componentToggles.Values.Count(v => v) == 0)
+            return "No Toggles Selected";
+        return "";
+    }
+
     void OnGUI()
     {
         Target = EditorGUILayout.ObjectField("Target GameObject", Target, typeof(GameObject), true) as GameObject;
@@ -67,6 +114,16 @@ public class CreateAV3ToggleMenu : EditorWindow
         GUILayout.Space(8);
 
         ToggleName = EditorGUILayout.TextField("Toggle Name", ToggleName);
+
+        GUILayout.Space(8);
+
+        string errorMsg = CanCreateToggle();
+        GUI.enabled = errorMsg == "";
+        if (GUILayout.Button("Create" + ((errorMsg == "") ? "" : " (" + errorMsg + ")")))
+        {
+
+        }
+        GUI.enabled = true;
 
         GUILayout.Space(8);
 
