@@ -101,14 +101,20 @@ public class CreateAV3ToggleMenu : EditorWindow
 
     void OnGUI()
     {
-        Target = EditorGUILayout.ObjectField("Target GameObject", Target, typeof(GameObject), true) as GameObject;
+        Target = EditorGUILayout.ObjectField("Target", Target, typeof(GameObject), true) as GameObject;
 
         if (Target == null)
             return;
 
         foreach (var component in Target.GetComponents<Component>())
         {
-            componentToggles[component] = EditorGUILayout.Toggle("" + component.GetType(), componentToggles[component]);
+            componentToggles.TryGetValue(component, out bool toggleValue);
+            var componentName = component.GetType().ToString();
+            if (componentName.LastIndexOf('.') != -1)
+                componentName = componentName.Substring(componentName.LastIndexOf('.') + 1);
+            if (componentName == "Transform")
+                componentName = "GameObject";
+            componentToggles[component] = EditorGUILayout.Toggle(componentName, toggleValue);
         }
 
         GUILayout.Space(8);
@@ -131,6 +137,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         EditorGUILayout.LabelField("Avatar", descriptor?.name);
         if (descriptor == null)
             return;
+        EditorGUILayout.LabelField("AnimationFolder", GetAnimationsFolderPath());
         EditorGUILayout.LabelField("ParamAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionParameters));
         EditorGUILayout.LabelField("MenuAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionsMenu));
         EditorGUILayout.LabelField("FxLayerAssetPath", AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController));
