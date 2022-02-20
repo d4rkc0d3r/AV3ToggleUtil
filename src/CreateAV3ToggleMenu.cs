@@ -46,7 +46,7 @@ public class CreateAV3ToggleMenu : EditorWindow
 
     public VRCExpressionsMenu GetMainMenu()
     {
-        return FindAvatarDescriptor(Target).expressionsMenu;
+        return FindAvatarDescriptor(Target)?.expressionsMenu;
     }
 
     public string GetDefaultToggleName()
