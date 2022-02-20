@@ -5,6 +5,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using VRC.SDK3.Avatars.Components;
+using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 
 public class CreateAV3ToggleMenu : EditorWindow
@@ -35,6 +36,17 @@ public class CreateAV3ToggleMenu : EditorWindow
     {
         get { return toggleName == "" ? GetDefaultToggleName() : toggleName; }
         set { toggleName = (value == GetDefaultToggleName()) ? "" : value; }
+    }
+    private VRCExpressionsMenu targetMenu = null;
+    public VRCExpressionsMenu TargetMenu
+    {
+        get { return targetMenu == null ? GetMainMenu() : targetMenu; }
+        set { targetMenu = (value == GetMainMenu()) ? null : value; }
+    }
+
+    public VRCExpressionsMenu GetMainMenu()
+    {
+        return FindAvatarDescriptor(Target).expressionsMenu;
     }
 
     public string GetDefaultToggleName()
@@ -80,6 +92,8 @@ public class CreateAV3ToggleMenu : EditorWindow
             return "No Custom Parameters Found";
         if (AssetDatabase.GetAssetPath(descriptor.expressionsMenu) == "")
             return "No Custom Menu Found";
+        if (TargetMenu.controls.Count >= 8)
+            return "Target Menu Is Full Already";
         var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
         if (AssetDatabase.GetAssetPath(fxLayer) == "")
             return "No Custom FxLayer Found";
@@ -124,6 +138,10 @@ public class CreateAV3ToggleMenu : EditorWindow
         GUILayout.Space(8);
 
         var descriptor = FindAvatarDescriptor(Target);
+        TargetMenu = EditorGUILayout.ObjectField("Menu", TargetMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
+
+        GUILayout.Space(8);
+
         string errorMsg = CanCreateToggle();
         GUI.enabled = errorMsg == "";
         if (GUILayout.Button("Create" + ((errorMsg == "") ? "" : " (" + errorMsg + ")")))
@@ -164,6 +182,80 @@ public class CreateAV3ToggleMenu : EditorWindow
             }
             AssetDatabase.CreateAsset(clipOn, animFolder + "/" + clipOn.name + ".anim");
             AssetDatabase.CreateAsset(clipOff, animFolder + "/" + clipOff.name + ".anim");
+
+            var param = new VRCExpressionParameters.Parameter()
+            {
+                name = ToggleName,
+                defaultValue = Target.activeSelf ? 1.0f : 0.0f,
+                saved = true,
+                valueType = VRCExpressionParameters.ValueType.Bool
+            };
+
+            descriptor.expressionParameters.parameters = descriptor.expressionParameters.parameters
+                .Union(new VRCExpressionParameters.Parameter[] { param }).ToArray();
+            
+            AssetDatabase.SaveAssets();
+
+            var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
+            fxLayer.AddParameter(ToggleName, AnimatorControllerParameterType.Bool);
+            
+            var layer = new AnimatorControllerLayer();
+            layer.name = ToggleName;
+            layer.stateMachine = new AnimatorStateMachine();
+            layer.stateMachine.name = ToggleName;
+            layer.stateMachine.hideFlags = HideFlags.HideInHierarchy;
+            layer.defaultWeight = 1.0f;
+            layer.avatarMask = null;
+            AssetDatabase.AddObjectToAsset(layer.stateMachine,
+                    AssetDatabase.GetAssetPath(fxLayer));
+            fxLayer.AddLayer(layer);
+
+            var toggleOff = new AnimatorState();
+            toggleOff.motion = clipOff;
+            toggleOff.name = clipOff.name;
+            toggleOff.writeDefaultValues = false;
+
+            var toggleOn = new AnimatorState();
+            toggleOn.motion = clipOn;
+            toggleOn.name = clipOn.name;
+            toggleOn.writeDefaultValues = false;
+
+            var transitionToOn = new AnimatorStateTransition();
+            transitionToOn.canTransitionToSelf = false;
+            transitionToOn.destinationState = toggleOn;
+            transitionToOn.hasFixedDuration = true;
+            transitionToOn.hasExitTime = false;
+            transitionToOn.duration = 0.1f;
+            transitionToOn.AddCondition(AnimatorConditionMode.If, 0, ToggleName);
+            toggleOff.AddTransition(transitionToOn);
+
+            var transitionToOff = new AnimatorStateTransition();
+            transitionToOff.canTransitionToSelf = false;
+            transitionToOff.destinationState = toggleOff;
+            transitionToOff.hasFixedDuration = true;
+            transitionToOff.hasExitTime = false;
+            transitionToOff.duration = 0.1f;
+            transitionToOff.AddCondition(AnimatorConditionMode.IfNot, 0, ToggleName);
+            toggleOn.AddTransition(transitionToOff);
+
+            if (Target.activeSelf)
+            {
+                layer.stateMachine.AddState(toggleOn, new Vector3(300, 200, 0));
+                layer.stateMachine.AddState(toggleOff, new Vector3(300, 120, 0));
+            }
+            else
+            {
+                layer.stateMachine.AddState(toggleOff, new Vector3(300, 120, 0));
+                layer.stateMachine.AddState(toggleOn, new Vector3(300, 200, 0));
+            }
+
+            TargetMenu.controls.Add(new VRCExpressionsMenu.Control()
+            {
+                name = ToggleName.StartsWith("Toggle") ? ToggleName.Substring(6) : ToggleName,
+                parameter = new VRCExpressionsMenu.Control.Parameter() { name = ToggleName },
+                type = VRCExpressionsMenu.Control.ControlType.Toggle
+            });
+
             AssetDatabase.SaveAssets();
         }
         GUI.enabled = true;
