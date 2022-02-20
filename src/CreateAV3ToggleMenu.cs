@@ -123,17 +123,53 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         GUILayout.Space(8);
 
+        var descriptor = FindAvatarDescriptor(Target);
         string errorMsg = CanCreateToggle();
         GUI.enabled = errorMsg == "";
         if (GUILayout.Button("Create" + ((errorMsg == "") ? "" : " (" + errorMsg + ")")))
         {
-
+            string animFolder = GetAnimationsFolderPath();
+            if (!AssetDatabase.IsValidFolder(animFolder))
+                AssetDatabase.CreateFolder(animFolder.Substring(0, animFolder.LastIndexOf("/")), "Animations");
+            string pathToAvatarRoot = "";
+            var t = Target.transform;
+            var root = descriptor.transform;
+            if (t != root)
+            {
+                pathToAvatarRoot = t.name;
+                while ((t = t.parent) != root)
+                {
+                    pathToAvatarRoot = t.name + "/" + pathToAvatarRoot;
+                }
+            }
+            var clipOn = new AnimationClip();
+            clipOn.name = ToggleName + "On";
+            var clipOff = new AnimationClip();
+            clipOff.name = ToggleName + "Off";
+            foreach (var pair in componentToggles.Where(p => p.Value))
+            {
+                bool isGameObjectToggle = pair.Key is Transform;
+                EditorCurveBinding binding = new EditorCurveBinding();
+                binding.path = pathToAvatarRoot;
+                binding.propertyName = isGameObjectToggle ? "m_IsActive" : "m_Enabled";
+                binding.type = isGameObjectToggle ? typeof(GameObject) : pair.Key.GetType();
+                var curveOn = new AnimationCurve();
+                curveOn.AddKey(0, 1);
+                curveOn.AddKey(1 / 60f, 1);
+                AnimationUtility.SetEditorCurve(clipOn, binding, curveOn);
+                var curveOff = new AnimationCurve();
+                curveOff.AddKey(0, 0);
+                curveOff.AddKey(1 / 60f, 0);
+                AnimationUtility.SetEditorCurve(clipOff, binding, curveOff);
+            }
+            AssetDatabase.CreateAsset(clipOn, animFolder + "/" + clipOn.name + ".anim");
+            AssetDatabase.CreateAsset(clipOff, animFolder + "/" + clipOff.name + ".anim");
+            AssetDatabase.SaveAssets();
         }
         GUI.enabled = true;
 
         GUILayout.Space(8);
 
-        var descriptor = FindAvatarDescriptor(Target);
         EditorGUILayout.LabelField("Avatar", descriptor?.name);
         if (descriptor == null)
             return;
