@@ -68,7 +68,7 @@ public class CreateAV3ToggleMenu : EditorWindow
     private static string GetAssetFolder(Object asset)
     {
         string path = AssetDatabase.GetAssetPath(asset);
-        return path.Substring(0, path.LastIndexOf("/"));
+        return path == "" ? "" : path.Substring(0, path.LastIndexOf("/"));
     }
 
     private string GetAnimationsFolderPath()
@@ -197,8 +197,13 @@ public class CreateAV3ToggleMenu : EditorWindow
             AssetDatabase.SaveAssets();
 
             var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
-            fxLayer.AddParameter(ToggleName, AnimatorControllerParameterType.Bool);
-            
+            fxLayer.AddParameter(new AnimatorControllerParameter()
+            {
+                name = ToggleName,
+                type = AnimatorControllerParameterType.Bool,
+                defaultBool = Target.activeSelf
+            });
+
             var layer = new AnimatorControllerLayer();
             layer.name = ToggleName;
             layer.stateMachine = new AnimatorStateMachine();
