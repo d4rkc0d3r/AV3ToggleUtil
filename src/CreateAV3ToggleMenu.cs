@@ -193,7 +193,7 @@ public class CreateAV3ToggleMenu : EditorWindow
 
             descriptor.expressionParameters.parameters = descriptor.expressionParameters.parameters
                 .Union(new VRCExpressionParameters.Parameter[] { param }).ToArray();
-            
+            EditorUtility.SetDirty(descriptor.expressionParameters);
             AssetDatabase.SaveAssets();
 
             var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
@@ -271,7 +271,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                 parameter = new VRCExpressionsMenu.Control.Parameter() { name = ToggleName },
                 type = VRCExpressionsMenu.Control.ControlType.Toggle
             });
-
+            EditorUtility.SetDirty(TargetMenu);
             AssetDatabase.SaveAssets();
         }
         GUI.enabled = true;
