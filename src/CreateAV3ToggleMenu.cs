@@ -211,19 +211,18 @@ public class CreateAV3ToggleMenu : EditorWindow
             layer.stateMachine.hideFlags = HideFlags.HideInHierarchy;
             layer.defaultWeight = 1.0f;
             layer.avatarMask = null;
-            AssetDatabase.AddObjectToAsset(layer.stateMachine,
-                    AssetDatabase.GetAssetPath(fxLayer));
-            fxLayer.AddLayer(layer);
 
             var toggleOff = new AnimatorState();
             toggleOff.motion = clipOff;
             toggleOff.name = clipOff.name;
             toggleOff.writeDefaultValues = false;
+            toggleOff.hideFlags = HideFlags.HideInHierarchy;
 
             var toggleOn = new AnimatorState();
             toggleOn.motion = clipOn;
             toggleOn.name = clipOn.name;
             toggleOn.writeDefaultValues = false;
+            toggleOn.hideFlags = HideFlags.HideInHierarchy;
 
             var transitionToOn = new AnimatorStateTransition();
             transitionToOn.canTransitionToSelf = false;
@@ -232,6 +231,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOn.hasExitTime = false;
             transitionToOn.duration = 0.1f;
             transitionToOn.AddCondition(AnimatorConditionMode.If, 0, ToggleName);
+            transitionToOn.hideFlags = HideFlags.HideInHierarchy;
             toggleOff.AddTransition(transitionToOn);
 
             var transitionToOff = new AnimatorStateTransition();
@@ -241,6 +241,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOff.hasExitTime = false;
             transitionToOff.duration = 0.1f;
             transitionToOff.AddCondition(AnimatorConditionMode.IfNot, 0, ToggleName);
+            transitionToOff.hideFlags = HideFlags.HideInHierarchy;
             toggleOn.AddTransition(transitionToOff);
 
             if (Target.activeSelf)
@@ -253,6 +254,16 @@ public class CreateAV3ToggleMenu : EditorWindow
                 layer.stateMachine.AddState(toggleOff, new Vector3(300, 120, 0));
                 layer.stateMachine.AddState(toggleOn, new Vector3(300, 200, 0));
             }
+
+            var fxLayerPath = AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController);
+            fxLayer.AddLayer(layer);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.AddObjectToAsset(toggleOff, fxLayerPath);
+            AssetDatabase.AddObjectToAsset(toggleOn, fxLayerPath);
+            AssetDatabase.AddObjectToAsset(transitionToOn, fxLayerPath);
+            AssetDatabase.AddObjectToAsset(transitionToOff, fxLayerPath);
+            AssetDatabase.AddObjectToAsset(layer.stateMachine, fxLayerPath);
+            AssetDatabase.SaveAssets();
 
             TargetMenu.controls.Add(new VRCExpressionsMenu.Control()
             {
