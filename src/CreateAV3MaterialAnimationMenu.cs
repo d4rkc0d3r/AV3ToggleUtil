@@ -117,12 +117,6 @@ public class CreateAV3MaterialAnimationMenu : EditorWindow
             return "Layer Exists Already";
         if (fxLayer.parameters.Any(p => p.name == ParameterName))
             return "Layer Parameter Exists Already";
-        switch (animationType) {
-            case AnimationType.RadialLogLinear:
-            case AnimationType.RadialSquared:
-            case AnimationType.RadialRoot:
-                return $"AnimationType {animationType} Not Implemented Yet";
-        }
         return "";
     }
     
@@ -145,6 +139,15 @@ public class CreateAV3MaterialAnimationMenu : EditorWindow
             list[i] = output;
         }
         list = list.Where(o => o != null).Distinct().ToList();
+    }
+
+    private float LogLerp(float a, float b, float t) => Mathf.Exp(Mathf.LerpUnclamped(Mathf.Log(a), Mathf.Log(b), t));
+    private float SquareLerp(float a, float b, float t) => Mathf.LerpUnclamped(a, b, t * t);
+    private float RootLerp(float a, float b, float t) => Mathf.LerpUnclamped(a, b, Mathf.Sqrt(t));
+
+    private Keyframe CreateKeyframe(float time, float a, float b, System.Func<float, float, float, float> interpolator) {
+        var tangent = (interpolator(a, b, time + 0.01f) - interpolator(a, b, time)) * 100f * (60f / 100f);
+        return new Keyframe(time * 100f / 60f, interpolator(a, b, time), tangent, tangent);
     }
 
     Vector2 scrollPos;
@@ -301,7 +304,34 @@ public class CreateAV3MaterialAnimationMenu : EditorWindow
                         switch (animationType) {
                             case AnimationType.Toggle:
                             case AnimationType.RadialLinear:
-                                curve = AnimationCurve.Linear(0, values[0].x, 100f / 60f, values[1].x);
+                                curve = AnimationCurve.Linear(0, values[0][i], 100f / 60f, values[1][i]);
+                                break;
+                            case AnimationType.RadialLogLinear:
+                                curve = new AnimationCurve(new Keyframe[] {
+                                    CreateKeyframe(0, values[0][i], values[1][i], LogLerp),
+                                    CreateKeyframe(0.25f, values[0][i], values[1][i], LogLerp),
+                                    CreateKeyframe(0.5f, values[0][i], values[1][i], LogLerp),
+                                    CreateKeyframe(0.75f, values[0][i], values[1][i], LogLerp),
+                                    CreateKeyframe(1, values[0][i], values[1][i], LogLerp)
+                                });
+                                break;
+                            case AnimationType.RadialSquared:
+                                curve = new AnimationCurve(new Keyframe[] {
+                                    CreateKeyframe(0, values[0][i], values[1][i], SquareLerp),
+                                    CreateKeyframe(0.25f, values[0][i], values[1][i], SquareLerp),
+                                    CreateKeyframe(0.5f, values[0][i], values[1][i], SquareLerp),
+                                    CreateKeyframe(0.75f, values[0][i], values[1][i], SquareLerp),
+                                    CreateKeyframe(1, values[0][i], values[1][i], SquareLerp)
+                                });
+                                break;
+                            case AnimationType.RadialRoot:
+                                curve = new AnimationCurve(new Keyframe[] {
+                                    CreateKeyframe(0, values[0][i], values[1][i], RootLerp),
+                                    CreateKeyframe(0.25f, values[0][i], values[1][i], RootLerp),
+                                    CreateKeyframe(0.5f, values[0][i], values[1][i], RootLerp),
+                                    CreateKeyframe(0.75f, values[0][i], values[1][i], RootLerp),
+                                    CreateKeyframe(1, values[0][i], values[1][i], RootLerp)
+                                });
                                 break;
                         }
                         AnimationUtility.SetEditorCurve(clip, EditorCurveBinding.FloatCurve(pathToRoot, renderer.GetType(), property), curve);
