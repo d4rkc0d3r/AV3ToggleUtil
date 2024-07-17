@@ -126,7 +126,7 @@ public class CreateAV3MultiToggleMenu : EditorWindow
         return name.Substring(ToggleName.Length);
     }
 
-    private void AddLeafState(AnimatorState baseState, AnimatorStateMachine stateMachine, AnimationClip clip, int index, List<Object> toSave)
+    private void AddLeafState(AnimatorStateMachine stateMachine, AnimationClip clip, int index, List<Object> toSave)
     {
         var state = new AnimatorState();
         state.motion = clip;
@@ -134,7 +134,10 @@ public class CreateAV3MultiToggleMenu : EditorWindow
         state.writeDefaultValues = false;
         state.hideFlags = HideFlags.HideInHierarchy;
 
-        var transitionToState = new AnimatorStateTransition();
+        stateMachine.AddState(state, new Vector3(300, 0 + 70 * index, 0));
+        toSave.Add(state);
+
+        var transitionToState = stateMachine.AddAnyStateTransition(state);
         transitionToState.canTransitionToSelf = false;
         transitionToState.destinationState = state;
         transitionToState.hasFixedDuration = true;
@@ -142,22 +145,6 @@ public class CreateAV3MultiToggleMenu : EditorWindow
         transitionToState.duration = 0.0f;
         transitionToState.AddCondition(AnimatorConditionMode.Equals, index, ToggleName);
         transitionToState.hideFlags = HideFlags.HideInHierarchy;
-        baseState.AddTransition(transitionToState);
-        toSave.Add(transitionToState);
-
-        var transitionToBase = new AnimatorStateTransition();
-        transitionToBase.canTransitionToSelf = false;
-        transitionToBase.destinationState = baseState;
-        transitionToBase.hasFixedDuration = true;
-        transitionToBase.hasExitTime = false;
-        transitionToBase.duration = 0.0f;
-        transitionToBase.AddCondition(AnimatorConditionMode.NotEqual, index, ToggleName);
-        transitionToBase.hideFlags = HideFlags.HideInHierarchy;
-        state.AddTransition(transitionToBase);
-        toSave.Add(transitionToBase);
-
-        stateMachine.AddState(state, new Vector3(500, 0 + 70 * index, 0));
-        toSave.Add(state);
     }
 
     void OnGUI()
@@ -232,22 +219,14 @@ public class CreateAV3MultiToggleMenu : EditorWindow
             layer.defaultWeight = 1.0f;
             layer.avatarMask = null;
 
-            var baseState = new AnimatorState();
-            baseState.name = "Base";
-            baseState.writeDefaultValues = false;
-            baseState.hideFlags = HideFlags.HideInHierarchy;
-            
-            layer.stateMachine.AddState(baseState, new Vector3(250, 120, 0));
-            toSave.Add(baseState);
-
             if (offClip != null)
             {
-                AddLeafState(baseState, layer.stateMachine, offClip, 0, toSave);
+                AddLeafState(layer.stateMachine, offClip, 0, toSave);
             }
 
             for (int i = 0; i < animationClips.Count; i++)
             {
-                AddLeafState(baseState, layer.stateMachine, animationClips[i], i + 1, toSave);
+                AddLeafState(layer.stateMachine, animationClips[i], i + 1, toSave);
             }
 
             var fxLayerPath = AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController);
