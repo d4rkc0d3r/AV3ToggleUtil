@@ -11,6 +11,7 @@ using UnityEditor.Animations;
 public class CreateAV3ToggleMenu : EditorWindow
 {
     private Dictionary<Component, bool> componentToggles = new Dictionary<Component, bool>();
+    private bool invertToggleState = false;
     private GameObject target;
     public GameObject Target
     {
@@ -135,10 +136,10 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         ToggleName = EditorGUILayout.TextField("Toggle Name", ToggleName);
 
-        GUILayout.Space(8);
-
         var descriptor = FindAvatarDescriptor(Target);
         TargetMenu = EditorGUILayout.ObjectField("Menu", TargetMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
+
+        invertToggleState = EditorGUILayout.Toggle("Invert Toggle State", invertToggleState);
 
         GUILayout.Space(8);
 
@@ -172,12 +173,12 @@ public class CreateAV3ToggleMenu : EditorWindow
                 binding.propertyName = isGameObjectToggle ? "m_IsActive" : "m_Enabled";
                 binding.type = isGameObjectToggle ? typeof(GameObject) : pair.Key.GetType();
                 var curveOn = new AnimationCurve();
-                curveOn.AddKey(0, 1);
-                curveOn.AddKey(1 / 60f, 1);
+                curveOn.AddKey(0, invertToggleState ? 0 : 1);
+                curveOn.AddKey(1 / 60f, invertToggleState ? 0 : 1);
                 AnimationUtility.SetEditorCurve(clipOn, binding, curveOn);
                 var curveOff = new AnimationCurve();
-                curveOff.AddKey(0, 0);
-                curveOff.AddKey(1 / 60f, 0);
+                curveOff.AddKey(0, invertToggleState ? 1 : 0);
+                curveOff.AddKey(1 / 60f, invertToggleState ? 1 : 0);
                 AnimationUtility.SetEditorCurve(clipOff, binding, curveOff);
             }
             AssetDatabase.CreateAsset(clipOn, animFolder + "/" + clipOn.name + ".anim");
@@ -186,7 +187,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             var param = new VRCExpressionParameters.Parameter()
             {
                 name = ToggleName,
-                defaultValue = Target.activeSelf ? 1.0f : 0.0f,
+                defaultValue = Target.activeSelf ^ invertToggleState ? 1.0f : 0.0f,
                 saved = true,
                 valueType = VRCExpressionParameters.ValueType.Bool
             };
@@ -201,7 +202,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 name = ToggleName,
                 type = AnimatorControllerParameterType.Bool,
-                defaultBool = Target.activeSelf
+                defaultBool = Target.activeSelf ^ invertToggleState
             });
 
             var layer = new AnimatorControllerLayer();
@@ -229,7 +230,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOn.destinationState = toggleOn;
             transitionToOn.hasFixedDuration = true;
             transitionToOn.hasExitTime = false;
-            transitionToOn.duration = 0.1f;
+            transitionToOn.duration = 0.0f;
             transitionToOn.AddCondition(AnimatorConditionMode.If, 0, ToggleName);
             transitionToOn.hideFlags = HideFlags.HideInHierarchy;
             toggleOff.AddTransition(transitionToOn);
@@ -239,7 +240,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOff.destinationState = toggleOff;
             transitionToOff.hasFixedDuration = true;
             transitionToOff.hasExitTime = false;
-            transitionToOff.duration = 0.1f;
+            transitionToOff.duration = 0.0f;
             transitionToOff.AddCondition(AnimatorConditionMode.IfNot, 0, ToggleName);
             transitionToOff.hideFlags = HideFlags.HideInHierarchy;
             toggleOn.AddTransition(transitionToOff);
