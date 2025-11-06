@@ -21,8 +21,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 var d = FindAvatarDescriptor(Selection.activeGameObject);
                 if (d != avatarDescriptor)
                 {
-                    animationClips = null;
-                    cachedAnimatableBindings.Clear();
+                    ClearCaches();
                 }
                 avatarDescriptor = d;
             }
@@ -31,6 +30,12 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             return null;
         }
         set { avatarDescriptor = value; }
+    }
+
+    private void ClearCaches()
+    {
+        animationClips = null;
+        cachedAnimatableBindings.Clear();
     }
 
     private List<AnimationClip> animationClips = null;
@@ -67,8 +72,12 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private EditorCurveBinding? selectedSourceBinding = null;
     private List<EditorCurveBinding> selectedTargetBindings = new();
     private string bindingFilter = "";
+    private bool showMaterialBindings = false;
+    private bool showBlendShapeBindings = false;
 
     private Dictionary<GameObject, Dictionary<Type, List<EditorCurveBinding>>> cachedAnimatableBindings = new();
+    private Dictionary<Type, bool> typeFoldoutStates = new();
+
     private Dictionary<Type, List<EditorCurveBinding>> GetAnimatableBindingsOnGameObject(GameObject gameObject) {
         if (cachedAnimatableBindings.TryGetValue(gameObject, out var bindings))
             return bindings;
@@ -77,12 +86,26 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             return bindings;
         foreach (var animatableBinding in AnimationUtility.GetAnimatableBindings(gameObject, AvatarDescriptor.gameObject))
         {
+            if (!showMaterialBindings && animatableBinding.propertyName.StartsWith("material."))
+                continue;
+            if (!showBlendShapeBindings && animatableBinding.propertyName.StartsWith("blendShape."))
+                continue;
+            if (string.IsNullOrWhiteSpace(bindingFilter) == false &&
+                animatableBinding.propertyName.IndexOf(bindingFilter, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                continue;
+            }
             if (!bindings.TryGetValue(animatableBinding.type, out var list))
             {
                 list = new List<EditorCurveBinding>();
                 bindings[animatableBinding.type] = list;
             }
-            list.Add(animatableBinding);
+            if (animatableBinding.propertyName == "m_Enabled")
+                list.Insert(0, animatableBinding);
+            else if (animatableBinding.propertyName == "m_IsActive")
+                list.Insert(0, animatableBinding);
+            else
+                list.Add(animatableBinding);
         }
         return cachedAnimatableBindings[gameObject] = bindings;
     }
@@ -105,6 +128,20 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             {
                 yield return AnimationUtility.CalculateTransformPath(t, root);
             }
+        }
+    }
+
+    private IEnumerable<GameObject> GetSelectedGameObjectsUnderAvatar()
+    {
+        var root = AvatarDescriptor?.gameObject?.transform;
+        if (root == null) yield break;
+
+        foreach (var go in Selection.gameObjects)
+        {
+            if (go == null) continue;
+            var t = go.transform;
+            if (t == root || t.IsChildOf(root))
+                yield return go;
         }
     }
 
@@ -239,7 +276,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(15 * EditorGUI.indentLevel);
-                    if (GUILayout.Button("C", GUILayout.Width(20)))
+                    if (GUILayout.Button("-", GUILayout.Width(20)))
                     {
                         selectedSourceBinding = null;
                     }
@@ -267,7 +304,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(15 * EditorGUI.indentLevel);
-                    if (GUILayout.Button("C", GUILayout.Width(20)))
+                    if (GUILayout.Button("-", GUILayout.Width(20)))
                     {
                         selectedTargetBindings.RemoveAt(i);
                         i--;
@@ -281,7 +318,153 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
 
         GUILayout.Space(10);
-        bindingFilter = EditorGUILayout.TextField("Binding Filter", bindingFilter);
+        using (var bindingFilters = new EditorGUI.ChangeCheckScope())
+        {
+            bindingFilter = EditorGUILayout.TextField("Binding Filter", bindingFilter);
+            showMaterialBindings = EditorGUILayout.Toggle("Material", showMaterialBindings);
+            showBlendShapeBindings = EditorGUILayout.Toggle("BlendShapes", showBlendShapeBindings);
+            if (bindingFilters.changed)
+            {
+                ClearCaches();
+            }
+        }
+
+        // Available bindings for current selection
+        GUILayout.Space(10);
+        GUILayout.Label("Available Bindings for Selection:", EditorStyles.boldLabel);
+        using (new EditorGUI.IndentLevelScope())
+        {
+            var selectedGOs = GetSelectedGameObjectsUnderAvatar().Distinct().ToArray();
+            if (selectedGOs.Length == 0)
+            {
+                GUILayout.Label("(none under avatar)");
+            }
+            else
+            {
+                var common = GetCommonAvailableBindingSignatures(selectedGOs);
+                if (common.Count == 0)
+                {
+                    GUILayout.Label("(no common bindings)");
+                }
+                else
+                {
+                    foreach (var kv in common.OrderBy(k => k.Key.Name))
+                    {
+                        var type = kv.Key;
+                        var sigs = kv.Value;
+                        if (!typeFoldoutStates.TryGetValue(type, out var open)) open = true;
+                        open = EditorGUILayout.Foldout(open, $"{type.Name} ({sigs.Count})", true);
+                        typeFoldoutStates[type] = open;
+
+                        if (open)
+                        {
+                            using (new EditorGUI.IndentLevelScope())
+                            {
+                                foreach (var sig in sigs)
+                                {
+                                    ParseSignature(sig, out var prop, out var isPPtr);
+                                    using (new EditorGUILayout.HorizontalScope())
+                                    {
+                                        GUILayout.Space(15 * EditorGUI.indentLevel);
+                                        using (new EditorGUI.DisabledScope(selectedGOs.Length != 1))
+                                        {
+                                            if (GUILayout.Button("S", GUILayout.Width(20)))
+                                            {
+                                                var pathToSelected = selectedGOs.Length == 1
+                                                    ? (selectedGOs[0].transform == AvatarDescriptor.gameObject.transform ? string.Empty : AnimationUtility.CalculateTransformPath(selectedGOs[0].transform, AvatarDescriptor.gameObject.transform))
+                                                    : string.Empty;
+                                                selectedSourceBinding = isPPtr
+                                                    ? EditorCurveBinding.PPtrCurve(pathToSelected, type, prop)
+                                                    : EditorCurveBinding.FloatCurve(pathToSelected, type, prop);
+                                            }
+                                        }
+                                        if (GUILayout.Button("T", GUILayout.Width(20)))
+                                        {
+                                            AddTargetBindingsForSelection(type, prop, isPPtr, selectedGOs);
+                                        }
+                                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                                        GUILayout.Label(isPPtr ? "(Object Ref)" : "(Curve)", GUILayout.Width(90));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper to create a signature excluding path (propertyName + type of curve)
+    private static string MakeSignature(EditorCurveBinding b) => $"{b.propertyName}|{(b.isPPtrCurve ? "1" : "0")}";
+    private static void ParseSignature(string sig, out string propertyName, out bool isPPtr)
+    {
+        var idx = sig.LastIndexOf('|');
+        propertyName = idx >= 0 ? sig.Substring(0, idx) : sig;
+        isPPtr = idx >= 0 && idx + 1 < sig.Length && sig[idx + 1] == '1';
+    }
+
+    // Compute common available bindings across all selected objects, grouped by component type.
+    private Dictionary<Type, List<string>> GetCommonAvailableBindingSignatures(GameObject[] selectedGOs)
+    {
+        var result = new Dictionary<Type, List<string>>();
+        if (selectedGOs.Length == 0) return result;
+
+        // Initialize with first selection
+        var first = GetAnimatableBindingsOnGameObject(selectedGOs[0]);
+        var common = new Dictionary<Type, HashSet<string>>();
+        foreach (var kv in first)
+            common[kv.Key] = new HashSet<string>(kv.Value.Select(MakeSignature));
+
+        // Intersect with the rest
+        for (int i = 1; i < selectedGOs.Length; i++)
+        {
+            var next = GetAnimatableBindingsOnGameObject(selectedGOs[i]);
+            var types = common.Keys.ToList();
+            foreach (var t in types)
+            {
+                if (!next.TryGetValue(t, out var list))
+                {
+                    common.Remove(t);
+                    continue;
+                }
+                common[t].IntersectWith(list.Select(MakeSignature));
+                if (common[t].Count == 0)
+                    common.Remove(t);
+            }
+        }
+
+        // Convert to list and apply filter
+        foreach (var kv in common)
+        {
+            var list = kv.Value.ToList();
+            if (list.Count > 0)
+                result[kv.Key] = list;
+        }
+
+        return result;
+    }
+
+    private void AddTargetBindingsForSelection(Type type, string propertyName, bool isPPtr, IEnumerable<GameObject> selectedGOs)
+    {
+        var root = AvatarDescriptor?.gameObject?.transform;
+        if (root == null) return;
+
+        foreach (var go in selectedGOs)
+        {
+            var path = go.transform == root ? string.Empty : AnimationUtility.CalculateTransformPath(go.transform, root);
+            var binding = isPPtr
+                ? EditorCurveBinding.PPtrCurve(path, type, propertyName)
+                : EditorCurveBinding.FloatCurve(path, type, propertyName);
+
+            bool exists = selectedTargetBindings.Any(b =>
+                b.path == binding.path &&
+                b.type == binding.type &&
+                b.propertyName == binding.propertyName &&
+                b.isPPtrCurve == binding.isPPtrCurve);
+
+            if (!exists)
+                selectedTargetBindings.Add(binding);
+        }
     }
 
     public static VRCAvatarDescriptor FindAvatarDescriptor(GameObject obj)
