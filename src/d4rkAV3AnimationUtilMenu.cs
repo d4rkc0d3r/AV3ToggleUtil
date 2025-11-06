@@ -226,6 +226,88 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return (TEnum)Enum.ToObject(typeof(TEnum), values[currentValue]);
     }
 
+    private bool EqualBinding(EditorCurveBinding a, EditorCurveBinding b) =>
+        a.path == b.path && a.propertyName == b.propertyName && a.type == b.type && a.isPPtrCurve == b.isPPtrCurve;
+
+    private bool ClipHasBinding(AnimationClip clip, EditorCurveBinding binding)
+    {
+        if (binding.isPPtrCurve)
+            return AnimationUtility.GetObjectReferenceCurveBindings(clip).Any(b => EqualBinding(b, binding));
+        return AnimationUtility.GetCurveBindings(clip).Any(b => EqualBinding(b, binding));
+    }
+
+    private void CopySourceCurveToTargetBindings()
+    {
+        if (selectedSourceBinding == null || selectedTargetBindings.Count == 0 || AnimationClips == null)
+            return;
+
+        var source = selectedSourceBinding.Value;
+        var clipsWithSource = AnimationClips.Where(c => c != null && ClipHasBinding(c, source)).ToList();
+
+        if (clipsWithSource.Count == 0)
+        {
+            EditorUtility.DisplayDialog("Copy Binding", "No animation clips contain the source binding.", "OK");
+            return;
+        }
+
+        // Build confirmation message
+        var msg = $"The following {clipsWithSource.Count} animation clip(s) will be modified:\n";
+        foreach (var clip in clipsWithSource)
+        {
+            msg += "- " + clip.name + "\n";
+            if (msg.Length > 1500) { msg += "... (truncated)\n"; break; }
+        }
+        msg += "\nProceed with copying the source binding curve/keyframes to all target bindings in these clips?";
+
+        if (!EditorUtility.DisplayDialog("Confirm Copy", msg, "Proceed", "Cancel"))
+            return;
+
+        int curvesCopied = 0;
+        foreach (var clip in clipsWithSource)
+        {
+            if (clip == null) continue;
+            Undo.RecordObject(clip, "Copy Binding Curves");
+
+            if (source.isPPtrCurve)
+            {
+                var srcKeys = AnimationUtility.GetObjectReferenceCurve(clip, source);
+                if (srcKeys == null || srcKeys.Length == 0)
+                    continue;
+
+                foreach (var target in selectedTargetBindings)
+                {
+                    // Skip if identical binding (already exists)
+                    if (EqualBinding(source, target)) continue;
+                    AnimationUtility.SetObjectReferenceCurve(clip, target, srcKeys);
+                    curvesCopied++;
+                }
+            }
+            else
+            {
+                var srcCurve = AnimationUtility.GetEditorCurve(clip, source);
+                if (srcCurve == null || srcCurve.keys == null || srcCurve.keys.Length == 0)
+                    continue;
+
+                foreach (var target in selectedTargetBindings)
+                {
+                    if (EqualBinding(source, target)) continue;
+                    // Duplicate curve
+                    var newCurve = new AnimationCurve(srcCurve.keys)
+                    {
+                        preWrapMode = srcCurve.preWrapMode,
+                        postWrapMode = srcCurve.postWrapMode
+                    };
+                    AnimationUtility.SetEditorCurve(clip, target, newCurve);
+                    curvesCopied++;
+                }
+            }
+
+            EditorUtility.SetDirty(clip);
+        }
+
+        AssetDatabase.SaveAssets();
+    }
+
     void OnGUI()
     {
         using var scrollView = new EditorGUILayout.ScrollViewScope(scrollPos);
@@ -303,6 +385,13 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
 
         GUILayout.Space(10);
+        using (new EditorGUI.DisabledScope(selectedSourceBinding == null || selectedTargetBindings.Count == 0))
+        {
+            if (GUILayout.Button("Copy Source Curve to Target Bindings"))
+            {
+                CopySourceCurveToTargetBindings();
+            }
+        }
 
         if (selectionMode == SelectionMode.AllClips)
         {
