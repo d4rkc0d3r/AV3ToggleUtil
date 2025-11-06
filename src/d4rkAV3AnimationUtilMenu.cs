@@ -8,9 +8,17 @@ using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 using System;
+using UnityEngine.UIElements;
 
 public class d4rkAV3AnimationUtilMenu : EditorWindow
 {
+    private enum SelectionMode
+    {
+        AllClips,
+        SelectionClips,
+        SelectionBindings
+    }
+
     private VRCAvatarDescriptor avatarDescriptor = null;
     private VRCAvatarDescriptor AvatarDescriptor
     {
@@ -74,6 +82,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private string bindingFilter = "";
     private bool showMaterialBindings = false;
     private bool showBlendShapeBindings = false;
+    private SelectionMode selectionMode = SelectionMode.SelectionClips;
 
     private Dictionary<GameObject, Dictionary<Type, List<EditorCurveBinding>>> cachedAnimatableBindings = new();
     private Dictionary<Type, bool> typeFoldoutStates = new();
@@ -195,6 +204,28 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return $"[{min:0.###}..{max:0.###}]";
     }
 
+    private TEnum EnumMultiButton<TEnum>(TEnum current)
+    {
+        var names = Enum.GetNames(typeof(TEnum));
+        var values = Enum.GetValues(typeof(TEnum)).Cast<int>().ToArray();
+        int currentValue = Array.IndexOf(values, Convert.ToInt32(current));
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.Space(15 * EditorGUI.indentLevel);
+            for (int i = 0; i < names.Length; i++)
+            {
+                using (new EditorGUI.DisabledScope(i == currentValue))
+                {
+                    if (GUILayout.Button(names[i]))
+                    {
+                        currentValue = i;
+                    }
+                }
+            }
+        }
+        return (TEnum)Enum.ToObject(typeof(TEnum), values[currentValue]);
+    }
+
     void OnGUI()
     {
         using var scrollView = new EditorGUILayout.ScrollViewScope(scrollPos);
@@ -210,52 +241,123 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
         EditorGUILayout.Space();
 
-        // All clips foldout
-        showAnimationClips = EditorGUILayout.Foldout(showAnimationClips, $"All Animation Clips in Avatar ({AnimationClips.Count}):", true);
-        if (showAnimationClips)
+        selectionMode = EnumMultiButton(selectionMode);
+
+        GUILayout.Space(10);
+        using (new EditorGUILayout.VerticalScope(GUI.skin.box))
         {
+            GUILayout.Label("Source Binding:", EditorStyles.boldLabel);
             using (new EditorGUI.IndentLevelScope())
             {
-                foreach (var clip in AnimationClips)
+                if (selectedSourceBinding != null)
                 {
-                    EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false);
+                    var path = string.IsNullOrEmpty(selectedSourceBinding.Value.path) ? "(root)" : selectedSourceBinding.Value.path;
+                    var prop = $"{(selectedSourceBinding.Value.type != null ? selectedSourceBinding.Value.type.Name : "Component")}.{selectedSourceBinding.Value.propertyName}";
+
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        GUILayout.Space(15 * EditorGUI.indentLevel);
+                        if (GUILayout.Button("-", GUILayout.Width(20)))
+                        {
+                            selectedSourceBinding = null;
+                        }
+                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                        GUILayout.FlexibleSpace();
+                    }
+                }
+                else
+                {
+                    EditorGUILayout.LabelField("(none)");
                 }
             }
         }
 
-        // Selection-filtered clips foldout
-        var selectionPaths = new HashSet<string>(GetSelectionPathsUnderAvatar());
-        var selectionClips = GetSelectionFilteredClips();
-        showSelectionFilteredClips = EditorGUILayout.Foldout(showSelectionFilteredClips, $"Animation Clips affecting Selection ({selectionClips.Count}):", true);
-        if (showSelectionFilteredClips)
+        GUILayout.Space(10);
+        using (new EditorGUILayout.VerticalScope(GUI.skin.box))
         {
+            GUILayout.Label($"Target Bindings({selectedTargetBindings.Count}):", EditorStyles.boldLabel);
             using (new EditorGUI.IndentLevelScope())
             {
-                showSelectionBindings = EditorGUILayout.ToggleLeft("Show affected bindings", showSelectionBindings);
-                foreach (var clip in selectionClips)
+                for (int i = 0; i < selectedTargetBindings.Count; i++)
                 {
-                    EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false);
-                    if (showSelectionBindings)
-                    {
-                        using (new EditorGUI.IndentLevelScope())
-                        {
-                            foreach (var b in GetBindingsAffectingSelection(clip, selectionPaths))
-                            {
-                                var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
-                                var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
-                                var range = GetCurveRangeText(clip, b); // empty for non-curve bindings
+                    var b = selectedTargetBindings[i];
+                    var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
+                    var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
 
-                                using (new EditorGUILayout.HorizontalScope())
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        GUILayout.Space(15 * EditorGUI.indentLevel);
+                        if (GUILayout.Button("-", GUILayout.Width(20)))
+                        {
+                            selectedTargetBindings.RemoveAt(i);
+                            i--;
+                            continue;
+                        }
+                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                        GUILayout.FlexibleSpace();
+                    }
+                }
+            }
+        }
+
+        GUILayout.Space(10);
+
+        if (selectionMode == SelectionMode.AllClips)
+        {
+            using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
+            // All clips foldout
+            showAnimationClips = EditorGUILayout.Foldout(showAnimationClips, $"All Animation Clips in Avatar ({AnimationClips.Count}):", true);
+            if (showAnimationClips)
+            {
+                using (new EditorGUI.IndentLevelScope())
+                {
+                    foreach (var clip in AnimationClips)
+                    {
+                        EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false);
+                    }
+                }
+            }
+        }
+
+        if (selectionMode == SelectionMode.SelectionClips)
+        {
+            using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
+            // Selection-filtered clips foldout
+            var selectionPaths = new HashSet<string>(GetSelectionPathsUnderAvatar());
+            var selectionClips = GetSelectionFilteredClips();
+            showSelectionFilteredClips = EditorGUILayout.Foldout(showSelectionFilteredClips, $"Animation Clips affecting Selection ({selectionClips.Count}):", true);
+            if (showSelectionFilteredClips)
+            {
+                using (new EditorGUI.IndentLevelScope())
+                {
+                    showSelectionBindings = EditorGUILayout.ToggleLeft("Show affected bindings", showSelectionBindings);
+                    foreach (var clip in selectionClips)
+                    {
+                        EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false);
+                        if (showSelectionBindings)
+                        {
+                            using (new EditorGUI.IndentLevelScope())
+                            {
+                                foreach (var b in GetBindingsAffectingSelection(clip, selectionPaths))
                                 {
-                                    GUILayout.Space(15 * EditorGUI.indentLevel);
-                                    if (GUILayout.Button("S", GUILayout.Width(20)))
+                                    var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
+                                    var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
+                                    var range = GetCurveRangeText(clip, b); // empty for non-curve bindings
+
+                                    using (new EditorGUILayout.HorizontalScope())
                                     {
-                                        selectedSourceBinding = b;
+                                        GUILayout.Space(15 * EditorGUI.indentLevel);
+                                        if (GUILayout.Button("S", GUILayout.Width(20)))
+                                        {
+                                            selectedSourceBinding = b;
+                                        }
+                                        GUILayout.Label(range, GUILayout.Width(90));
+                                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                                        GUILayout.FlexibleSpace();
                                     }
-                                    GUILayout.Label(range, GUILayout.Width(90));
-                                    GUILayout.Label(path, GUILayout.ExpandWidth(true));
-                                    GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                                    GUILayout.FlexibleSpace();
                                 }
                             }
                         }
@@ -264,126 +366,78 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             }
         }
 
-        GUILayout.Space(10);
-        GUILayout.Label("Selected Source Binding:", EditorStyles.boldLabel);
-        using (new EditorGUI.IndentLevelScope())
+        if (selectionMode == SelectionMode.SelectionBindings)
         {
-            if (selectedSourceBinding != null)
-            {
-                var path = string.IsNullOrEmpty(selectedSourceBinding.Value.path) ? "(root)" : selectedSourceBinding.Value.path;
-                var prop = $"{(selectedSourceBinding.Value.type != null ? selectedSourceBinding.Value.type.Name : "Component")}.{selectedSourceBinding.Value.propertyName}";
+            using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
 
-                using (new EditorGUILayout.HorizontalScope())
+            // Binding filters
+            using (var bindingFilters = new EditorGUI.ChangeCheckScope())
+            {
+                bindingFilter = EditorGUILayout.TextField("Binding Filter", bindingFilter);
+                showMaterialBindings = EditorGUILayout.Toggle("Material", showMaterialBindings);
+                showBlendShapeBindings = EditorGUILayout.Toggle("BlendShapes", showBlendShapeBindings);
+                if (bindingFilters.changed)
                 {
-                    GUILayout.Space(15 * EditorGUI.indentLevel);
-                    if (GUILayout.Button("-", GUILayout.Width(20)))
-                    {
-                        selectedSourceBinding = null;
-                    }
-                    GUILayout.Label(path, GUILayout.ExpandWidth(true));
-                    GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                    GUILayout.FlexibleSpace();
+                    ClearCaches();
                 }
             }
-            else
-            {
-                EditorGUILayout.LabelField("(none)");
-            }
-        }
 
-        GUILayout.Space(10);
-        GUILayout.Label($"Selected Target Bindings({selectedTargetBindings.Count}):", EditorStyles.boldLabel);
-        using (new EditorGUI.IndentLevelScope())
-        {
-            for (int i = 0; i < selectedTargetBindings.Count; i++)
+            // Available bindings for current selection
+            GUILayout.Space(10);
+            GUILayout.Label("Available Bindings for Selection:", EditorStyles.boldLabel);
+            using (new EditorGUI.IndentLevelScope())
             {
-                var b = selectedTargetBindings[i];
-                var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
-                var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
-
-                using (new EditorGUILayout.HorizontalScope())
+                var selectedGOs = GetSelectedGameObjectsUnderAvatar().Distinct().ToArray();
+                if (selectedGOs.Length == 0)
                 {
-                    GUILayout.Space(15 * EditorGUI.indentLevel);
-                    if (GUILayout.Button("-", GUILayout.Width(20)))
-                    {
-                        selectedTargetBindings.RemoveAt(i);
-                        i--;
-                        continue;
-                    }
-                    GUILayout.Label(path, GUILayout.ExpandWidth(true));
-                    GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                    GUILayout.FlexibleSpace();
-                }
-            }
-        }
-
-        GUILayout.Space(10);
-        using (var bindingFilters = new EditorGUI.ChangeCheckScope())
-        {
-            bindingFilter = EditorGUILayout.TextField("Binding Filter", bindingFilter);
-            showMaterialBindings = EditorGUILayout.Toggle("Material", showMaterialBindings);
-            showBlendShapeBindings = EditorGUILayout.Toggle("BlendShapes", showBlendShapeBindings);
-            if (bindingFilters.changed)
-            {
-                ClearCaches();
-            }
-        }
-
-        // Available bindings for current selection
-        GUILayout.Space(10);
-        GUILayout.Label("Available Bindings for Selection:", EditorStyles.boldLabel);
-        using (new EditorGUI.IndentLevelScope())
-        {
-            var selectedGOs = GetSelectedGameObjectsUnderAvatar().Distinct().ToArray();
-            if (selectedGOs.Length == 0)
-            {
-                GUILayout.Label("(none under avatar)");
-            }
-            else
-            {
-                var common = GetCommonAvailableBindingSignatures(selectedGOs);
-                if (common.Count == 0)
-                {
-                    GUILayout.Label("(no common bindings)");
+                    GUILayout.Label("(none under avatar)");
                 }
                 else
                 {
-                    foreach (var kv in common.OrderBy(k => k.Key.Name))
+                    var common = GetCommonAvailableBindingSignatures(selectedGOs);
+                    if (common.Count == 0)
                     {
-                        var type = kv.Key;
-                        var sigs = kv.Value;
-                        if (!typeFoldoutStates.TryGetValue(type, out var open)) open = true;
-                        open = EditorGUILayout.Foldout(open, $"{type.Name} ({sigs.Count})", true);
-                        typeFoldoutStates[type] = open;
-
-                        if (open)
+                        GUILayout.Label("(no common bindings)");
+                    }
+                    else
+                    {
+                        foreach (var kv in common.OrderBy(k => k.Key.Name))
                         {
-                            using (new EditorGUI.IndentLevelScope())
+                            var type = kv.Key;
+                            var sigs = kv.Value;
+                            if (!typeFoldoutStates.TryGetValue(type, out var open)) open = true;
+                            open = EditorGUILayout.Foldout(open, $"{type.Name} ({sigs.Count})", true);
+                            typeFoldoutStates[type] = open;
+
+                            if (open)
                             {
-                                foreach (var sig in sigs)
+                                using (new EditorGUI.IndentLevelScope())
                                 {
-                                    ParseSignature(sig, out var prop, out var isPPtr);
-                                    using (new EditorGUILayout.HorizontalScope())
+                                    foreach (var sig in sigs)
                                     {
-                                        GUILayout.Space(15 * EditorGUI.indentLevel);
-                                        using (new EditorGUI.DisabledScope(selectedGOs.Length != 1))
+                                        ParseSignature(sig, out var prop, out var isPPtr);
+                                        using (new EditorGUILayout.HorizontalScope())
                                         {
-                                            if (GUILayout.Button("S", GUILayout.Width(20)))
+                                            GUILayout.Space(15 * EditorGUI.indentLevel);
+                                            using (new EditorGUI.DisabledScope(selectedGOs.Length != 1))
                                             {
-                                                var pathToSelected = selectedGOs.Length == 1
-                                                    ? (selectedGOs[0].transform == AvatarDescriptor.gameObject.transform ? string.Empty : AnimationUtility.CalculateTransformPath(selectedGOs[0].transform, AvatarDescriptor.gameObject.transform))
-                                                    : string.Empty;
-                                                selectedSourceBinding = isPPtr
-                                                    ? EditorCurveBinding.PPtrCurve(pathToSelected, type, prop)
-                                                    : EditorCurveBinding.FloatCurve(pathToSelected, type, prop);
+                                                if (GUILayout.Button("S", GUILayout.Width(20)))
+                                                {
+                                                    var pathToSelected = selectedGOs.Length == 1
+                                                        ? (selectedGOs[0].transform == AvatarDescriptor.gameObject.transform ? string.Empty : AnimationUtility.CalculateTransformPath(selectedGOs[0].transform, AvatarDescriptor.gameObject.transform))
+                                                        : string.Empty;
+                                                    selectedSourceBinding = isPPtr
+                                                        ? EditorCurveBinding.PPtrCurve(pathToSelected, type, prop)
+                                                        : EditorCurveBinding.FloatCurve(pathToSelected, type, prop);
+                                                }
                                             }
+                                            if (GUILayout.Button("T", GUILayout.Width(20)))
+                                            {
+                                                AddTargetBindingsForSelection(type, prop, isPPtr, selectedGOs);
+                                            }
+                                            GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                                            GUILayout.Label(isPPtr ? "(Object Ref)" : "(Curve)", GUILayout.Width(90));
                                         }
-                                        if (GUILayout.Button("T", GUILayout.Width(20)))
-                                        {
-                                            AddTargetBindingsForSelection(type, prop, isPPtr, selectedGOs);
-                                        }
-                                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                                        GUILayout.Label(isPPtr ? "(Object Ref)" : "(Curve)", GUILayout.Width(90));
                                     }
                                 }
                             }
