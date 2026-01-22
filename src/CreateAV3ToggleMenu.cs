@@ -293,10 +293,12 @@ public class CreateAV3ToggleMenu : EditorWindow
                 {
                     GUILayout.Space(indent * 15);
                     EditorGUILayout.ObjectField(menu, typeof(VRCExpressionsMenu), false);
+                    using var disabledScope = new EditorGUI.DisabledScope(menu.controls.Count >= 8);
                     if (GUILayout.Button("S", GUILayout.Width(20)))
                     {
                         TargetMenu = menu;
                     }
+                    GUILayout.Label($"({menu.controls.Count}/8)", GUILayout.Width(30));
                 }
                 foreach (var control in menu.controls)
                 {
