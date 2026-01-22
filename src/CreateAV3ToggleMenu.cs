@@ -279,6 +279,37 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         GUILayout.Space(8);
 
+        if (GetMainMenu() != null)
+        {
+            void DrawMenuWithSubMenus(VRCExpressionsMenu menu, int indent, HashSet<VRCExpressionsMenu> drawnMenus = null)
+            {
+                drawnMenus ??= new HashSet<VRCExpressionsMenu>();
+                if (!drawnMenus.Add(menu))
+                    return;
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Space(indent * 15);
+                    EditorGUILayout.ObjectField(menu, typeof(VRCExpressionsMenu), false);
+                    if (GUILayout.Button("S", GUILayout.Width(20)))
+                    {
+                        TargetMenu = menu;
+                    }
+                }
+                foreach (var control in menu.controls)
+                {
+                    if (control.type == VRCExpressionsMenu.Control.ControlType.SubMenu && control.subMenu != null)
+                    {
+                        DrawMenuWithSubMenus(control.subMenu, indent + 1, drawnMenus);
+                    }
+                }
+            }
+            using (new EditorGUILayout.VerticalScope("box"))
+            {
+                DrawMenuWithSubMenus(GetMainMenu(), 0);
+            }
+            GUILayout.Space(8);
+        }
+
         EditorGUILayout.LabelField("Avatar", descriptor?.name);
         if (descriptor == null)
             return;
