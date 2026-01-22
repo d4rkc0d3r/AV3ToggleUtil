@@ -12,6 +12,7 @@ public class CreateAV3ToggleMenu : EditorWindow
 {
     private Dictionary<Component, bool> componentToggles = new Dictionary<Component, bool>();
     private bool invertToggleState = false;
+    private Vector2 scrollPos;
     private GameObject target;
     public GameObject Target
     {
@@ -116,6 +117,8 @@ public class CreateAV3ToggleMenu : EditorWindow
 
     void OnGUI()
     {
+        using var scrollView = new EditorGUILayout.ScrollViewScope(scrollPos);
+        scrollPos = scrollView.scrollPosition;
         Target = EditorGUILayout.ObjectField("Target", Target, typeof(GameObject), true) as GameObject;
 
         if (Target == null)
