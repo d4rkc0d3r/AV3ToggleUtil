@@ -14,7 +14,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 {
     private enum SelectionMode
     {
-        AllClips,
+        Search,
         SelectionClips,
         SelectionBindings
     }
@@ -74,7 +74,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     }
 
     private Vector2 scrollPos;
-    private bool showAnimationClips = false;
+    private bool showAnimationClips = true;
     private bool showSelectionFilteredClips = true;
     private bool showSelectionBindings = true;
     private EditorCurveBinding? selectedSourceBinding = null;
@@ -83,6 +83,9 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private bool showMaterialBindings = false;
     private bool showBlendShapeBindings = false;
     private SelectionMode selectionMode = SelectionMode.SelectionClips;
+    private string searchBindingPathFilter = "";
+    private string searchBindingPropertyFilter = "";
+    private bool showSearchBindings = false;
 
     private Dictionary<GameObject, Dictionary<Type, List<EditorCurveBinding>>> cachedAnimatableBindings = new();
     private Dictionary<Type, bool> typeFoldoutStates = new();
@@ -393,18 +396,61 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             }
         }
 
-        if (selectionMode == SelectionMode.AllClips)
+        if (selectionMode == SelectionMode.Search)
         {
             using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
-            // All clips foldout
-            showAnimationClips = EditorGUILayout.Foldout(showAnimationClips, $"All Animation Clips in Avatar ({AnimationClips.Count}):", true);
+
+            using (var cc = new EditorGUI.ChangeCheckScope())
+            {
+                searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
+                searchBindingPropertyFilter = EditorGUILayout.TextField("Binding Property Filter", searchBindingPropertyFilter);
+            }
+
+            var allClips = AnimationClips ?? new List<AnimationClip>();
+            var filteredClips = allClips
+                .Where(c => GetBindingsMatchingSearchFilters(c, searchBindingPathFilter, searchBindingPropertyFilter).Any())
+                .ToList();
+
+            showAnimationClips = EditorGUILayout.Foldout(
+                showAnimationClips,
+                $"Animation Clips matching filters ({filteredClips.Count}/{allClips.Count}):",
+                true
+            );
+
             if (showAnimationClips)
             {
                 using (new EditorGUI.IndentLevelScope())
                 {
-                    foreach (var clip in AnimationClips)
+                    showSearchBindings = EditorGUILayout.ToggleLeft("Show filtered bindings", showSearchBindings);
+
+                    foreach (var clip in filteredClips)
                     {
                         EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false);
+
+                        if (showSearchBindings)
+                        {
+                            using (new EditorGUI.IndentLevelScope())
+                            {
+                                foreach (var b in GetBindingsMatchingSearchFilters(clip, searchBindingPathFilter, searchBindingPropertyFilter))
+                                {
+                                    var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
+                                    var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
+                                    var range = GetCurveRangeText(clip, b);
+
+                                    using (new EditorGUILayout.HorizontalScope())
+                                    {
+                                        GUILayout.Space(15 * EditorGUI.indentLevel);
+                                        if (GUILayout.Button("S", GUILayout.Width(20)))
+                                            selectedSourceBinding = b;
+
+                                        GUILayout.Label(range, GUILayout.Width(90));
+                                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                                        GUILayout.FlexibleSpace();
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -439,9 +485,8 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                                     {
                                         GUILayout.Space(15 * EditorGUI.indentLevel);
                                         if (GUILayout.Button("S", GUILayout.Width(20)))
-                                        {
                                             selectedSourceBinding = b;
-                                        }
+
                                         GUILayout.Label(range, GUILayout.Width(90));
                                         GUILayout.Label(path, GUILayout.ExpandWidth(true));
                                         GUILayout.Label(prop, GUILayout.ExpandWidth(true));
@@ -587,6 +632,27 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return result;
     }
 
+    private IEnumerable<EditorCurveBinding> GetBindingsMatchingSearchFilters(AnimationClip clip, string pathFilter, string propertyFilter)
+    {
+        if (clip == null) yield break;
+
+        var hasPath = !string.IsNullOrWhiteSpace(pathFilter);
+        var hasProp = !string.IsNullOrWhiteSpace(propertyFilter);
+
+        bool Matches(EditorCurveBinding b)
+        {
+            if (hasPath && (b.path?.IndexOf(pathFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0) return false;
+            if (hasProp && (b.propertyName?.IndexOf(propertyFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0) return false;
+            return true;
+        }
+
+        foreach (var b in AnimationUtility.GetCurveBindings(clip))
+            if (Matches(b)) yield return b;
+
+        foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip))
+            if (Matches(b)) yield return b;
+    }
+
     private void AddTargetBindingsForSelection(Type type, string propertyName, bool isPPtr, IEnumerable<GameObject> selectedGOs)
     {
         var root = AvatarDescriptor?.gameObject?.transform;
@@ -626,16 +692,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     public static void d4rkAV3AnimationUtilMenuItem()
     {
         var window = GetWindow(typeof(d4rkAV3AnimationUtilMenu)) as d4rkAV3AnimationUtilMenu;
-    }
-
-    private void OnEnable()
-    {
-        Selection.selectionChanged += Repaint;
-    }
-
-    private void OnDisable()
-    {
-        Selection.selectionChanged -= Repaint;
     }
 
     private void OnSelectionChange()
