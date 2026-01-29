@@ -84,6 +84,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private string bindingFilter = "";
     private bool showMaterialBindings = false;
     private bool showBlendShapeBindings = false;
+    private bool showAllBindings = false;
     private SelectionMode selectionMode = SelectionMode.Search;
     private PathFilterMode pathFilterMode = PathFilterMode.Selection;
     private string searchBindingPathFilter = "";
@@ -91,7 +92,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private string searchBindingTypeFilter = "";
     private Dictionary<int, bool> clipShowFilteredBindings = new();
 
-    private bool GetClipShowFilteredBindings(AnimationClip clip)
+    private bool GetClipShowBindings(AnimationClip clip)
     {
         if (clip == null)
             return false;
@@ -103,7 +104,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return value;
     }
 
-    private void SetClipShowFilteredBindings(AnimationClip clip, bool value)
+    private void SetClipShowBindings(AnimationClip clip, bool value)
     {
         if (clip == null)
             return;
@@ -202,10 +203,15 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
     }
 
-    private void DrawBindingsList(AnimationClip clip, IEnumerable<EditorCurveBinding> bindings)
+    private void DrawBindingsList(AnimationClip clip)
     {
-        foreach (var b in bindings)
+        var bindings = GetBindingsMatchingSearchFilters(clip);
+        foreach (var item in bindings)
         {
+            if (!showAllBindings && !item.matched)
+                continue;
+
+            var b = item.binding;
             var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
             var range = GetCurveRangeText(clip, b);
 
@@ -216,9 +222,16 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                     selectedSourceBinding = b;
 
                 GUILayout.Label(range, GUILayout.Width(90));
+
+                var prevColor = GUI.contentColor;
+                if (!item.matched)
+                    GUI.contentColor = new Color(1f, 0.85f, 0.3f);
+
                 ClickablePathLabel(b.path, GUILayout.ExpandWidth(true));
                 GUILayout.Label(prop, GUILayout.ExpandWidth(true));
                 GUILayout.FlexibleSpace();
+
+                GUI.contentColor = prevColor;
             }
         }
     }
@@ -491,14 +504,15 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
             var allClips = AnimationClips ?? new List<AnimationClip>();
             var filteredClips = allClips
-                .Where(c => GetBindingsMatchingSearchFilters(c).Any())
+                .Where(c => GetBindingsMatchingSearchFilters(c).Any(x => x.matched))
                 .ToList();
 
             DrawMixedMasterToggle(
-                "Show filtered bindings",
+                "Show bindings",
                 filteredClips,
-                GetClipShowFilteredBindings,
-                SetClipShowFilteredBindings);
+                GetClipShowBindings,
+                SetClipShowBindings);
+            showAllBindings = EditorGUILayout.ToggleLeft("Show filtered out bindings as well", showAllBindings);
             GUILayout.Space(10);
 
             GUILayout.Label(
@@ -510,15 +524,15 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             {
                 foreach (var clip in filteredClips)
                 {
-                    bool showClipBindings = GetClipShowFilteredBindings(clip);
+                    bool showClipBindings = GetClipShowBindings(clip);
                     bool newShow = ToggleWithObjectField(showClipBindings, clip);
                     if (newShow != showClipBindings)
-                        SetClipShowFilteredBindings(clip, newShow);
+                        SetClipShowBindings(clip, newShow);
 
-                    if (GetClipShowFilteredBindings(clip))
+                    if (GetClipShowBindings(clip))
                     {
                         using var _ = new EditorGUI.IndentLevelScope();
-                        DrawBindingsList(clip, GetBindingsMatchingSearchFilters(clip));
+                        DrawBindingsList(clip);
                     }
                 }
             }
@@ -647,7 +661,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return result;
     }
 
-    private IEnumerable<EditorCurveBinding> GetBindingsMatchingSearchFilters(AnimationClip clip)
+    private IEnumerable<(EditorCurveBinding binding, bool matched)> GetBindingsMatchingSearchFilters(AnimationClip clip)
     {
         if (clip == null) yield break;
 
@@ -681,10 +695,10 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
 
         foreach (var b in AnimationUtility.GetCurveBindings(clip))
-            if (Matches(b)) yield return b;
+            yield return (b, Matches(b));
 
         foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip))
-            if (Matches(b)) yield return b;
+            yield return (b, Matches(b));
     }
 
     private void AddTargetBindingsForSelection(Type type, string propertyName, bool isPPtr, IEnumerable<GameObject> selectedGOs)
