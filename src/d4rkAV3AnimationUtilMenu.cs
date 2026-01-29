@@ -146,44 +146,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return cachedAnimatableBindings[gameObject] = bindings;
     }
 
-    private bool ToggleWithObjectField<T>(bool currentValue, T obj) where T : UnityEngine.Object
-    {
-        using var _ = new EditorGUILayout.HorizontalScope();
-        GUILayout.Space(15 * EditorGUI.indentLevel);
-        var prevIndent = EditorGUI.indentLevel;
-        EditorGUI.indentLevel = 0;
-        currentValue = EditorGUILayout.Toggle(currentValue, GUILayout.Width(16));
-        EditorGUILayout.ObjectField(obj, typeof(T), false);
-        EditorGUI.indentLevel = prevIndent;
-        return currentValue;
-    }
-
-    private void DrawMixedMasterToggle(
-        string label,
-        IList<AnimationClip> clips,
-        Func<AnimationClip, bool> getter,
-        Action<AnimationClip, bool> setter)
-    {
-        bool allOn = clips.Count > 0 && clips.All(getter);
-        bool allOff = clips.Count == 0 || clips.All(c => !getter(c));
-        bool mixed = !(allOn || allOff);
-
-        var prevMixed = EditorGUI.showMixedValue;
-        EditorGUI.showMixedValue = mixed;
-
-        using (var cc = new EditorGUI.ChangeCheckScope())
-        {
-            bool masterValue = EditorGUILayout.ToggleLeft(label, allOn || mixed);
-            if (cc.changed)
-            {
-                foreach (var c in clips)
-                    setter(c, masterValue);
-            }
-        }
-
-        EditorGUI.showMixedValue = prevMixed;
-    }
-
     private void ClickablePathLabel(string path, params GUILayoutOption[] options)
     {
         var root = AvatarDescriptor?.gameObject?.transform;
@@ -507,11 +469,22 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 .Where(c => GetBindingsMatchingSearchFilters(c).Any(x => x.matched))
                 .ToList();
 
-            DrawMixedMasterToggle(
-                "Show bindings",
-                filteredClips,
-                GetClipShowBindings,
-                SetClipShowBindings);
+            bool allOn = filteredClips.Count > 0 && filteredClips.All(GetClipShowBindings);
+            bool allOff = filteredClips.Count == 0 || filteredClips.All(c => !GetClipShowBindings(c));
+            bool mixed = !(allOn || allOff);
+
+            EditorGUI.showMixedValue = mixed;
+            using (var cc = new EditorGUI.ChangeCheckScope())
+            {
+                bool masterValue = EditorGUILayout.ToggleLeft("Show bindings", allOn || mixed);
+                if (cc.changed)
+                {
+                    foreach (var c in filteredClips)
+                        SetClipShowBindings(c, masterValue);
+                }
+            }
+            EditorGUI.showMixedValue = false;
+
             showAllBindings = EditorGUILayout.ToggleLeft("Show filtered out bindings as well", showAllBindings);
             GUILayout.Space(10);
 
@@ -525,9 +498,23 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 foreach (var clip in filteredClips)
                 {
                     bool showClipBindings = GetClipShowBindings(clip);
-                    bool newShow = ToggleWithObjectField(showClipBindings, clip);
-                    if (newShow != showClipBindings)
-                        SetClipShowBindings(clip, newShow);
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        GUILayout.Space(15 * EditorGUI.indentLevel);
+                        var prevIndent = EditorGUI.indentLevel;
+                        EditorGUI.indentLevel = 0;
+                        EditorGUI.showMixedValue = showClipBindings && !showAllBindings
+                            && GetBindingsMatchingSearchFilters(clip).Any(x => !x.matched);
+                        using (var cc = new EditorGUI.ChangeCheckScope())
+                        {
+                            bool newShow = EditorGUILayout.Toggle(showClipBindings, GUILayout.Width(16));
+                            if (cc.changed)
+                                SetClipShowBindings(clip, newShow ^ EditorGUI.showMixedValue);
+                        }
+                        EditorGUI.showMixedValue = false;
+                        EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false);
+                        EditorGUI.indentLevel = prevIndent;
+                    }
 
                     if (GetClipShowBindings(clip))
                     {
