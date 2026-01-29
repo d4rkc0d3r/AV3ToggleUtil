@@ -183,11 +183,29 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         EditorGUI.showMixedValue = prevMixed;
     }
 
+    private void ClickablePathLabel(string path, params GUILayoutOption[] options)
+    {
+        var root = AvatarDescriptor?.gameObject?.transform;
+        GUILayout.Label(string.IsNullOrEmpty(path) ? "(root)" : path, options);
+        if (Event.current.type == EventType.MouseDown && GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition) && Event.current.button == 0)
+        {
+            if (root != null)
+            {
+                var t = string.IsNullOrEmpty(path) ? root : root.Find(path);
+                if (t != null)
+                {
+                    Selection.activeGameObject = t.gameObject;
+                    EditorGUIUtility.PingObject(t.gameObject);
+                }
+            }
+            Event.current.Use();
+        }
+    }
+
     private void DrawBindingsList(AnimationClip clip, IEnumerable<EditorCurveBinding> bindings)
     {
         foreach (var b in bindings)
         {
-            var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
             var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
             var range = GetCurveRangeText(clip, b);
 
@@ -198,7 +216,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                     selectedSourceBinding = b;
 
                 GUILayout.Label(range, GUILayout.Width(90));
-                GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                ClickablePathLabel(b.path, GUILayout.ExpandWidth(true));
                 GUILayout.Label(prop, GUILayout.ExpandWidth(true));
                 GUILayout.FlexibleSpace();
             }
@@ -394,7 +412,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             {
                 if (selectedSourceBinding != null)
                 {
-                    var path = string.IsNullOrEmpty(selectedSourceBinding.Value.path) ? "(root)" : selectedSourceBinding.Value.path;
+                    var path = selectedSourceBinding.Value.path;
                     var prop = $"{(selectedSourceBinding.Value.type != null ? selectedSourceBinding.Value.type.Name : "Component")}.{selectedSourceBinding.Value.propertyName}";
 
                     using (new EditorGUILayout.HorizontalScope())
@@ -404,7 +422,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                         {
                             selectedSourceBinding = null;
                         }
-                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                        ClickablePathLabel(path, GUILayout.ExpandWidth(true));
                         GUILayout.Label(prop, GUILayout.ExpandWidth(true));
                         GUILayout.FlexibleSpace();
                     }
@@ -425,7 +443,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 for (int i = 0; i < selectedTargetBindings.Count; i++)
                 {
                     var b = selectedTargetBindings[i];
-                    var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
                     var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
 
                     using (new EditorGUILayout.HorizontalScope())
@@ -437,7 +454,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                             i--;
                             continue;
                         }
-                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                        ClickablePathLabel(b.path, GUILayout.ExpandWidth(true));
                         GUILayout.Label(prop, GUILayout.ExpandWidth(true));
                         GUILayout.FlexibleSpace();
                     }
