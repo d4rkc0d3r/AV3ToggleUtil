@@ -74,9 +74,9 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     }
 
     private Vector2 scrollPos;
+    private bool showSelectionBindings = true;
     private bool showAnimationClips = true;
     private bool showSelectionFilteredClips = true;
-    private bool showSelectionBindings = true;
     private EditorCurveBinding? selectedSourceBinding = null;
     private List<EditorCurveBinding> selectedTargetBindings = new();
     private string bindingFilter = "";
@@ -111,7 +111,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         if (clip == null)
             return false;
         if (!clipShowSelectionBindings.TryGetValue(clip.GetInstanceID(), out var value))
-            clipShowSelectionBindings[clip.GetInstanceID()] = value = false;
+            clipShowSelectionBindings[clip.GetInstanceID()] = value = true;
         return value;
     }
 
@@ -167,6 +167,54 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         EditorGUILayout.ObjectField(obj, typeof(T), false);
         EditorGUI.indentLevel = prevIndent;
         return currentValue;
+    }
+
+    private void DrawMixedMasterToggle(
+        string label,
+        IList<AnimationClip> clips,
+        Func<AnimationClip, bool> getter,
+        Action<AnimationClip, bool> setter)
+    {
+        bool allOn = clips.Count > 0 && clips.All(getter);
+        bool allOff = clips.Count == 0 || clips.All(c => !getter(c));
+        bool mixed = !(allOn || allOff);
+
+        var prevMixed = EditorGUI.showMixedValue;
+        EditorGUI.showMixedValue = mixed;
+
+        using (var cc = new EditorGUI.ChangeCheckScope())
+        {
+            bool masterValue = EditorGUILayout.ToggleLeft(label, allOn || mixed);
+            if (cc.changed)
+            {
+                foreach (var c in clips)
+                    setter(c, masterValue);
+            }
+        }
+
+        EditorGUI.showMixedValue = prevMixed;
+    }
+
+    private void DrawBindingsList(AnimationClip clip, IEnumerable<EditorCurveBinding> bindings)
+    {
+        foreach (var b in bindings)
+        {
+            var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
+            var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
+            var range = GetCurveRangeText(clip, b);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(15 * EditorGUI.indentLevel);
+                if (GUILayout.Button("S", GUILayout.Width(20)))
+                    selectedSourceBinding = b;
+
+                GUILayout.Label(range, GUILayout.Width(90));
+                GUILayout.Label(path, GUILayout.ExpandWidth(true));
+                GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                GUILayout.FlexibleSpace();
+            }
+        }
     }
 
     // Return transform paths (relative to avatar root) of the current selection that are under the avatar
@@ -458,66 +506,34 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 .Where(c => GetBindingsMatchingSearchFilters(c, searchBindingPathFilter, searchBindingPropertyFilter).Any())
                 .ToList();
 
-            showAnimationClips = EditorGUILayout.Foldout(
-                showAnimationClips,
+            DrawMixedMasterToggle(
+                "Show filtered bindings",
+                filteredClips,
+                GetClipShowFilteredBindings,
+                SetClipShowFilteredBindings);
+            GUILayout.Space(10);
+
+            GUILayout.Label(
                 $"Animation Clips matching filters ({filteredClips.Count}/{allClips.Count}):",
-                true
+                EditorStyles.boldLabel
             );
 
-            if (showAnimationClips)
+            using (new EditorGUI.IndentLevelScope())
             {
-                using (new EditorGUI.IndentLevelScope())
+                foreach (var clip in filteredClips)
                 {
-                    // Tri-state master toggle (shows '-' when mixed)
-                    bool allOn = filteredClips.Count > 0 && filteredClips.All(c => GetClipShowFilteredBindings(c));
-                    bool allOff = filteredClips.Count == 0 || filteredClips.All(c => !GetClipShowFilteredBindings(c));
-                    bool mixed = !(allOn || allOff);
+                    bool showClipBindings = GetClipShowFilteredBindings(clip);
+                    bool newShow = ToggleWithObjectField(showClipBindings, clip);
+                    if (newShow != showClipBindings)
+                        SetClipShowFilteredBindings(clip, newShow);
 
-                    var prevMixed = EditorGUI.showMixedValue;
-                    EditorGUI.showMixedValue = mixed;
-
-                    using (var masterCC = new EditorGUI.ChangeCheckScope())
+                    if (GetClipShowFilteredBindings(clip))
                     {
-                        bool masterValue = EditorGUILayout.ToggleLeft("Show filtered bindings", allOn || mixed);
-                        if (masterCC.changed)
+                        using (new EditorGUI.IndentLevelScope())
                         {
-                            foreach (var c in filteredClips)
-                                SetClipShowFilteredBindings(c, masterValue);
-                        }
-                    }
-
-                    EditorGUI.showMixedValue = prevMixed;
-
-                    foreach (var clip in filteredClips)
-                    {
-                        bool showClipBindings = GetClipShowFilteredBindings(clip);
-                        bool newShow = ToggleWithObjectField(showClipBindings, clip);
-                        if (newShow != showClipBindings)
-                            SetClipShowFilteredBindings(clip, newShow);
-
-                        if (GetClipShowFilteredBindings(clip))
-                        {
-                            using (new EditorGUI.IndentLevelScope())
-                            {
-                                foreach (var b in GetBindingsMatchingSearchFilters(clip, searchBindingPathFilter, searchBindingPropertyFilter))
-                                {
-                                    var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
-                                    var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
-                                    var range = GetCurveRangeText(clip, b);
-
-                                    using (new EditorGUILayout.HorizontalScope())
-                                    {
-                                        GUILayout.Space(15 * EditorGUI.indentLevel);
-                                        if (GUILayout.Button("S", GUILayout.Width(20)))
-                                            selectedSourceBinding = b;
-
-                                        GUILayout.Label(range, GUILayout.Width(90));
-                                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
-                                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                                        GUILayout.FlexibleSpace();
-                                    }
-                                }
-                            }
+                            DrawBindingsList(
+                                clip,
+                                GetBindingsMatchingSearchFilters(clip, searchBindingPathFilter, searchBindingPropertyFilter));
                         }
                     }
                 }
@@ -529,61 +545,33 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
             var selectionPaths = new HashSet<string>(GetSelectionPathsUnderAvatar());
             var selectionClips = GetSelectionFilteredClips();
-            showSelectionFilteredClips = EditorGUILayout.Foldout(showSelectionFilteredClips, $"Animation Clips affecting Selection ({selectionClips.Count}):", true);
-            if (showSelectionFilteredClips)
+
+            DrawMixedMasterToggle(
+                "Show affected bindings",
+                selectionClips,
+                GetClipShowSelectionBindings,
+                SetClipShowSelectionBindings);
+            GUILayout.Space(10);
+
+            GUILayout.Label(
+                $"Animation Clips affecting Selection ({selectionClips.Count}):",
+                EditorStyles.boldLabel
+            );
+
+            using (new EditorGUI.IndentLevelScope())
             {
-                using (new EditorGUI.IndentLevelScope())
+                foreach (var clip in selectionClips)
                 {
-                    // Tri-state master toggle (shows '-' when mixed)
-                    bool allOn = selectionClips.Count > 0 && selectionClips.All(c => GetClipShowSelectionBindings(c));
-                    bool allOff = selectionClips.Count == 0 || selectionClips.All(c => !GetClipShowSelectionBindings(c));
-                    bool mixed = !(allOn || allOff);
+                    bool showClipBindings = GetClipShowSelectionBindings(clip);
+                    bool newShow = ToggleWithObjectField(showClipBindings, clip);
+                    if (newShow != showClipBindings)
+                        SetClipShowSelectionBindings(clip, newShow);
 
-                    var prevMixed = EditorGUI.showMixedValue;
-                    EditorGUI.showMixedValue = mixed;
-
-                    using (var masterCC = new EditorGUI.ChangeCheckScope())
+                    if (GetClipShowSelectionBindings(clip))
                     {
-                        bool masterValue = EditorGUILayout.ToggleLeft("Show affected bindings", allOn || mixed);
-                        if (masterCC.changed)
+                        using (new EditorGUI.IndentLevelScope())
                         {
-                            foreach (var c in selectionClips)
-                                SetClipShowSelectionBindings(c, masterValue);
-                        }
-                    }
-
-                    EditorGUI.showMixedValue = prevMixed;
-
-                    foreach (var clip in selectionClips)
-                    {
-                        bool showClipBindings = GetClipShowSelectionBindings(clip);
-                        bool newShow = ToggleWithObjectField(showClipBindings, clip);
-                        if (newShow != showClipBindings)
-                            SetClipShowSelectionBindings(clip, newShow);
-
-                        if (GetClipShowSelectionBindings(clip))
-                        {
-                            using (new EditorGUI.IndentLevelScope())
-                            {
-                                foreach (var b in GetBindingsAffectingSelection(clip, selectionPaths))
-                                {
-                                    var path = string.IsNullOrEmpty(b.path) ? "(root)" : b.path;
-                                    var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
-                                    var range = GetCurveRangeText(clip, b); // empty for non-curve bindings
-
-                                    using (new EditorGUILayout.HorizontalScope())
-                                    {
-                                        GUILayout.Space(15 * EditorGUI.indentLevel);
-                                        if (GUILayout.Button("S", GUILayout.Width(20)))
-                                            selectedSourceBinding = b;
-
-                                        GUILayout.Label(range, GUILayout.Width(90));
-                                        GUILayout.Label(path, GUILayout.ExpandWidth(true));
-                                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                                        GUILayout.FlexibleSpace();
-                                    }
-                                }
-                            }
+                            DrawBindingsList(clip, GetBindingsAffectingSelection(clip, selectionPaths));
                         }
                     }
                 }
