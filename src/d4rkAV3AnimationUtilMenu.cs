@@ -205,11 +205,17 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
     }
 
+    private HashSet<string> cachedSelectionPathsUnderAvatar = null;
+
     // Return transform paths (relative to avatar root) of the current selection that are under the avatar
-    private IEnumerable<string> GetSelectionPathsUnderAvatar()
+    private HashSet<string> GetSelectionPathsUnderAvatar()
     {
+        if (cachedSelectionPathsUnderAvatar != null)
+            return cachedSelectionPathsUnderAvatar;
+
+        cachedSelectionPathsUnderAvatar = new HashSet<string>();
         var root = AvatarDescriptor?.gameObject?.transform;
-        if (root == null) yield break;
+        if (root == null) return cachedSelectionPathsUnderAvatar;
 
         foreach (var go in Selection.gameObjects)
         {
@@ -217,13 +223,14 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             var t = go.transform;
             if (t == root)
             {
-                yield return string.Empty; // root path
+                cachedSelectionPathsUnderAvatar.Add(string.Empty); // root path
             }
             else if (t.IsChildOf(root))
             {
-                yield return AnimationUtility.CalculateTransformPath(t, root);
+                cachedSelectionPathsUnderAvatar.Add(AnimationUtility.CalculateTransformPath(t, root));
             }
         }
+        return cachedSelectionPathsUnderAvatar;
     }
 
     private IEnumerable<GameObject> GetSelectedGameObjectsUnderAvatar()
@@ -643,7 +650,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             switch (pathFilterMode)
             {
                 case PathFilterMode.Selection:
-                    var selectionPaths = new HashSet<string>(GetSelectionPathsUnderAvatar());
+                    var selectionPaths = GetSelectionPathsUnderAvatar();
                     if (selectionPaths.Count > 0 && !selectionPaths.Contains(b.path))
                         return false;
                     break;
@@ -709,6 +716,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
     private void OnSelectionChange()
     {
+        cachedSelectionPathsUnderAvatar = null;
         Repaint();
     }
 }
