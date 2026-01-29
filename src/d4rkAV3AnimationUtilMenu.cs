@@ -15,8 +15,13 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private enum SelectionMode
     {
         Search,
-        SelectionClips,
         SelectionBindings
+    }
+
+    private enum PathFilterMode
+    {
+        Text,
+        Selection
     }
 
     private VRCAvatarDescriptor avatarDescriptor = null;
@@ -79,12 +84,12 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private string bindingFilter = "";
     private bool showMaterialBindings = false;
     private bool showBlendShapeBindings = false;
-    private SelectionMode selectionMode = SelectionMode.SelectionClips;
+    private SelectionMode selectionMode = SelectionMode.Search;
+    private PathFilterMode pathFilterMode = PathFilterMode.Selection;
     private string searchBindingPathFilter = "";
     private string searchBindingPropertyFilter = "";
     private string searchBindingTypeFilter = "";
     private Dictionary<int, bool> clipShowFilteredBindings = new();
-    private Dictionary<int, bool> clipShowSelectionBindings = new();
 
     private bool GetClipShowFilteredBindings(AnimationClip clip)
     {
@@ -92,7 +97,8 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             return false;
         if (!clipShowFilteredBindings.TryGetValue(clip.GetInstanceID(), out var value))
         {
-            clipShowFilteredBindings[clip.GetInstanceID()] = value = false;
+            clipShowFilteredBindings[clip.GetInstanceID()] = value =
+                pathFilterMode == PathFilterMode.Selection;
         }
         return value;
     }
@@ -102,22 +108,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         if (clip == null)
             return;
         clipShowFilteredBindings[clip.GetInstanceID()] = value;
-    }
-
-    private bool GetClipShowSelectionBindings(AnimationClip clip)
-    {
-        if (clip == null)
-            return false;
-        if (!clipShowSelectionBindings.TryGetValue(clip.GetInstanceID(), out var value))
-            clipShowSelectionBindings[clip.GetInstanceID()] = value = true;
-        return value;
-    }
-
-    private void SetClipShowSelectionBindings(AnimationClip clip, bool value)
-    {
-        if (clip == null)
-            return;
-        clipShowSelectionBindings[clip.GetInstanceID()] = value;
     }
 
     private Dictionary<GameObject, Dictionary<Type, List<EditorCurveBinding>>> cachedAnimatableBindings = new();
@@ -250,35 +240,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
     }
 
-    // Filter clips to those that have any binding referencing the selection paths
-    private List<AnimationClip> GetSelectionFilteredClips()
-    {
-        var paths = new HashSet<string>(GetSelectionPathsUnderAvatar());
-        if (paths.Count == 0) return new List<AnimationClip>();
-
-        return AnimationClips.Where(clip =>
-        {
-            // curve bindings (floats)
-            foreach (var b in AnimationUtility.GetCurveBindings(clip))
-                if (paths.Contains(b.path)) return true;
-
-            // object reference bindings (textures, sprites, etc.)
-            foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip))
-                if (paths.Contains(b.path)) return true;
-
-            return false;
-        }).ToList();
-    }
-
-    // Returns all bindings in the given clip that affect any of the selected objects (by path)
-    private IEnumerable<EditorCurveBinding> GetBindingsAffectingSelection(AnimationClip clip, HashSet<string> selectionPaths)
-    {
-        foreach (var b in AnimationUtility.GetCurveBindings(clip))
-            if (selectionPaths.Contains(b.path)) yield return b;
-        foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip))
-            if (selectionPaths.Contains(b.path)) yield return b;
-    }
-
     // For curve bindings, returns bracketed min..max or a single number if all keyframes share the same value.
     private string GetCurveRangeText(AnimationClip clip, EditorCurveBinding binding)
     {
@@ -300,23 +261,17 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return $"[{min:0.###}..{max:0.###}]";
     }
 
-    private TEnum EnumMultiButton<TEnum>(TEnum current)
+    private TEnum EnumMultiButton<TEnum>(TEnum current, bool expand = true)
     {
         var names = Enum.GetNames(typeof(TEnum));
         var values = Enum.GetValues(typeof(TEnum)).Cast<int>().ToArray();
         int currentValue = Array.IndexOf(values, Convert.ToInt32(current));
-        using (new EditorGUILayout.HorizontalScope())
+        for (int i = 0; i < names.Length; i++)
         {
-            GUILayout.Space(15 * EditorGUI.indentLevel);
-            for (int i = 0; i < names.Length; i++)
+            using var _ = new EditorGUI.DisabledScope(i == currentValue);
+            if (GUILayout.Button(names[i], GUILayout.ExpandWidth(expand)))
             {
-                using (new EditorGUI.DisabledScope(i == currentValue))
-                {
-                    if (GUILayout.Button(names[i]))
-                    {
-                        currentValue = i;
-                    }
-                }
+                currentValue = i;
             }
         }
         return (TEnum)Enum.ToObject(typeof(TEnum), values[currentValue]);
@@ -419,7 +374,10 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
         EditorGUILayout.Space();
 
-        selectionMode = EnumMultiButton(selectionMode);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            selectionMode = EnumMultiButton(selectionMode, expand:true);
+        }
 
         GUILayout.Space(10);
         using (new EditorGUILayout.VerticalScope(GUI.skin.box))
@@ -493,13 +451,17 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         {
             using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
 
-            searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
+                pathFilterMode = EnumMultiButton(pathFilterMode, expand:false);
+            }
             searchBindingPropertyFilter = EditorGUILayout.TextField("Binding Property Filter", searchBindingPropertyFilter);
             searchBindingTypeFilter = EditorGUILayout.TextField("Binding Type Filter", searchBindingTypeFilter);
 
             var allClips = AnimationClips ?? new List<AnimationClip>();
             var filteredClips = allClips
-                .Where(c => GetBindingsMatchingSearchFilters(c, searchBindingPathFilter, searchBindingPropertyFilter, searchBindingTypeFilter).Any())
+                .Where(c => GetBindingsMatchingSearchFilters(c).Any())
                 .ToList();
 
             DrawMixedMasterToggle(
@@ -525,50 +487,8 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
                     if (GetClipShowFilteredBindings(clip))
                     {
-                        using (new EditorGUI.IndentLevelScope())
-                        {
-                            DrawBindingsList(
-                                clip,
-                                GetBindingsMatchingSearchFilters(clip, searchBindingPathFilter, searchBindingPropertyFilter, searchBindingTypeFilter));
-                        }
-                    }
-                }
-            }
-        }
-
-        if (selectionMode == SelectionMode.SelectionClips)
-        {
-            using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
-            var selectionPaths = new HashSet<string>(GetSelectionPathsUnderAvatar());
-            var selectionClips = GetSelectionFilteredClips();
-
-            DrawMixedMasterToggle(
-                "Show affected bindings",
-                selectionClips,
-                GetClipShowSelectionBindings,
-                SetClipShowSelectionBindings);
-            GUILayout.Space(10);
-
-            GUILayout.Label(
-                $"Animation Clips affecting Selection ({selectionClips.Count}):",
-                EditorStyles.boldLabel
-            );
-
-            using (new EditorGUI.IndentLevelScope())
-            {
-                foreach (var clip in selectionClips)
-                {
-                    bool showClipBindings = GetClipShowSelectionBindings(clip);
-                    bool newShow = ToggleWithObjectField(showClipBindings, clip);
-                    if (newShow != showClipBindings)
-                        SetClipShowSelectionBindings(clip, newShow);
-
-                    if (GetClipShowSelectionBindings(clip))
-                    {
-                        using (new EditorGUI.IndentLevelScope())
-                        {
-                            DrawBindingsList(clip, GetBindingsAffectingSelection(clip, selectionPaths));
-                        }
+                        using var _ = new EditorGUI.IndentLevelScope();
+                        DrawBindingsList(clip, GetBindingsMatchingSearchFilters(clip));
                     }
                 }
             }
@@ -706,13 +626,13 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return result;
     }
 
-    private IEnumerable<EditorCurveBinding> GetBindingsMatchingSearchFilters(
-        AnimationClip clip,
-        string pathFilter,
-        string propertyFilter,
-        string typeFilter)
+    private IEnumerable<EditorCurveBinding> GetBindingsMatchingSearchFilters(AnimationClip clip)
     {
         if (clip == null) yield break;
+
+        var pathFilter = searchBindingPathFilter;
+        var propertyFilter = searchBindingPropertyFilter;
+        var typeFilter = searchBindingTypeFilter;
 
         var hasPath = !string.IsNullOrWhiteSpace(pathFilter);
         var hasProp = !string.IsNullOrWhiteSpace(propertyFilter);
@@ -720,15 +640,22 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
         bool Matches(EditorCurveBinding b)
         {
-            if (hasPath && (b.path?.IndexOf(pathFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0) return false;
-            if (hasProp && (b.propertyName?.IndexOf(propertyFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0) return false;
-
-            if (hasType)
+            switch (pathFilterMode)
             {
-                var typeName = b.type != null ? b.type.Name : "Component";
-                if (typeName.IndexOf(typeFilter, StringComparison.OrdinalIgnoreCase) < 0) return false;
+                case PathFilterMode.Selection:
+                    var selectionPaths = new HashSet<string>(GetSelectionPathsUnderAvatar());
+                    if (selectionPaths.Count > 0 && !selectionPaths.Contains(b.path))
+                        return false;
+                    break;
+                case PathFilterMode.Text:
+                    if (hasPath && (b.path?.IndexOf(pathFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
+                        return false;
+                    break;
             }
-
+            if (hasProp && (b.propertyName?.IndexOf(propertyFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
+                return false;
+            if (hasType && (b.type?.Name?.IndexOf(typeFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
+                return false;
             return true;
         }
 
@@ -764,7 +691,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
     public static VRCAvatarDescriptor FindAvatarDescriptor(GameObject obj)
     {
-        VRCAvatarDescriptor descriptor = null;
+        VRCAvatarDescriptor descriptor;
         while (!obj.TryGetComponent(out descriptor))
         {
             if (obj.transform.parent == null)
