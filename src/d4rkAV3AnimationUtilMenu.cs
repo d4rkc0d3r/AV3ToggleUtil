@@ -74,9 +74,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     }
 
     private Vector2 scrollPos;
-    private bool showSelectionBindings = true;
-    private bool showAnimationClips = true;
-    private bool showSelectionFilteredClips = true;
     private EditorCurveBinding? selectedSourceBinding = null;
     private List<EditorCurveBinding> selectedTargetBindings = new();
     private string bindingFilter = "";
@@ -85,6 +82,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private SelectionMode selectionMode = SelectionMode.SelectionClips;
     private string searchBindingPathFilter = "";
     private string searchBindingPropertyFilter = "";
+    private string searchBindingTypeFilter = "";
     private Dictionary<int, bool> clipShowFilteredBindings = new();
     private Dictionary<int, bool> clipShowSelectionBindings = new();
 
@@ -495,15 +493,13 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         {
             using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
 
-            using (var cc = new EditorGUI.ChangeCheckScope())
-            {
-                searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
-                searchBindingPropertyFilter = EditorGUILayout.TextField("Binding Property Filter", searchBindingPropertyFilter);
-            }
+            searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
+            searchBindingPropertyFilter = EditorGUILayout.TextField("Binding Property Filter", searchBindingPropertyFilter);
+            searchBindingTypeFilter = EditorGUILayout.TextField("Binding Type Filter", searchBindingTypeFilter);
 
             var allClips = AnimationClips ?? new List<AnimationClip>();
             var filteredClips = allClips
-                .Where(c => GetBindingsMatchingSearchFilters(c, searchBindingPathFilter, searchBindingPropertyFilter).Any())
+                .Where(c => GetBindingsMatchingSearchFilters(c, searchBindingPathFilter, searchBindingPropertyFilter, searchBindingTypeFilter).Any())
                 .ToList();
 
             DrawMixedMasterToggle(
@@ -533,7 +529,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                         {
                             DrawBindingsList(
                                 clip,
-                                GetBindingsMatchingSearchFilters(clip, searchBindingPathFilter, searchBindingPropertyFilter));
+                                GetBindingsMatchingSearchFilters(clip, searchBindingPathFilter, searchBindingPropertyFilter, searchBindingTypeFilter));
                         }
                     }
                 }
@@ -710,17 +706,29 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return result;
     }
 
-    private IEnumerable<EditorCurveBinding> GetBindingsMatchingSearchFilters(AnimationClip clip, string pathFilter, string propertyFilter)
+    private IEnumerable<EditorCurveBinding> GetBindingsMatchingSearchFilters(
+        AnimationClip clip,
+        string pathFilter,
+        string propertyFilter,
+        string typeFilter)
     {
         if (clip == null) yield break;
 
         var hasPath = !string.IsNullOrWhiteSpace(pathFilter);
         var hasProp = !string.IsNullOrWhiteSpace(propertyFilter);
+        var hasType = !string.IsNullOrWhiteSpace(typeFilter);
 
         bool Matches(EditorCurveBinding b)
         {
             if (hasPath && (b.path?.IndexOf(pathFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0) return false;
             if (hasProp && (b.propertyName?.IndexOf(propertyFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0) return false;
+
+            if (hasType)
+            {
+                var typeName = b.type != null ? b.type.Name : "Component";
+                if (typeName.IndexOf(typeFilter, StringComparison.OrdinalIgnoreCase) < 0) return false;
+            }
+
             return true;
         }
 
