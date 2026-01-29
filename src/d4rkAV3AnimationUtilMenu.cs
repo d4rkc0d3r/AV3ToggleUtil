@@ -458,9 +458,15 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         {
             using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
 
+            if (pathFilterMode == PathFilterMode.Selection)
+                searchBindingPathFilter = GetSelectionPathsUnderAvatar().FirstOrDefault() ?? "";
+
             using (new EditorGUILayout.HorizontalScope())
             {
-                searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
+                using (new EditorGUI.DisabledScope(pathFilterMode == PathFilterMode.Selection))
+                {
+                    searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
+                }
                 pathFilterMode = EnumMultiButton(pathFilterMode, expand:false);
             }
             searchBindingPropertyFilter = EditorGUILayout.TextField("Binding Property Filter", searchBindingPropertyFilter);
