@@ -742,18 +742,8 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
         foreach (var go in selectedGOs)
         {
-            var path = go.transform == root ? string.Empty : AnimationUtility.CalculateTransformPath(go.transform, root);
-            var binding = isPPtr
-                ? EditorCurveBinding.PPtrCurve(path, type, propertyName)
-                : EditorCurveBinding.FloatCurve(path, type, propertyName);
-
-            bool exists = selectedTargetBindings.Any(b =>
-                b.path == binding.path &&
-                b.type == binding.type &&
-                b.propertyName == binding.propertyName &&
-                b.isPPtrCurve == binding.isPPtrCurve);
-
-            if (!exists)
+            var binding = BuildBindingForGameObject(root, go, type, propertyName, isPPtr);
+            if (!IsTargetBinding(binding))
                 selectedTargetBindings.Add(binding);
         }
     }
