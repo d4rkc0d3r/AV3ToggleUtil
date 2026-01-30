@@ -261,20 +261,21 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         return $"[{min:0.###}..{max:0.###}]";
     }
 
-    private TEnum EnumMultiButton<TEnum>(TEnum current, bool expand = true)
+    private TEnum EnumMultiButton<TEnum>(TEnum currentValue, bool expand = true)
     {
         var names = Enum.GetNames(typeof(TEnum));
         var values = Enum.GetValues(typeof(TEnum)).Cast<int>().ToArray();
-        int currentValue = Array.IndexOf(values, Convert.ToInt32(current));
+        int currentIndex = Array.IndexOf(values, Convert.ToInt32(currentValue));
         for (int i = 0; i < names.Length; i++)
         {
-            using var _ = new EditorGUI.DisabledScope(i == currentValue);
-            if (GUILayout.Button(names[i], GUILayout.ExpandWidth(expand)))
+            using var cc = new EditorGUI.ChangeCheckScope();
+            bool newSelected = GUILayout.Toggle(i == currentIndex, names[i], GUI.skin.button, GUILayout.ExpandWidth(expand));
+            if (cc.changed && newSelected)
             {
-                currentValue = i;
+                currentIndex = i;
             }
         }
-        return (TEnum)Enum.ToObject(typeof(TEnum), values[currentValue]);
+        return (TEnum)Enum.ToObject(typeof(TEnum), values[currentIndex]);
     }
 
     private bool EqualBinding(EditorCurveBinding a, EditorCurveBinding b) =>
