@@ -165,6 +165,23 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
     }
 
+    private bool IsSelectedSource(EditorCurveBinding b) =>
+        selectedSourceBinding != null && EqualBinding(selectedSourceBinding.Value, b);
+
+    private bool IsTargetBinding(EditorCurveBinding b) =>
+        selectedTargetBindings.Any(t => EqualBinding(t, b));
+
+    private void RemoveTargetBinding(EditorCurveBinding b) =>
+        selectedTargetBindings.RemoveAll(t => EqualBinding(t, b));
+
+    private EditorCurveBinding BuildBindingForGameObject(Transform root, GameObject go, Type type, string propertyName, bool isPPtr)
+    {
+        var path = go.transform == root ? string.Empty : AnimationUtility.CalculateTransformPath(go.transform, root);
+        return isPPtr
+            ? EditorCurveBinding.PPtrCurve(path, type, propertyName)
+            : EditorCurveBinding.FloatCurve(path, type, propertyName);
+    }
+
     private void DrawBindingsList(AnimationClip clip)
     {
         var bindings = GetBindingsMatchingSearchFilters(clip);
@@ -180,8 +197,14 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.Space(15 * EditorGUI.indentLevel);
-                if (GUILayout.Button("S", GUILayout.Width(20)))
-                    selectedSourceBinding = b;
+
+                var isSelected = IsSelectedSource(b);
+                using (var cc = new EditorGUI.ChangeCheckScope())
+                {
+                    var newSelected = GUILayout.Toggle(isSelected, "S", GUI.skin.button, GUILayout.Width(20));
+                    if (cc.changed)
+                        selectedSourceBinding = newSelected ? b : null;
+                }
 
                 GUILayout.Label(range, GUILayout.Width(90));
 
@@ -394,7 +417,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         GUILayout.Space(15 * EditorGUI.indentLevel);
-                        if (GUILayout.Button("-", GUILayout.Width(20)))
+                        if (GUILayout.Button("-", GUILayout.Height(18), GUILayout.Width(18)))
                         {
                             selectedSourceBinding = null;
                         }
@@ -424,7 +447,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         GUILayout.Space(15 * EditorGUI.indentLevel);
-                        if (GUILayout.Button("-", GUILayout.Width(20)))
+                        if (GUILayout.Button("-", GUILayout.Height(18), GUILayout.Width(18)))
                         {
                             selectedTargetBindings.RemoveAt(i);
                             i--;
@@ -574,22 +597,45 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                             using var horizontal = new EditorGUILayout.HorizontalScope();
                             ParseSignature(sig, out var prop, out var isPPtr);
                             GUILayout.Space(15 * EditorGUI.indentLevel);
+
                             using (new EditorGUI.DisabledScope(selectedGOs.Length != 1))
                             {
-                                if (GUILayout.Button("S", GUILayout.Width(20)))
+                                var root = AvatarDescriptor.gameObject.transform;
+                                var singleBinding = selectedGOs.Length == 1
+                                    ? BuildBindingForGameObject(root, selectedGOs[0], type, prop, isPPtr)
+                                    : default;
+
+                                var isSelected = selectedGOs.Length == 1 && IsSelectedSource(singleBinding);
+                                using var cc = new EditorGUI.ChangeCheckScope();
+                                var newSelected = GUILayout.Toggle(isSelected, "S", GUI.skin.button, GUILayout.Width(20));
+                                if (cc.changed)
+                                    selectedSourceBinding = newSelected ? singleBinding : null;
+                            }
+
+                            var rootT = AvatarDescriptor.gameObject.transform;
+                            var bindingsForSelection = selectedGOs
+                                .Select(go => BuildBindingForGameObject(rootT, go, type, prop, isPPtr))
+                                .ToList();
+                            var allSelectedInTargets = bindingsForSelection.Count > 0 &&
+                                bindingsForSelection.All(IsTargetBinding);
+
+                            using (var cc = new EditorGUI.ChangeCheckScope())
+                            {
+                                var newSelected = GUILayout.Toggle(allSelectedInTargets, "T", GUI.skin.button, GUILayout.Width(20));
+                                if (cc.changed)
                                 {
-                                    var pathToSelected = selectedGOs.Length == 1
-                                        ? (selectedGOs[0].transform == AvatarDescriptor.gameObject.transform ? string.Empty : AnimationUtility.CalculateTransformPath(selectedGOs[0].transform, AvatarDescriptor.gameObject.transform))
-                                        : string.Empty;
-                                    selectedSourceBinding = isPPtr
-                                        ? EditorCurveBinding.PPtrCurve(pathToSelected, type, prop)
-                                        : EditorCurveBinding.FloatCurve(pathToSelected, type, prop);
+                                    if (newSelected)
+                                    {
+                                        AddTargetBindingsForSelection(type, prop, isPPtr, selectedGOs);
+                                    }
+                                    else
+                                    {
+                                        foreach (var b in bindingsForSelection)
+                                            RemoveTargetBinding(b);
+                                    }
                                 }
                             }
-                            if (GUILayout.Button("T", GUILayout.Width(20)))
-                            {
-                                AddTargetBindingsForSelection(type, prop, isPPtr, selectedGOs);
-                            }
+
                             GUILayout.Label(prop, GUILayout.ExpandWidth(true));
                             GUILayout.Label(isPPtr ? "(Object Ref)" : "(Curve)", GUILayout.Width(90));
                         }
