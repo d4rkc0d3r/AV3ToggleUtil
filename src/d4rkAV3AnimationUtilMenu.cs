@@ -787,6 +787,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     public static void d4rkAV3AnimationUtilMenuItem()
     {
         var window = GetWindow(typeof(d4rkAV3AnimationUtilMenu)) as d4rkAV3AnimationUtilMenu;
+        window.titleContent = new GUIContent("d4rk AV3 Animation Util");
     }
 
     private void OnSelectionChange()
