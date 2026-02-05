@@ -192,7 +192,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
             var b = item.binding;
             var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
-            var range = GetCurveRangeText(clip, b);
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -206,7 +205,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                         selectedSourceBinding = newSelected ? b : null;
                 }
 
-                GUILayout.Label(range, GUILayout.Width(90));
+                DrawCurveValues(clip, b, GUILayout.Width(90));
 
                 var prevColor = GUI.contentColor;
                 if (!item.matched)
@@ -263,25 +262,49 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
     }
 
-    // For curve bindings, returns bracketed min..max or a single number if all keyframes share the same value.
-    private string GetCurveRangeText(AnimationClip clip, EditorCurveBinding binding)
+    private void DrawCurveValues(AnimationClip clip, EditorCurveBinding binding, params GUILayoutOption[] options)
     {
         var curve = AnimationUtility.GetEditorCurve(clip, binding);
-        if (curve == null || curve.keys == null || curve.keys.Length == 0) return string.Empty;
-
-        float min = curve.keys[0].value;
-        float max = min;
-        for (int i = 1; i < curve.keys.Length; i++)
+        string text = null;
+        if (curve == null)
         {
-            var v = curve.keys[i].value;
-            if (v < min) min = v;
-            if (v > max) max = v;
+            var objKeys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
+            if (objKeys != null && objKeys.Length != 0)
+            {
+                var objects = objKeys.Select(k => k.value).Distinct().ToArray();
+                string tooltip = "";
+                if (objects.Length > 1)
+                {
+                    tooltip = string.Join("\n", objects.Select(o => o == null ? "null" : o.name));
+                    EditorGUI.showMixedValue = true;
+                }
+                var type = objects.Length == 0 || objects[0] == null ? typeof(UnityEngine.Object) : objects[0].GetType();
+                var prevIndent = EditorGUI.indentLevel;
+                EditorGUI.indentLevel = 0;
+                var rect = EditorGUILayout.GetControlRect(options);
+                EditorGUI.ObjectField(rect, objects.Length >= 1 ? objects[0] : null, type, false);
+                GUI.Label(rect, new GUIContent("", tooltip));
+                EditorGUI.indentLevel = prevIndent;
+                EditorGUI.showMixedValue = false;
+                return;
+            }
+            text = "empty";
         }
-
-        if (Mathf.Approximately(min, max))
-            return min.ToString("0.###");
-
-        return $"[{min:0.###}..{max:0.###}]";
+        if (curve != null && (curve.keys == null || curve.keys.Length == 0))
+            text = "empty";
+        if (text == null)
+        {
+            float min = curve.keys[0].value;
+            float max = min;
+            for (int i = 1; i < curve.keys.Length; i++)
+            {
+                var v = curve.keys[i].value;
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }
+            text = Mathf.Approximately(min, max) ? min.ToString("0.###") : $"[{min:0.###}..{max:0.###}]";
+        }
+        GUILayout.Label(text, options);
     }
 
     private TEnum EnumMultiButton<TEnum>(TEnum currentValue, bool expand = true)
