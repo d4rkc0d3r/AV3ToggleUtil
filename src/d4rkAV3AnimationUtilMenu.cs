@@ -269,7 +269,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 var isSelected = IsSelectedSource(b);
                 using (var cc = new EditorGUI.ChangeCheckScope())
                 {
-                    var newSelected = GUILayout.Toggle(isSelected, "S", GUI.skin.button, GUILayout.Width(20));
+                    var newSelected = GUILayout.Toggle(isSelected, new GUIContent("S", "Select as source binding"), GUI.skin.button, GUILayout.Width(20));
                     if (cc.changed)
                         selectedSourceBinding = newSelected ? b : null;
                 }
@@ -509,7 +509,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         GUILayout.Space(15 * EditorGUI.indentLevel);
-                        if (GUILayout.Button("-", GUILayout.Height(18), GUILayout.Width(18)))
+                        if (GUILayout.Button(new GUIContent("-", "Clear source binding"), GUILayout.Height(18), GUILayout.Width(18)))
                         {
                             selectedSourceBinding = null;
                         }
@@ -539,7 +539,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         GUILayout.Space(15 * EditorGUI.indentLevel);
-                        if (GUILayout.Button("-", GUILayout.Height(18), GUILayout.Width(18)))
+                        if (GUILayout.Button(new GUIContent("-", "Remove target binding"), GUILayout.Height(18), GUILayout.Width(18)))
                         {
                             selectedTargetBindings.RemoveAt(i);
                             i--;
@@ -697,7 +697,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
                                 var isSelected = selectedGOs.Length == 1 && IsSelectedSource(singleBinding);
                                 using var cc = new EditorGUI.ChangeCheckScope();
-                                var newSelected = GUILayout.Toggle(isSelected, "S", GUI.skin.button, GUILayout.Width(20));
+                                var newSelected = GUILayout.Toggle(isSelected, new GUIContent("S", "Select as source binding"), GUI.skin.button, GUILayout.Width(20));
                                 if (cc.changed)
                                     selectedSourceBinding = newSelected ? singleBinding : null;
                             }
@@ -711,7 +711,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
                             using (var cc = new EditorGUI.ChangeCheckScope())
                             {
-                                var newSelected = GUILayout.Toggle(allSelectedInTargets, "T", GUI.skin.button, GUILayout.Width(20));
+                                var newSelected = GUILayout.Toggle(allSelectedInTargets, new GUIContent("T", "Select as target binding"), GUI.skin.button, GUILayout.Width(20));
                                 if (cc.changed)
                                 {
                                     if (newSelected)
