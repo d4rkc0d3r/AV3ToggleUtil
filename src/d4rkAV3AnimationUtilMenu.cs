@@ -1,14 +1,12 @@
 ﻿#if UNITY_EDITOR
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using VRC.SDK3.Avatars.Components;
-using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 using System;
-using UnityEngine.UIElements;
+using System.Text.RegularExpressions;
 
 public class d4rkAV3AnimationUtilMenu : EditorWindow
 {
@@ -16,6 +14,87 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     {
         Search,
         SelectionBindings
+    }
+
+    public class TextFilter
+    {
+        private string text = "";
+        private bool isRegex = false;
+        private bool isCaseSensitive = false;
+        private bool invert = false;
+
+        public string Text
+        {
+            get => text;
+            set
+            {
+                if (text != value)
+                {
+                    text = value;
+                    matchCache.Clear();
+                }
+            }
+        }
+
+        private readonly Dictionary<string, bool> matchCache = new();
+
+        public bool Matches(string input)
+        {
+            if (string.IsNullOrEmpty(text))
+                return true;
+            input ??= "";
+            if (matchCache.TryGetValue(input, out var cached))
+                return cached;
+            if (isRegex)
+            {
+                try
+                {
+                    var regex = new Regex(text, isCaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase);
+                    bool isMatch = input != null && regex.IsMatch(input);
+                    return matchCache[input] = isMatch ^ invert;
+                }
+                catch (Exception)
+                {
+                    return matchCache[input] = true;
+                }
+            }
+            var comparison = isCaseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+            bool contains = input != null && input.IndexOf(text, comparison) >= 0;
+            return matchCache[input] = contains ^ invert;
+        }
+
+        public void DrawGUI(string label)
+        {
+            using var _ = new EditorGUILayout.HorizontalScope();
+            using var cc = new EditorGUI.ChangeCheckScope();
+
+            string regexError = null;
+            if (isRegex && !string.IsNullOrEmpty(text))
+            {
+                try { var regex = new Regex(text, isCaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase); }
+                catch (Exception ex) { regexError = ex.Message; }
+            }
+
+            var prevColor = GUI.contentColor;
+            if (regexError != null)
+                GUI.contentColor = new Color(1f, 1f, 0.3f);
+
+            var rect = EditorGUILayout.GetControlRect();
+            text = EditorGUI.TextField(rect, new GUIContent(label), text);
+            if (regexError != null)
+                GUI.Label(rect, new GUIContent("", regexError));
+
+            GUI.contentColor = prevColor;
+
+            isRegex = GUILayout.Toggle(isRegex, "Regex", GUI.skin.button, GUILayout.ExpandWidth(false));
+            isCaseSensitive = GUILayout.Toggle(isCaseSensitive, "Case", GUI.skin.button, GUILayout.ExpandWidth(false));
+            invert = GUILayout.Toggle(invert, "Invert", GUI.skin.button, GUILayout.ExpandWidth(false));
+
+            if (cc.changed)
+            {
+                matchCache.Clear();
+            }
+        }
     }
 
     private VRCAvatarDescriptor avatarDescriptor = null;
@@ -81,9 +160,9 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private bool showAllBindings = false;
     private SelectionMode selectionMode = SelectionMode.Search;
     private bool filterBySelection = true;
-    private string searchBindingPathFilter = "";
-    private string searchBindingPropertyFilter = "";
-    private string searchBindingTypeFilter = "";
+    private TextFilter searchBindingPathFilter = new();
+    private TextFilter searchBindingPropertyFilter = new();
+    private TextFilter searchBindingTypeFilter = new();
     private Dictionary<int, bool> clipShowFilteredBindings = new();
 
     private bool GetClipShowBindings(AnimationClip clip)
@@ -491,14 +570,14 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             filterBySelection = EditorGUILayout.ToggleLeft("Filter by current selection", filterBySelection);
 
             if (filterBySelection)
-                searchBindingPathFilter = GetSelectionPathsUnderAvatar().FirstOrDefault() ?? "";
+                searchBindingPathFilter.Text = GetSelectionPathsUnderAvatar().FirstOrDefault() ?? "";
 
             using (new EditorGUI.DisabledScope(filterBySelection))
             {
-                searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
+                searchBindingPathFilter.DrawGUI("Binding Path Filter");
             }
-            searchBindingPropertyFilter = EditorGUILayout.TextField("Binding Property Filter", searchBindingPropertyFilter);
-            searchBindingTypeFilter = EditorGUILayout.TextField("Binding Type Filter", searchBindingTypeFilter);
+            searchBindingPropertyFilter.DrawGUI("Binding Property Filter");
+            searchBindingTypeFilter.DrawGUI("Binding Type Filter");
 
             var allClips = AnimationClips ?? new List<AnimationClip>();
             var filteredClips = allClips
@@ -711,14 +790,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     {
         if (clip == null) yield break;
 
-        var pathFilter = searchBindingPathFilter;
-        var propertyFilter = searchBindingPropertyFilter;
-        var typeFilter = searchBindingTypeFilter;
-
-        var hasPath = !string.IsNullOrWhiteSpace(pathFilter);
-        var hasProp = !string.IsNullOrWhiteSpace(propertyFilter);
-        var hasType = !string.IsNullOrWhiteSpace(typeFilter);
-
         bool Matches(EditorCurveBinding b)
         {
             if (filterBySelection)
@@ -729,12 +800,12 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             }
             else
             {
-                if (hasPath && (b.path?.IndexOf(pathFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
+                if (!searchBindingPathFilter.Matches(b.path))
                     return false;
             }
-            if (hasProp && (b.propertyName?.IndexOf(propertyFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
+            if (!searchBindingPropertyFilter.Matches(b.propertyName))
                 return false;
-            if (hasType && (b.type?.Name?.IndexOf(typeFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
+            if (!searchBindingTypeFilter.Matches(b.type?.Name))
                 return false;
             return true;
         }
