@@ -19,7 +19,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     public class TextFilter
     {
         private string text = "";
-        private bool isRegex = false;
+        private bool isRegex = true;
         private bool isCaseSensitive = false;
         private bool invert = false;
 
@@ -163,15 +163,15 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private TextFilter searchBindingPathFilter = new();
     private TextFilter searchBindingPropertyFilter = new();
     private TextFilter searchBindingTypeFilter = new();
-    private Dictionary<int, bool> clipShowFilteredBindings = new();
+    private Dictionary<(int id, bool showSelected), bool> clipShowFilteredBindings = new();
 
     private bool GetClipShowBindings(AnimationClip clip)
     {
         if (clip == null)
             return false;
-        if (!clipShowFilteredBindings.TryGetValue(clip.GetInstanceID(), out var value))
+        if (!clipShowFilteredBindings.TryGetValue((clip.GetInstanceID(), filterBySelection), out var value))
         {
-            clipShowFilteredBindings[clip.GetInstanceID()] = value = filterBySelection;
+            clipShowFilteredBindings[(clip.GetInstanceID(), filterBySelection)] = value = filterBySelection;
         }
         return value;
     }
@@ -180,7 +180,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     {
         if (clip == null)
             return;
-        clipShowFilteredBindings[clip.GetInstanceID()] = value;
+        clipShowFilteredBindings[(clip.GetInstanceID(), filterBySelection)] = value;
     }
 
     private Dictionary<GameObject, Dictionary<Type, List<EditorCurveBinding>>> cachedAnimatableBindings = new();
