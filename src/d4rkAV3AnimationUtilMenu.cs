@@ -18,12 +18,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         SelectionBindings
     }
 
-    private enum PathFilterMode
-    {
-        Text,
-        Selection
-    }
-
     private VRCAvatarDescriptor avatarDescriptor = null;
     private VRCAvatarDescriptor AvatarDescriptor
     {
@@ -86,7 +80,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private bool showBlendShapeBindings = false;
     private bool showAllBindings = false;
     private SelectionMode selectionMode = SelectionMode.Search;
-    private PathFilterMode pathFilterMode = PathFilterMode.Selection;
+    private bool filterBySelection = true;
     private string searchBindingPathFilter = "";
     private string searchBindingPropertyFilter = "";
     private string searchBindingTypeFilter = "";
@@ -98,8 +92,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             return false;
         if (!clipShowFilteredBindings.TryGetValue(clip.GetInstanceID(), out var value))
         {
-            clipShowFilteredBindings[clip.GetInstanceID()] = value =
-                pathFilterMode == PathFilterMode.Selection;
+            clipShowFilteredBindings[clip.GetInstanceID()] = value = filterBySelection;
         }
         return value;
     }
@@ -496,17 +489,15 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         if (selectionMode == SelectionMode.Search)
         {
             using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
+            
+            filterBySelection = EditorGUILayout.ToggleLeft("Filter by current selection", filterBySelection);
 
-            if (pathFilterMode == PathFilterMode.Selection)
+            if (filterBySelection)
                 searchBindingPathFilter = GetSelectionPathsUnderAvatar().FirstOrDefault() ?? "";
 
-            using (new EditorGUILayout.HorizontalScope())
+            using (new EditorGUI.DisabledScope(filterBySelection))
             {
-                using (new EditorGUI.DisabledScope(pathFilterMode == PathFilterMode.Selection))
-                {
-                    searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
-                }
-                pathFilterMode = EnumMultiButton(pathFilterMode, expand:false);
+                searchBindingPathFilter = EditorGUILayout.TextField("Binding Path Filter", searchBindingPathFilter);
             }
             searchBindingPropertyFilter = EditorGUILayout.TextField("Binding Property Filter", searchBindingPropertyFilter);
             searchBindingTypeFilter = EditorGUILayout.TextField("Binding Type Filter", searchBindingTypeFilter);
@@ -732,17 +723,16 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
         bool Matches(EditorCurveBinding b)
         {
-            switch (pathFilterMode)
+            if (filterBySelection)
             {
-                case PathFilterMode.Selection:
-                    var selectionPaths = GetSelectionPathsUnderAvatar();
-                    if (selectionPaths.Count > 0 && !selectionPaths.Contains(b.path))
-                        return false;
-                    break;
-                case PathFilterMode.Text:
-                    if (hasPath && (b.path?.IndexOf(pathFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
-                        return false;
-                    break;
+                var selectionPaths = GetSelectionPathsUnderAvatar();
+                if (selectionPaths.Count > 0 && !selectionPaths.Contains(b.path))
+                    return false;
+            }
+            else
+            {
+                if (hasPath && (b.path?.IndexOf(pathFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
+                    return false;
             }
             if (hasProp && (b.propertyName?.IndexOf(propertyFilter, StringComparison.OrdinalIgnoreCase) ?? -1) < 0)
                 return false;
@@ -786,7 +776,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     [MenuItem("Tools/d4rkpl4y3r/AV3 Animation Util")]
     public static void d4rkAV3AnimationUtilMenuItem()
     {
-        var window = GetWindow(typeof(d4rkAV3AnimationUtilMenu)) as d4rkAV3AnimationUtilMenu;
+        var window = GetWindow<d4rkAV3AnimationUtilMenu>();
         window.titleContent = new GUIContent("d4rk AV3 Animation Util");
     }
 
