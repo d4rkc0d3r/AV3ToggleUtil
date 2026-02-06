@@ -143,18 +143,16 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     {
         var root = AvatarDescriptor?.gameObject?.transform;
         GUILayout.Label(string.IsNullOrEmpty(path) ? "(root)" : path, options);
-        if (Event.current.type == EventType.MouseDown && GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition) && Event.current.button == 0)
+        var t = root != null && !string.IsNullOrEmpty(path) ? root.Find(path) : root;
+        if (t != null)
         {
-            if (root != null)
+            EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
+            if (Event.current.type == EventType.MouseDown && GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition) && Event.current.button == 0)
             {
-                var t = string.IsNullOrEmpty(path) ? root : root.Find(path);
-                if (t != null)
-                {
-                    Selection.activeGameObject = t.gameObject;
-                    EditorGUIUtility.PingObject(t.gameObject);
-                }
+                Selection.activeGameObject = t.gameObject;
+                EditorGUIUtility.PingObject(t.gameObject);
+                Event.current.Use();
             }
-            Event.current.Use();
         }
     }
 
@@ -489,7 +487,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         if (selectionMode == SelectionMode.Search)
         {
             using var box = new EditorGUILayout.VerticalScope(GUI.skin.box);
-            
+
             filterBySelection = EditorGUILayout.ToggleLeft("Filter by current selection", filterBySelection);
 
             if (filterBySelection)
