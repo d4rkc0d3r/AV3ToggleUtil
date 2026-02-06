@@ -154,7 +154,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private Vector2 scrollPos;
     private EditorCurveBinding? selectedSourceBinding = null;
     private List<EditorCurveBinding> selectedTargetBindings = new();
-    private string bindingFilter = "";
+    private TextFilter bindingFilter = new();
     private bool showMaterialBindings = false;
     private bool showBlendShapeBindings = false;
     private bool showAllBindings = false;
@@ -198,8 +198,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 continue;
             if (!showBlendShapeBindings && animatableBinding.propertyName.StartsWith("blendShape."))
                 continue;
-            if (string.IsNullOrWhiteSpace(bindingFilter) == false &&
-                animatableBinding.propertyName.IndexOf(bindingFilter, StringComparison.OrdinalIgnoreCase) < 0)
+            if (!bindingFilter.Matches(animatableBinding.propertyName))
             {
                 continue;
             }
@@ -647,7 +646,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             // Binding filters
             using (var bindingFilters = new EditorGUI.ChangeCheckScope())
             {
-                bindingFilter = EditorGUILayout.TextField("Binding Filter", bindingFilter);
+                bindingFilter.DrawGUI("Binding Filter");
                 showMaterialBindings = EditorGUILayout.Toggle("Material", showMaterialBindings);
                 showBlendShapeBindings = EditorGUILayout.Toggle("BlendShapes", showBlendShapeBindings);
                 if (bindingFilters.changed)
