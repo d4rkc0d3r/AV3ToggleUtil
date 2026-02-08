@@ -70,39 +70,48 @@ public class CreateAV3ToggleMenu : EditorWindow
         return text;
     }
 
+    private static string TrimAfterLastSlash(string path)
+    {
+        int lastSlash = path.LastIndexOf("/");
+        return lastSlash >= 0 ? path[..lastSlash] : path;
+    }
+
     private static string GetAssetFolder(Object asset)
     {
-        string path = AssetDatabase.GetAssetPath(asset);
-        return path == "" ? "" : path.Substring(0, path.LastIndexOf("/"));
+        return TrimAfterLastSlash(AssetDatabase.GetAssetPath(asset));
     }
 
     private string GetAnimationsFolderPath()
     {
-        var descriptor = FindAvatarDescriptor(Target);
-        var path = GetAssetFolder(descriptor.expressionParameters) + "/Animations";
+        const string animationsFolderName = "Animations";
+        var av = FindAvatarDescriptor(Target);
+        var path = $"{GetAssetFolder(av.baseAnimationLayers[4].animatorController)}/{animationsFolderName}";
+        if (AssetDatabase.IsValidFolder(path) && path != $"/{animationsFolderName}")
+            return path;
+        path = $"{GetAssetFolder(av.expressionParameters)}/{animationsFolderName}";
         if (AssetDatabase.IsValidFolder(path))
             return path;
-        path = GetAssetFolder(descriptor.expressionsMenu) + "/Animations";
+        path = $"{GetAssetFolder(av.expressionsMenu)}/{animationsFolderName}";
         if (AssetDatabase.IsValidFolder(path))
             return path;
-        return GetAssetFolder(descriptor.baseAnimationLayers[4].animatorController) + "/Animations";
+        return $"{GetAssetFolder(av.baseAnimationLayers[4].animatorController)}/{animationsFolderName}";
     }
 
     private string CanCreateToggle()
     {
-        var descriptor = FindAvatarDescriptor(Target);
-        if (descriptor == null)
+        var av = FindAvatarDescriptor(Target);
+        if (av == null)
             return "No Avatar Descriptor Found";
-        if (AssetDatabase.GetAssetPath(descriptor.expressionParameters) == "")
+        if (AssetDatabase.GetAssetPath(av.expressionParameters) == "")
             return "No Custom Parameters Found";
-        if (AssetDatabase.GetAssetPath(descriptor.expressionsMenu) == "")
+        if (AssetDatabase.GetAssetPath(av.expressionsMenu) == "")
             return "No Custom Menu Found";
         if (TargetMenu.controls.Count >= 8)
             return "Target Menu Is Full Already";
-        var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
+        var fxLayer = av.baseAnimationLayers[4].animatorController as AnimatorController;
         if (AssetDatabase.GetAssetPath(fxLayer) == "")
             return "No Custom FxLayer Found";
-        if (descriptor.expressionParameters.FindParameter(ToggleName) != null)
+        if (av.expressionParameters.FindParameter(ToggleName) != null)
             return "Parameter Exists Already";
         if (fxLayer.layers.Any(l => l.name == ToggleName))
             return "Layer Exists Already";
@@ -490,7 +499,7 @@ public class CreateAV3ToggleMenu : EditorWindow
 
     public static VRCAvatarDescriptor FindAvatarDescriptor(GameObject obj)
     {
-        VRCAvatarDescriptor descriptor = null;
+        VRCAvatarDescriptor descriptor;
         while (!obj.TryGetComponent(out descriptor))
         {
             if (obj.transform.parent == null)
