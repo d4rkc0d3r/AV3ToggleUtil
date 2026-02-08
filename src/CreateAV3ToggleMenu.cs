@@ -195,6 +195,8 @@ public class CreateAV3ToggleMenu : EditorWindow
             var componentName = component.GetType().Name;
             if (componentName == "Transform")
                 componentName = "GameObject";
+            else if (GetAnimatableBindings(component).Count == 0)
+                continue;
             GUILayout.Label(componentName, GUILayout.Width(EditorGUIUtility.labelWidth - 3));
             var toggleBinding = GetComponentToggleBinding(component);
             bool isAlreadyIncluded = bindingsToToggle.ContainsKey(toggleBinding);
@@ -464,13 +466,10 @@ public class CreateAV3ToggleMenu : EditorWindow
                 continue;
             if (animatableBinding.isPPtrCurve)
                 continue;
-            if (propName == "m_Enabled" || propName == "m_IsActive")
-                continue;
             if (propName.Length > 2 && propName[^2] == '.' && vectorChars.Contains(propName[^1]))
                 continue;
             bindings.Add(animatableBinding);
         }
-        bindings.Sort((a, b) => string.Compare(a.propertyName, b.propertyName));
         return cachedAnimatableBindings[component] = bindings;
     }
 
