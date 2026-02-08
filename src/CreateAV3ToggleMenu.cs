@@ -70,6 +70,18 @@ public class CreateAV3ToggleMenu : EditorWindow
         return text;
     }
 
+    private bool ClickableLastRect()
+    {
+        var rect = GUILayoutUtility.GetLastRect();
+        EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
+        var clicked = Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition) && Event.current.button == 0;
+        if (clicked)
+        {
+            Event.current.Use();
+        }
+        return clicked;
+    }
+
     private static string TrimAfterLastSlash(string path)
     {
         int lastSlash = path.LastIndexOf("/");
@@ -468,10 +480,20 @@ public class CreateAV3ToggleMenu : EditorWindow
         EditorGUILayout.LabelField("Avatar", descriptor?.name);
         if (descriptor == null)
             return;
+        if (ClickableLastRect())
+            EditorGUIUtility.PingObject(descriptor);
         EditorGUILayout.LabelField("AnimationFolder", GetAnimationsFolderPath());
+        if (ClickableLastRect())
+            EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<DefaultAsset>(GetAnimationsFolderPath()));
         EditorGUILayout.LabelField("ParamAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionParameters));
+        if (ClickableLastRect())
+            EditorGUIUtility.PingObject(descriptor.expressionParameters);
         EditorGUILayout.LabelField("MenuAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionsMenu));
+        if (ClickableLastRect())
+            EditorGUIUtility.PingObject(descriptor.expressionsMenu);
         EditorGUILayout.LabelField("FxLayerAssetPath", AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController));
+        if (ClickableLastRect())
+            EditorGUIUtility.PingObject(descriptor.baseAnimationLayers[4].animatorController);
     }
 
     private static readonly HashSet<char> vectorChars = new() { 'x', 'y', 'z', 'w', 'r', 'g', 'b', 'a' };
