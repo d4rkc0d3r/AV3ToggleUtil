@@ -165,18 +165,18 @@ public class CreateAV3ToggleMenu : EditorWindow
             bool isToggle = binding.propertyName == "m_IsActive" || binding.propertyName == "m_Enabled";
             float FloatOrToggleField(float value)
             {
-                using var disabledScope = new EditorGUI.DisabledScope(isToggle);
                 return isToggle
                     ? (EditorGUILayout.Toggle(value > 0.5f, valueLayout) ? 1.0f : 0.0f)
                     : EditorGUILayout.FloatField(value, valueLayout);
             }
             GUILayout.Label($"{binding.type.Name}:{binding.propertyName}", bindingLayout);
+            using var cc = new EditorGUI.ChangeCheckScope();
             GUILayout.Space(spacing);
             float newOffValue = FloatOrToggleField(values.offValue);
             GUILayout.Space(spacing);
             float newOnValue = FloatOrToggleField(values.onValue);
             GUILayout.Space(spacing);
-            if (GUILayout.Button("Flip", invertLayout))
+            if (GUILayout.Button("Flip", invertLayout) || (isToggle && cc.changed))
             {
                 newOffValue = values.onValue;
                 newOnValue = values.offValue;
