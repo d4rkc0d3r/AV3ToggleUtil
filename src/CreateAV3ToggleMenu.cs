@@ -215,6 +215,24 @@ public class CreateAV3ToggleMenu : EditorWindow
         return text;
     }
 
+    (float offValue, float onValue) GetDefaultValuesForBinding(EditorCurveBinding binding)
+    {
+        float currentValue = 0;
+        if (AnimationUtility.GetFloatValue(FindAvatarDescriptor(Target).gameObject, binding, out var sceneValue))
+        {
+            currentValue = sceneValue;
+        }
+        if (currentValue != 0)
+        {
+            return (0, currentValue);
+        }
+        if (binding.propertyName.StartsWith("blendShape"))
+        {
+            return (0, 100);
+        }
+        return (0, 1);
+    }
+
     void OnGUI()
     {
         using var scrollView = new EditorGUILayout.ScrollViewScope(scrollPos);
@@ -280,11 +298,15 @@ public class CreateAV3ToggleMenu : EditorWindow
                 GUILayout.Space(15);
                 bool isAlreadyIncluded = bindingsToToggle.ContainsKey(binding);
                 bool shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Select", GUI.skin.button, GUILayout.ExpandWidth(false));
-                GUILayout.Space(10);
+                GUILayout.Space(20);
                 GUILayout.Label($"{binding.propertyName}");
+                if (AnimationUtility.GetFloatValue(FindAvatarDescriptor(Target).gameObject, binding, out var sceneValue))
+                {
+                    GUILayout.Label($"{sceneValue}", GUILayout.Width(60));
+                }
                 if (shouldBeIncluded && !isAlreadyIncluded)
                 {
-                    bindingsToToggle.Add(binding, (0, binding.propertyName.StartsWith("blendShape") ? 100 : 1));
+                    bindingsToToggle.Add(binding, GetDefaultValuesForBinding(binding));
                 }
                 else if (!shouldBeIncluded && isAlreadyIncluded)
                 {
