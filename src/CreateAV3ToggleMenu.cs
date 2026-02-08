@@ -1,5 +1,4 @@
 ﻿#if UNITY_EDITOR
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -10,8 +9,8 @@ using UnityEditor.Animations;
 
 public class CreateAV3ToggleMenu : EditorWindow
 {
-    private Dictionary<Component, bool> componentToggles = new Dictionary<Component, bool>();
-    private bool invertToggleState = false;
+    private Dictionary<EditorCurveBinding, (float offValue, float onValue)> bindingsToToggle = new();
+    private bool defaultToggleState = false;
     private Vector2 scrollPos;
     private GameObject target;
     public GameObject Target
@@ -23,14 +22,10 @@ public class CreateAV3ToggleMenu : EditorWindow
                 return;
             target = value;
             toggleName = "";
-            componentToggles.Clear();
+            bindingsToToggle.Clear();
             if (Target == null)
                 return;
-            foreach (var component in Target.GetComponents<Component>())
-            {
-                componentToggles[component] = false;
-            }
-            componentToggles[Target.transform] = true;
+            defaultToggleState = Target.activeSelf;
         }
     }
     private string toggleName = "";
@@ -54,15 +49,11 @@ public class CreateAV3ToggleMenu : EditorWindow
     public string GetDefaultToggleName()
     {
         string name = "Toggle" + Target.name;
-        var toggleArray = componentToggles.Where(p => p.Value).Select(p => p.Key).ToArray();
-        if (toggleArray.Length == 1 && !(toggleArray[0] is Transform))
+        var toggleArray = bindingsToToggle.Select(b => b.Key).ToArray();
+        if (toggleArray.Length == 1)
         {
-            var fullType = toggleArray[0].GetType().ToString();
-            if (fullType.LastIndexOf(".") != -1)
-            {
-                fullType = fullType.Substring(fullType.LastIndexOf(".") + 1);
-            }
-            name += fullType;
+            if (toggleArray[0].type.Name != "GameObject")
+                name += toggleArray[0].type.Name;
         }
         return name;
     }
@@ -110,9 +101,77 @@ public class CreateAV3ToggleMenu : EditorWindow
             return "Toggle On Animation Exists Already";
         if (AssetDatabase.LoadAssetAtPath<AnimationClip>(path + "/" + ToggleName + "Off.anim") != null)
             return "Toggle Off Animation Exists Already";
-        if (componentToggles.Values.Count(v => v) == 0)
-            return "No Toggles Selected";
+        if (bindingsToToggle.Count == 0)
+            return "No Bindings Selected";
         return "";
+    }
+
+    void DrawBindingsToToggle()
+    {
+        var bindingLayout = GUILayout.ExpandWidth(true);
+        var valueLayout = GUILayout.Width(60);
+        var invertLayout = GUILayout.Width(40);
+        float spacing = 10;
+        float removeButtonWidth = 20;
+
+        using var verticalScope = new EditorGUILayout.VerticalScope("box");
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            GUILayout.Label("Binding", bindingLayout);
+            GUILayout.Space(spacing);
+            GUILayout.Label("Off Value", valueLayout);
+            GUILayout.Space(spacing);
+            GUILayout.Label("On Value", valueLayout);
+            GUILayout.Space(spacing);
+            GUILayout.Label("", invertLayout);
+            GUILayout.Space(removeButtonWidth);
+        }
+        foreach (var pair in bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray())
+        {
+            using var horizontalScope = new EditorGUILayout.HorizontalScope();
+            bool isToggle = pair.Key.propertyName == "m_IsActive" || pair.Key.propertyName == "m_Enabled";
+            float FloatOrToggleField(float value)
+            {
+                using var disabledScope = new EditorGUI.DisabledScope(isToggle);
+                if (isToggle)
+                {
+                    return EditorGUILayout.Toggle(value > 0.5f, valueLayout) ? 1.0f : 0.0f;
+                }
+                else
+                {
+                    return EditorGUILayout.FloatField(value, valueLayout);
+                }
+            }
+            GUILayout.Label($"{pair.Key.type.Name}:{pair.Key.propertyName}", bindingLayout);
+            GUILayout.Space(spacing);
+            float newOffValue = FloatOrToggleField(pair.Value.offValue);
+            GUILayout.Space(spacing);
+            float newOnValue = FloatOrToggleField(pair.Value.onValue);
+            GUILayout.Space(spacing);
+            if (GUILayout.Button("Flip", invertLayout))
+            {
+                newOffValue = pair.Value.onValue;
+                newOnValue = pair.Value.offValue;
+            }
+            if (newOffValue != pair.Value.offValue || newOnValue != pair.Value.onValue)
+            {
+                bindingsToToggle[pair.Key] = (newOffValue, newOnValue);
+            }
+            if (GUILayout.Button("X", GUILayout.Width(removeButtonWidth)))
+            {
+                bindingsToToggle.Remove(pair.Key);
+            }
+        }
+    }
+
+    EditorCurveBinding GetComponentToggleBinding(Component component)
+    {
+        return new EditorCurveBinding()
+        {
+            path = AnimationUtility.CalculateTransformPath(component.transform, FindAvatarDescriptor(Target).transform),
+            propertyName = component is Transform ? "m_IsActive" : "m_Enabled",
+            type = component is Transform ? typeof(GameObject) : component.GetType()
+        };
     }
 
     void OnGUI()
@@ -126,13 +185,20 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         foreach (var component in Target.GetComponents<Component>())
         {
-            componentToggles.TryGetValue(component, out bool toggleValue);
-            var componentName = component.GetType().ToString();
-            if (componentName.LastIndexOf('.') != -1)
-                componentName = componentName.Substring(componentName.LastIndexOf('.') + 1);
+            var componentName = component.GetType().Name;
             if (componentName == "Transform")
                 componentName = "GameObject";
-            componentToggles[component] = EditorGUILayout.Toggle(componentName, toggleValue);
+            var toggleBinding = GetComponentToggleBinding(component);
+            bool isAlreadyIncluded = bindingsToToggle.ContainsKey(toggleBinding);
+            bool shouldBeIncluded = EditorGUILayout.Toggle(componentName, isAlreadyIncluded);
+            if (shouldBeIncluded && !isAlreadyIncluded)
+            {
+                bindingsToToggle.Add(toggleBinding, (0, 1));
+            }
+            else if (!shouldBeIncluded && isAlreadyIncluded)
+            {
+                bindingsToToggle.Remove(toggleBinding);
+            }
         }
 
         GUILayout.Space(8);
@@ -142,7 +208,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         var descriptor = FindAvatarDescriptor(Target);
         TargetMenu = EditorGUILayout.ObjectField("Menu", TargetMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
 
-        invertToggleState = EditorGUILayout.Toggle("Invert Toggle State", invertToggleState);
+        defaultToggleState = EditorGUILayout.Toggle("Default Toggle State", defaultToggleState);
 
         GUILayout.Space(8);
 
@@ -152,7 +218,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         {
             string animFolder = GetAnimationsFolderPath();
             if (!AssetDatabase.IsValidFolder(animFolder))
-                AssetDatabase.CreateFolder(animFolder.Substring(0, animFolder.LastIndexOf("/")), "Animations");
+                AssetDatabase.CreateFolder(animFolder[..animFolder.LastIndexOf("/")], "Animations");
             string pathToAvatarRoot = "";
             var t = Target.transform;
             var root = descriptor.transform;
@@ -168,29 +234,25 @@ public class CreateAV3ToggleMenu : EditorWindow
             clipOn.name = ToggleName + "On";
             var clipOff = new AnimationClip();
             clipOff.name = ToggleName + "Off";
-            foreach (var pair in componentToggles.Where(p => p.Value))
+            foreach (var pair in bindingsToToggle)
             {
-                bool isGameObjectToggle = pair.Key is Transform;
-                EditorCurveBinding binding = new EditorCurveBinding();
-                binding.path = pathToAvatarRoot;
-                binding.propertyName = isGameObjectToggle ? "m_IsActive" : "m_Enabled";
-                binding.type = isGameObjectToggle ? typeof(GameObject) : pair.Key.GetType();
+                EditorCurveBinding binding = pair.Key;
                 var curveOn = new AnimationCurve();
-                curveOn.AddKey(0, invertToggleState ? 0 : 1);
-                curveOn.AddKey(1 / 60f, invertToggleState ? 0 : 1);
+                curveOn.AddKey(0, pair.Value.onValue);
+                curveOn.AddKey(1 / 60f, pair.Value.onValue);
                 AnimationUtility.SetEditorCurve(clipOn, binding, curveOn);
                 var curveOff = new AnimationCurve();
-                curveOff.AddKey(0, invertToggleState ? 1 : 0);
-                curveOff.AddKey(1 / 60f, invertToggleState ? 1 : 0);
+                curveOff.AddKey(0, pair.Value.offValue);
+                curveOff.AddKey(1 / 60f, pair.Value.offValue);
                 AnimationUtility.SetEditorCurve(clipOff, binding, curveOff);
             }
-            AssetDatabase.CreateAsset(clipOn, animFolder + "/" + clipOn.name + ".anim");
-            AssetDatabase.CreateAsset(clipOff, animFolder + "/" + clipOff.name + ".anim");
+            AssetDatabase.CreateAsset(clipOn, $"{animFolder}/{clipOn.name}.anim");
+            AssetDatabase.CreateAsset(clipOff, $"{animFolder}/{clipOff.name}.anim");
 
             var param = new VRCExpressionParameters.Parameter()
             {
                 name = ToggleName,
-                defaultValue = Target.activeSelf ^ invertToggleState ? 1.0f : 0.0f,
+                defaultValue = defaultToggleState ? 1.0f : 0.0f,
                 saved = true,
                 valueType = VRCExpressionParameters.ValueType.Bool
             };
@@ -205,7 +267,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 name = ToggleName,
                 type = AnimatorControllerParameterType.Bool,
-                defaultBool = Target.activeSelf ^ invertToggleState
+                defaultBool = defaultToggleState
             });
 
             var layer = new AnimatorControllerLayer();
@@ -248,7 +310,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOff.hideFlags = HideFlags.HideInHierarchy;
             toggleOn.AddTransition(transitionToOff);
 
-            if (Target.activeSelf)
+            if (defaultToggleState)
             {
                 layer.stateMachine.AddState(toggleOn, new Vector3(300, 200, 0));
                 layer.stateMachine.AddState(toggleOff, new Vector3(300, 120, 0));
@@ -279,6 +341,10 @@ public class CreateAV3ToggleMenu : EditorWindow
             AssetDatabase.SaveAssets();
         }
         GUI.enabled = true;
+
+        GUILayout.Space(8);
+
+        DrawBindingsToToggle();
 
         GUILayout.Space(8);
 
@@ -339,8 +405,10 @@ public class CreateAV3ToggleMenu : EditorWindow
     [MenuItem("GameObject/Create AV3 Toggle", false, -1)]
     public static void CreateAV3ToggleMenuItem()
     {
-        var window = GetWindow(typeof(CreateAV3ToggleMenu)) as CreateAV3ToggleMenu;
+        var window = GetWindow<CreateAV3ToggleMenu>();
         window.Target = Selection.activeObject as GameObject;
+        window.titleContent = new GUIContent("Create AV3 Toggle");
+        window.Show();
     }
 
     [MenuItem("GameObject/Create AV3 Toggle", true, -1)]
