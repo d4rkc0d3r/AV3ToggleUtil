@@ -6,11 +6,15 @@ using UnityEditor;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
+using Type = System.Type;
+using d4rkpl4y3r.AV3ToggleUtil.Util;
 
 public class CreateAV3ToggleMenu : EditorWindow
 {
     private Dictionary<EditorCurveBinding, (float offValue, float onValue)> bindingsToToggle = new();
     private bool defaultToggleState = false;
+    private TextFilter bindingFilter = new();
+    private Component componentToSelectBindingFrom = null;
     private Vector2 scrollPos;
     private GameObject target;
     public GameObject Target
@@ -23,6 +27,8 @@ public class CreateAV3ToggleMenu : EditorWindow
             target = value;
             toggleName = "";
             bindingsToToggle.Clear();
+            cachedAnimatableBindings.Clear();
+            componentToSelectBindingFrom = null;
             if (Target == null)
                 return;
             defaultToggleState = Target.activeSelf;
@@ -185,12 +191,14 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         foreach (var component in Target.GetComponents<Component>())
         {
+            using var _ = new EditorGUILayout.HorizontalScope();
             var componentName = component.GetType().Name;
             if (componentName == "Transform")
                 componentName = "GameObject";
+            GUILayout.Label(componentName, GUILayout.Width(EditorGUIUtility.labelWidth - 3));
             var toggleBinding = GetComponentToggleBinding(component);
             bool isAlreadyIncluded = bindingsToToggle.ContainsKey(toggleBinding);
-            bool shouldBeIncluded = EditorGUILayout.Toggle(componentName, isAlreadyIncluded);
+            bool shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Toggle", GUI.skin.button, GUILayout.ExpandWidth(false));
             if (shouldBeIncluded && !isAlreadyIncluded)
             {
                 bindingsToToggle.Add(toggleBinding, (0, 1));
@@ -198,6 +206,53 @@ public class CreateAV3ToggleMenu : EditorWindow
             else if (!shouldBeIncluded && isAlreadyIncluded)
             {
                 bindingsToToggle.Remove(toggleBinding);
+            }
+            GUILayout.Space(10);
+            if (GetAnimatableBindings(component).Count > 0)
+            {
+                bool isCurrentlySelectedComponent = component == componentToSelectBindingFrom;
+                bool isSelectedComponent = GUILayout.Toggle(isCurrentlySelectedComponent, "Search Bindings", GUI.skin.button, GUILayout.ExpandWidth(false));
+                if (isSelectedComponent && !isCurrentlySelectedComponent)
+                {
+                    componentToSelectBindingFrom = component;
+                }
+                else if (!isSelectedComponent && isCurrentlySelectedComponent)
+                {
+                    componentToSelectBindingFrom = null;
+                }
+            }
+        }
+
+        if (componentToSelectBindingFrom != null)
+        {
+            GUILayout.Space(8);
+            using var box = new EditorGUILayout.VerticalScope("box");
+            GUILayout.Label($"Search bindings for {componentToSelectBindingFrom.GetType().Name}:", EditorStyles.boldLabel);
+            using var indentScope = new EditorGUI.IndentLevelScope();
+            using var cc = new EditorGUI.ChangeCheckScope();
+            bindingFilter.DrawGUI("Binding Filter");
+            if (cc.changed)
+            {
+                cachedAnimatableBindings.Clear();
+            }
+            GUILayout.Space(8);
+            var bindings = GetAnimatableBindings(componentToSelectBindingFrom).Where(b => bindingFilter.Matches(b.propertyName)).ToArray();
+            foreach (var binding in bindings)
+            {
+                using var horizontalScope = new EditorGUILayout.HorizontalScope();
+                GUILayout.Space(15);
+                bool isAlreadyIncluded = bindingsToToggle.ContainsKey(binding);
+                bool shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Select", GUI.skin.button, GUILayout.ExpandWidth(false));
+                GUILayout.Space(10);
+                GUILayout.Label($"{binding.propertyName}");
+                if (shouldBeIncluded && !isAlreadyIncluded)
+                {
+                    bindingsToToggle.Add(binding, (0, binding.propertyName.StartsWith("blendShape") ? 100 : 1));
+                }
+                else if (!shouldBeIncluded && isAlreadyIncluded)
+                {
+                    bindingsToToggle.Remove(binding);
+                }
             }
         }
 
@@ -388,6 +443,32 @@ public class CreateAV3ToggleMenu : EditorWindow
         EditorGUILayout.LabelField("ParamAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionParameters));
         EditorGUILayout.LabelField("MenuAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionsMenu));
         EditorGUILayout.LabelField("FxLayerAssetPath", AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController));
+    }
+
+    private static readonly HashSet<char> vectorChars = new() { 'x', 'y', 'z', 'w', 'r', 'g', 'b', 'a' };
+    
+    private Dictionary<Component, List<EditorCurveBinding>> cachedAnimatableBindings = new();
+    private List<EditorCurveBinding> GetAnimatableBindings(Component component) {
+        if (cachedAnimatableBindings.TryGetValue(component, out var bindings))
+            return bindings;
+        bindings = new List<EditorCurveBinding>();
+        foreach (var animatableBinding in AnimationUtility.GetAnimatableBindings(component.gameObject, FindAvatarDescriptor(component.gameObject).gameObject))
+        {
+            var propName = animatableBinding.propertyName;
+            if (propName.StartsWith("material."))
+                continue;
+            if (animatableBinding.type != component.GetType())
+                continue;
+            if (animatableBinding.isPPtrCurve)
+                continue;
+            if (propName == "m_Enabled" || propName == "m_IsActive")
+                continue;
+            if (propName.Length > 2 && propName[^2] == '.' && vectorChars.Contains(propName[^1]))
+                continue;
+            bindings.Add(animatableBinding);
+        }
+        bindings.Sort((a, b) => string.Compare(a.propertyName, b.propertyName));
+        return cachedAnimatableBindings[component] = bindings;
     }
 
     public static VRCAvatarDescriptor FindAvatarDescriptor(GameObject obj)
