@@ -11,10 +11,13 @@ using d4rkpl4y3r.AV3ToggleUtil.Util;
 public class CreateAV3ToggleMenu : EditorWindow
 {
     private Dictionary<EditorCurveBinding, (float offValue, float onValue)> bindingsToToggle = new();
+    private List<EditorCurveBinding> filteredBindingCache = null;
     private bool defaultToggleState = false;
-    private TextFilter bindingFilter = new();
+    private TextFilter bindingFilter = new() { Text = "^material\\.", Invert = true };
     private Component componentToSelectBindingFrom = null;
     private Vector2 scrollPos;
+    private const int bindingsPerPage = 20;
+    private int tabbedBindingPage = 0;
     private GameObject target;
     public GameObject Target
     {
@@ -27,6 +30,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             toggleName = "";
             bindingsToToggle.Clear();
             cachedAnimatableBindings.Clear();
+            filteredBindingCache = null;
             componentToSelectBindingFrom = null;
             if (Target == null)
                 return;
@@ -280,6 +284,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                 if (isSelectedComponent && !isCurrentlySelectedComponent)
                 {
                     componentToSelectBindingFrom = component;
+                    filteredBindingCache = null;
                 }
                 else if (!isSelectedComponent && isCurrentlySelectedComponent)
                 {
@@ -298,11 +303,38 @@ public class CreateAV3ToggleMenu : EditorWindow
             bindingFilter.DrawGUI("Binding Filter");
             if (cc.changed)
             {
-                cachedAnimatableBindings.Clear();
+                filteredBindingCache = null;
             }
+            filteredBindingCache ??= GetAnimatableBindings(componentToSelectBindingFrom).Where(b => bindingFilter.Matches(b.propertyName)).ToList();
             GUILayout.Space(8);
-            var bindings = GetAnimatableBindings(componentToSelectBindingFrom).Where(b => bindingFilter.Matches(b.propertyName)).ToArray();
-            foreach (var binding in bindings)
+            if (filteredBindingCache.Count > bindingsPerPage)
+            {
+                using var _ = new EditorGUILayout.HorizontalScope();
+                var totalPages = Mathf.CeilToInt(filteredBindingCache.Count / (float)bindingsPerPage);
+                GUILayout.Label($"Page ({tabbedBindingPage + 1}/{totalPages})", GUILayout.Width(100));
+                using (new EditorGUI.DisabledScope(totalPages <= 1 || tabbedBindingPage <= 0))
+                {
+                    if (GUILayout.Button("<", GUILayout.Width(20)))
+                    {
+                        tabbedBindingPage = Mathf.Max(tabbedBindingPage - 1, 0);
+                    }
+                }
+                using (new EditorGUI.DisabledScope(totalPages <= 1 || tabbedBindingPage >= totalPages - 1))
+                {
+                    if (GUILayout.Button(">", GUILayout.Width(20)))
+                    {
+                        tabbedBindingPage = Mathf.Min(tabbedBindingPage + 1, totalPages - 1);
+                    }
+                }
+                GUILayout.Space(10);
+                tabbedBindingPage = EditorGUILayout.IntField(tabbedBindingPage + 1, GUILayout.Width(50)) - 1;
+                tabbedBindingPage = Mathf.Clamp(tabbedBindingPage, 0, totalPages - 1);
+            }
+            else
+            {
+                tabbedBindingPage = 0;
+            }
+            foreach (var binding in filteredBindingCache.Skip(tabbedBindingPage * bindingsPerPage).Take(bindingsPerPage))
             {
                 using var horizontalScope = new EditorGUILayout.HorizontalScope();
                 GUILayout.Space(15);
@@ -538,9 +570,10 @@ public class CreateAV3ToggleMenu : EditorWindow
         foreach (var animatableBinding in AnimationUtility.GetAnimatableBindings(component.gameObject, FindAvatarDescriptor(component.gameObject).gameObject))
         {
             var propName = animatableBinding.propertyName;
-            if (propName.StartsWith("material."))
-                continue;
             if (animatableBinding.type != component.GetType())
+                continue;
+            // these are ui properties from thry editor so we never want to animate them
+            if (propName.StartsWith("material.") && (propName[10..].StartsWith("_start") || propName[10..].StartsWith("_end")))
                 continue;
             if (animatableBinding.isPPtrCurve)
                 continue;

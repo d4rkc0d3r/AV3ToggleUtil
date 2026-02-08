@@ -27,6 +27,45 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             }
         }
 
+        public bool IsRegex
+        {
+            get => isRegex;
+            set
+            {
+                if (isRegex != value)
+                {
+                    isRegex = value;
+                    matchCache.Clear();
+                }
+            }
+        }
+
+        public bool IsCaseSensitive
+        {
+            get => isCaseSensitive;
+            set
+            {
+                if (isCaseSensitive != value)
+                {
+                    isCaseSensitive = value;
+                    matchCache.Clear();
+                }
+            }
+        }
+
+        public bool Invert
+        {
+            get => invert;
+            set
+            {
+                if (invert != value)
+                {
+                    invert = value;
+                    matchCache.Clear();
+                }
+            }
+        }
+
         private readonly Dictionary<string, bool> matchCache = new();
 
         public bool Matches(string input)
