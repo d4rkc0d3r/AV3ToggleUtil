@@ -210,7 +210,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                 bindingsToToggle.Remove(toggleBinding);
             }
             GUILayout.Space(10);
-            if (GetAnimatableBindings(component).Count > 0)
+            if (GetAnimatableBindings(component).Any(b => b.propertyName != "m_Enabled"))
             {
                 bool isCurrentlySelectedComponent = component == componentToSelectBindingFrom;
                 bool isSelectedComponent = GUILayout.Toggle(isCurrentlySelectedComponent, "Search Bindings", GUI.skin.button, GUILayout.ExpandWidth(false));
