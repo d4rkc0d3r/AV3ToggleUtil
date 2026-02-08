@@ -38,7 +38,6 @@ public class CreateAV3ToggleMenu : EditorWindow
     public string ToggleName
     {
         get { return toggleName == "" ? GetDefaultToggleName() : toggleName; }
-        set { toggleName = (value == GetDefaultToggleName()) ? "" : value; }
     }
     private VRCExpressionsMenu targetMenu = null;
     public VRCExpressionsMenu TargetMenu
@@ -47,21 +46,29 @@ public class CreateAV3ToggleMenu : EditorWindow
         set { targetMenu = (value == GetMainMenu()) ? null : value; }
     }
 
+    private string parameterName = "";
+    public string ParameterName
+    {
+        get { return parameterName == "" ? GetDefaultParameterName() : parameterName; }
+    }
+
     public VRCExpressionsMenu GetMainMenu()
     {
         return FindAvatarDescriptor(Target)?.expressionsMenu;
     }
 
-    public string GetDefaultToggleName()
+    public string GetDefaultToggleName() => Target.name;
+
+    public string GetDefaultParameterName()
     {
-        string name = "Toggle" + Target.name;
-        var toggleArray = bindingsToToggle.Select(b => b.Key).ToArray();
-        if (toggleArray.Length == 1)
+        var text = ToggleName.Replace(" ", "");
+        text = string.IsNullOrEmpty(text) ? GetDefaultToggleName() : text;
+        var bindingTypes = bindingsToToggle.Select(b => b.Key.type.Name).Distinct().ToArray();
+        if (bindingTypes.Length == 1 && bindingTypes[0] != "GameObject")
         {
-            if (toggleArray[0].type.Name != "GameObject")
-                name += toggleArray[0].type.Name;
+            text += bindingTypes[0];
         }
-        return name;
+        return text;
     }
 
     private static string GetAssetFolder(Object asset)
@@ -103,9 +110,9 @@ public class CreateAV3ToggleMenu : EditorWindow
         if (fxLayer.parameters.Any(p => p.name == ToggleName))
             return "Layer Parameter Exists Already";
         var path = GetAnimationsFolderPath();
-        if (AssetDatabase.LoadAssetAtPath<AnimationClip>(path + "/" + ToggleName + "On.anim") != null)
+        if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName}On.anim") != null)
             return "Toggle On Animation Exists Already";
-        if (AssetDatabase.LoadAssetAtPath<AnimationClip>(path + "/" + ToggleName + "Off.anim") != null)
+        if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName}Off.anim") != null)
             return "Toggle Off Animation Exists Already";
         if (bindingsToToggle.Count == 0)
             return "No Bindings Selected";
@@ -178,6 +185,21 @@ public class CreateAV3ToggleMenu : EditorWindow
             propertyName = component is Transform ? "m_IsActive" : "m_Enabled",
             type = component is Transform ? typeof(GameObject) : component.GetType()
         };
+    }
+
+    string TextFieldWithDefault(string label, string text, string defaultText)
+    {
+        text = EditorGUILayout.TextField(label, text);
+        if (string.IsNullOrEmpty(text))
+        {
+            var rect = GUILayoutUtility.GetLastRect();
+            rect.x += EditorGUIUtility.labelWidth + 3;
+            var prevColor = GUI.contentColor;
+            GUI.contentColor = Color.gray;
+            GUI.Label(rect, defaultText);
+            GUI.contentColor = prevColor;
+        }
+        return text;
     }
 
     void OnGUI()
@@ -260,7 +282,8 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         GUILayout.Space(8);
 
-        ToggleName = EditorGUILayout.TextField("Toggle Name", ToggleName);
+        toggleName = TextFieldWithDefault("Toggle Name", toggleName, GetDefaultToggleName());
+        parameterName = TextFieldWithDefault("Parameter Name", parameterName, GetDefaultParameterName());
 
         var descriptor = FindAvatarDescriptor(Target);
         TargetMenu = EditorGUILayout.ObjectField("Menu", TargetMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
@@ -390,7 +413,7 @@ public class CreateAV3ToggleMenu : EditorWindow
 
             TargetMenu.controls.Add(new VRCExpressionsMenu.Control()
             {
-                name = ToggleName.StartsWith("Toggle") ? ToggleName.Substring(6) : ToggleName,
+                name = ParameterName,
                 parameter = new VRCExpressionsMenu.Control.Parameter() { name = ToggleName },
                 type = VRCExpressionsMenu.Control.ControlType.Toggle
             });
