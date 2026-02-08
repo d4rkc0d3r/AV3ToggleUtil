@@ -6,7 +6,6 @@ using UnityEditor;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
-using Type = System.Type;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
 
 public class CreateAV3ToggleMenu : EditorWindow
@@ -139,52 +138,45 @@ public class CreateAV3ToggleMenu : EditorWindow
             GUILayout.Label("", invertLayout);
             GUILayout.Space(removeButtonWidth);
         }
-        foreach (var pair in bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray())
+        foreach ((var binding, var values) in bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray())
         {
             using var horizontalScope = new EditorGUILayout.HorizontalScope();
-            bool isToggle = pair.Key.propertyName == "m_IsActive" || pair.Key.propertyName == "m_Enabled";
+            bool isToggle = binding.propertyName == "m_IsActive" || binding.propertyName == "m_Enabled";
             float FloatOrToggleField(float value)
             {
                 using var disabledScope = new EditorGUI.DisabledScope(isToggle);
-                if (isToggle)
-                {
-                    return EditorGUILayout.Toggle(value > 0.5f, valueLayout) ? 1.0f : 0.0f;
-                }
-                else
-                {
-                    return EditorGUILayout.FloatField(value, valueLayout);
-                }
+                return isToggle
+                    ? (EditorGUILayout.Toggle(value > 0.5f, valueLayout) ? 1.0f : 0.0f)
+                    : EditorGUILayout.FloatField(value, valueLayout);
             }
-            GUILayout.Label($"{pair.Key.type.Name}:{pair.Key.propertyName}", bindingLayout);
+            GUILayout.Label($"{binding.type.Name}:{binding.propertyName}", bindingLayout);
             GUILayout.Space(spacing);
-            float newOffValue = FloatOrToggleField(pair.Value.offValue);
+            float newOffValue = FloatOrToggleField(values.offValue);
             GUILayout.Space(spacing);
-            float newOnValue = FloatOrToggleField(pair.Value.onValue);
+            float newOnValue = FloatOrToggleField(values.onValue);
             GUILayout.Space(spacing);
             if (GUILayout.Button("Flip", invertLayout))
             {
-                newOffValue = pair.Value.onValue;
-                newOnValue = pair.Value.offValue;
+                newOffValue = values.onValue;
+                newOnValue = values.offValue;
             }
-            if (newOffValue != pair.Value.offValue || newOnValue != pair.Value.onValue)
+            if (newOffValue != values.offValue || newOnValue != values.onValue)
             {
-                bindingsToToggle[pair.Key] = (newOffValue, newOnValue);
+                bindingsToToggle[binding] = (newOffValue, newOnValue);
             }
             if (GUILayout.Button("X", GUILayout.Width(removeButtonWidth)))
             {
-                bindingsToToggle.Remove(pair.Key);
+                bindingsToToggle.Remove(binding);
             }
         }
     }
 
     EditorCurveBinding GetComponentToggleBinding(Component component)
     {
-        return new EditorCurveBinding()
-        {
-            path = AnimationUtility.CalculateTransformPath(component.transform, FindAvatarDescriptor(Target).transform),
-            propertyName = component is Transform ? "m_IsActive" : "m_Enabled",
-            type = component is Transform ? typeof(GameObject) : component.GetType()
-        };
+        return EditorCurveBinding.FloatCurve(
+            AnimationUtility.CalculateTransformPath(component.transform, FindAvatarDescriptor(Target).transform),
+            component is Transform ? typeof(GameObject) : component.GetType(),
+            component is Transform ? "m_IsActive" : "m_Enabled");
     }
 
     string TextFieldWithDefault(string label, string text, string defaultText)
