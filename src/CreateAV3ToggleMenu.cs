@@ -144,8 +144,8 @@ public class CreateAV3ToggleMenu : EditorWindow
         var bindingLayout = GUILayout.ExpandWidth(true);
         var valueLayout = GUILayout.Width(60);
         var invertLayout = GUILayout.Width(40);
+        var removeButtonLayout = GUILayout.Width(20);
         float spacing = 10;
-        float removeButtonWidth = 20;
 
         using var verticalScope = new EditorGUILayout.VerticalScope("box");
         using (new EditorGUILayout.HorizontalScope())
@@ -156,8 +156,18 @@ public class CreateAV3ToggleMenu : EditorWindow
             GUILayout.Space(spacing);
             GUILayout.Label("On Value", valueLayout);
             GUILayout.Space(spacing);
-            GUILayout.Label("", invertLayout);
-            GUILayout.Space(removeButtonWidth);
+            using var _ = new EditorGUI.DisabledScope(bindingsToToggle.Count == 0);
+            if (GUILayout.Button("Flip", invertLayout))
+            {
+                foreach (var pair in bindingsToToggle.ToArray())
+                {
+                    bindingsToToggle[pair.Key] = (pair.Value.onValue, pair.Value.offValue);
+                }
+            }
+            if (GUILayout.Button("X", removeButtonLayout))
+            {
+                bindingsToToggle.Clear();
+            }
         }
         foreach ((var binding, var values) in bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray())
         {
@@ -185,7 +195,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 bindingsToToggle[binding] = (newOffValue, newOnValue);
             }
-            if (GUILayout.Button("X", GUILayout.Width(removeButtonWidth)))
+            if (GUILayout.Button("X", removeButtonLayout))
             {
                 bindingsToToggle.Remove(binding);
             }
