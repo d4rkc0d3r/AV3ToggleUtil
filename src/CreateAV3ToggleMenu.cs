@@ -62,17 +62,27 @@ public class CreateAV3ToggleMenu : EditorWindow
         return FindAvatarDescriptor(Target)?.expressionsMenu;
     }
 
-    public string GetDefaultToggleName() => Target.name;
+    public string GetDefaultToggleName()
+    {
+        var text = Target.name;
+        if (bindingsToToggle.Count == 1)
+        {
+            text += " " + bindingsToToggle.First().Key.propertyName switch
+            {
+                var s when s == "m_IsActive" => "",
+                var s when s == "m_Enabled" => bindingsToToggle.First().Key.type.Name,
+                var s when s.StartsWith("m_") => s[2..],
+                var s when s.Contains('.') => s[(s.LastIndexOf('.') + 1)..].TrimStart('_'),
+                var s => s
+            };
+        }
+        return text;
+    }
 
     public string GetDefaultParameterName()
     {
         var text = ToggleName.Replace(" ", "");
         text = string.IsNullOrEmpty(text) ? GetDefaultToggleName() : text;
-        var bindingTypes = bindingsToToggle.Select(b => b.Key.type.Name).Distinct().ToArray();
-        if (bindingTypes.Length == 1 && bindingTypes[0] != "GameObject")
-        {
-            text += bindingTypes[0];
-        }
         return text;
     }
 
