@@ -7,6 +7,7 @@ using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
+using System.Text.RegularExpressions;
 
 public class CreateAV3ToggleMenu : EditorWindow
 {
@@ -32,6 +33,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             cachedAnimatableBindings.Clear();
             filteredBindingCache = null;
             componentToSelectBindingFrom = null;
+            cache_GetExistingAnimationsForBinding = null;
             if (Target == null)
                 return;
             defaultToggleState = Target.activeSelf;
@@ -155,7 +157,6 @@ public class CreateAV3ToggleMenu : EditorWindow
         using (new EditorGUILayout.HorizontalScope())
         {
             GUILayout.Label("Binding", bindingLayout);
-            GUILayout.Space(spacing);
             GUILayout.Label("Off Value", valueLayout);
             GUILayout.Space(spacing);
             GUILayout.Label("On Value", valueLayout);
@@ -184,8 +185,8 @@ public class CreateAV3ToggleMenu : EditorWindow
                     : EditorGUILayout.FloatField(value, valueLayout);
             }
             GUILayout.Label($"{binding.type.Name}:{binding.propertyName}", bindingLayout);
+            ShowWarningIfBindingExists(binding, GUILayout.Width(20));
             using var cc = new EditorGUI.ChangeCheckScope();
-            GUILayout.Space(spacing);
             float newOffValue = FloatOrToggleField(values.offValue);
             GUILayout.Space(spacing);
             float newOnValue = FloatOrToggleField(values.onValue);
@@ -203,6 +204,100 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 bindingsToToggle.Remove(binding);
             }
+        }
+    }
+
+    Dictionary<EditorCurveBinding, List<(AnimatorController controller, AnimationClip clip, string layerName, int layerID)>>
+    cache_GetExistingAnimationsForBinding = null;
+
+    List<(AnimatorController controller, AnimationClip clip, string layerName, int layerID)>
+    GetExistingAnimationsForBinding(EditorCurveBinding binding)
+    {
+        if (cache_GetExistingAnimationsForBinding == null)
+        {
+            cache_GetExistingAnimationsForBinding = new();
+
+            var av = FindAvatarDescriptor(Target);
+            if (av == null)
+                return new();
+
+            void AddBinding(EditorCurveBinding b, AnimatorController controller, AnimationClip clip, string layerName, int layerID)
+            {
+                if (!cache_GetExistingAnimationsForBinding.TryGetValue(b, out var list))
+                {
+                    list = new List<(AnimatorController controller, AnimationClip clip, string layerName, int layerID)>();
+                    cache_GetExistingAnimationsForBinding[b] = list;
+                }
+                if (!list.Any(x => x.controller == controller && x.layerID == layerID && x.clip == clip))
+                    list.Add((controller, clip, layerName, layerID));
+            }
+
+            void ProcessClip(AnimationClip clip, AnimatorController controller, string layerName, int layerID)
+            {
+                if (clip == null)
+                    return;
+                foreach (var b in AnimationUtility.GetCurveBindings(clip))
+                    AddBinding(b, controller, clip, layerName, layerID);
+            }
+
+            void CollectFromMotion(Motion motion, AnimatorController controller, string layerName, int layerID)
+            {
+                if (motion == null)
+                    return;
+                if (motion is AnimationClip clip)
+                {
+                    ProcessClip(clip, controller, layerName, layerID);
+                    return;
+                }
+                if (motion is BlendTree tree)
+                {
+                    foreach (var child in tree.children)
+                        CollectFromMotion(child.motion, controller, layerName, layerID);
+                }
+            }
+
+            void CollectFromStateMachine(AnimatorStateMachine sm, AnimatorController controller, string layerName, int layerID)
+            {
+                if (sm == null)
+                    return;
+                foreach (var state in sm.states)
+                    CollectFromMotion(state.state.motion, controller, layerName, layerID);
+                foreach (var child in sm.stateMachines)
+                    CollectFromStateMachine(child.stateMachine, controller, layerName, layerID);
+            }
+
+            foreach (var controller in av.baseAnimationLayers.Concat(av.specialAnimationLayers)
+                         .Select(l => l.animatorController as AnimatorController)
+                         .Where(c => c != null)
+                         .Distinct())
+            {
+                var layers = controller.layers;
+                for (int i = 0; i < layers.Length; i++)
+                {
+                    var sm = layers[i].stateMachine;
+                    if (sm == null)
+                        continue;
+                    CollectFromStateMachine(sm, controller, layers[i].name, i);
+                }
+            }
+        }
+
+        return cache_GetExistingAnimationsForBinding.TryGetValue(binding, out var result) ? result : new();
+    }
+
+    void ShowWarningIfBindingExists(EditorCurveBinding binding, params GUILayoutOption[] layoutOptions)
+    {
+        var rect = EditorGUILayout.GetControlRect(layoutOptions);
+        var existing = GetExistingAnimationsForBinding(binding);
+        if (existing.Count > 0)
+        {
+            var groupedByLayer = existing.GroupBy(x => (x.controller, x.layerID))
+                .Select(g => (g.Key.controller, g.Key.layerID, clips: g.Select(x => x.clip)
+                .ToArray(), g.First().layerName));
+            var icon = EditorGUIUtility.IconContent("console.warnicon.sml");
+            icon.tooltip = "This binding already exists in:\n" +
+            string.Join("\n", groupedByLayer.Select(g => $"{g.controller.name}/{g.layerName}:\n  {string.Join("\n  ", g.clips.Select(c => c.name))}"));
+            GUI.Label(rect, icon);
         }
     }
 
@@ -340,7 +435,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                 GUILayout.Space(15);
                 bool isAlreadyIncluded = bindingsToToggle.ContainsKey(binding);
                 bool shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Select", GUI.skin.button, GUILayout.ExpandWidth(false));
-                GUILayout.Space(20);
+                ShowWarningIfBindingExists(binding, GUILayout.Width(20));
                 GUILayout.Label($"{binding.propertyName}");
                 if (AnimationUtility.GetFloatValue(FindAvatarDescriptor(Target).gameObject, binding, out var sceneValue))
                 {
@@ -573,7 +668,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             if (animatableBinding.type != component.GetType())
                 continue;
             // these are ui properties from thry editor so we never want to animate them
-            if (propName.StartsWith("material.") && (propName[10..].StartsWith("_start") || propName[10..].StartsWith("_end")))
+            if (Regex.IsMatch(propName, @"^material\.[smg]_(start|end)"))
                 continue;
             if (animatableBinding.isPPtrCurve)
                 continue;
