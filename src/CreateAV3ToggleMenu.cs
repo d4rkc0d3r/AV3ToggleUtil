@@ -12,7 +12,7 @@ using BitConverter = System.BitConverter;
 
 public class CreateAV3ToggleMenu : EditorWindow
 {
-    private Dictionary<EditorCurveBinding, (float offValue, float onValue)> bindingsToToggle = new();
+    private Dictionary<EditorCurveBinding, (Vector4 offValue, Vector4 onValue)> bindingsToToggle = new();
     private List<EditorCurveBinding> filteredBindingCache = null;
     private bool updateTargetWithCurrentSelection = true;
     private bool defaultToggleState = false;
@@ -71,7 +71,12 @@ public class CreateAV3ToggleMenu : EditorWindow
         var text = Target.name;
         if (bindingsToToggle.Count == 1)
         {
-            text += " " + bindingsToToggle.First().Key.propertyName switch
+            var extraText = bindingsToToggle.First().Key.propertyName;
+            if (extraText.StartsWith("material."))
+                extraText = extraText["material.".Length..].TrimStart('_');
+            if (extraText.EndsWith(".x") || extraText.EndsWith(".r"))
+                extraText = extraText[..^2];
+            text += " " + extraText switch
             {
                 var s when s == "m_IsActive" => "",
                 var s when s == "m_Enabled" => bindingsToToggle.First().Key.type.Name,
@@ -143,7 +148,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         var fxLayer = av.baseAnimationLayers[4].animatorController as AnimatorController;
         if (AssetDatabase.GetAssetPath(fxLayer) == "")
             return "No Custom FxLayer Found";
-        if (av.expressionParameters.FindParameter(ToggleName) != null)
+        if (av.expressionParameters.FindParameter(ParameterName) != null)
             return "Parameter Exists Already";
         if (fxLayer.layers.Any(l => l.name == ToggleName))
             return "Layer Exists Already";
@@ -208,18 +213,25 @@ public class CreateAV3ToggleMenu : EditorWindow
         {
             using var horizontalScope = new EditorGUILayout.HorizontalScope();
             bool isToggle = knownToggleProperties.Contains(binding.propertyName);
-            float FloatOrToggleField(float value)
+            bool isColor = binding.propertyName.EndsWith(".r");
+            Vector4 ValueField(Vector4 value)
             {
-                return isToggle
-                    ? (EditorGUILayout.Toggle(value > 0.5f, valueLayout) ? 1.0f : 0.0f)
-                    : EditorGUILayout.FloatField(value, valueLayout);
+                if (isColor)
+                {
+                    return ColorField(value, valueLayout);
+                }
+                float newValue = isToggle
+                    ? EditorGUILayout.Toggle(value.x > 0.5f, valueLayout) ? 1 : 0
+                    : EditorGUILayout.FloatField(value.x, valueLayout);
+                return new Vector4(newValue, 0, 0, 0);
             }
-            GUILayout.Label($"{binding.type.Name}:{binding.propertyName}", bindingLayout);
+            var displayName = isColor ? binding.propertyName[..^2] : binding.propertyName;
+            GUILayout.Label($"{binding.type.Name}:{displayName}", bindingLayout);
             ShowWarningIfBindingExists(binding, GUILayout.Width(20));
             using var cc = new EditorGUI.ChangeCheckScope();
-            float newOffValue = FloatOrToggleField(values.offValue);
+            var newOffValue = ValueField(values.offValue);
             GUILayout.Space(spacing);
-            float newOnValue = FloatOrToggleField(values.onValue);
+            var newOnValue = ValueField(values.onValue);
             GUILayout.Space(spacing);
             if (GUILayout.Button("Flip", invertLayout) || (isToggle && cc.changed))
             {
@@ -317,7 +329,10 @@ public class CreateAV3ToggleMenu : EditorWindow
 
     void ShowWarningIfBindingExists(EditorCurveBinding binding, params GUILayoutOption[] layoutOptions)
     {
+        var prevIndent = EditorGUI.indentLevel;
+        EditorGUI.indentLevel = 0;
         var rect = EditorGUILayout.GetControlRect(layoutOptions);
+        EditorGUI.indentLevel = prevIndent;
         var existing = GetExistingAnimationsForBinding(binding);
         if (existing.Count > 0)
         {
@@ -354,22 +369,33 @@ public class CreateAV3ToggleMenu : EditorWindow
         return text;
     }
 
-    (float offValue, float onValue) GetDefaultValuesForBinding(EditorCurveBinding binding)
+    (Vector4 offValue, Vector4 onValue) GetDefaultValuesForBinding(EditorCurveBinding binding)
     {
-        float currentValue = 0;
-        if (AnimationUtility.GetFloatValue(FindAvatarDescriptor(Target).gameObject, binding, out var sceneValue))
+        Vector4 currentValue = Vector4.zero;
+        var avGO = FindAvatarDescriptor(Target).gameObject;
+        if (AnimationUtility.GetFloatValue(avGO, binding, out var sceneValue))
         {
-            currentValue = sceneValue;
+            currentValue = new Vector4(sceneValue, sceneValue, sceneValue, sceneValue);
+            var vectorBindings = GetRemainingVectorBindings(binding).ToArray();
+            for (int i = 0; i < vectorBindings.Length; i++)
+            {
+                if (AnimationUtility.GetFloatValue(avGO, vectorBindings[i], out var v))
+                {
+                    currentValue[i + 1] = v;
+                }
+            }
         }
-        if (currentValue != 0)
+        if (!currentValue.Equals(Vector4.zero))
         {
-            return (0, currentValue);
+            if (binding.propertyName.EndsWith(".r"))
+                return (Color.black, currentValue);
+            return (Vector4.zero, currentValue);
         }
         if (binding.propertyName.StartsWith("blendShape"))
         {
-            return (0, 100);
+            return (Vector4.zero, Vector4.one * 100);
         }
-        return (0, 1);
+        return (Vector4.zero, Vector4.one);
     }
 
     IEnumerable<EditorCurveBinding> GetRemainingVectorBindings(EditorCurveBinding binding)
@@ -389,9 +415,10 @@ public class CreateAV3ToggleMenu : EditorWindow
 
     Color ColorField(Color color, params GUILayoutOption[] layoutOptions)
     {
+        var prevIndent = EditorGUI.indentLevel;
+        EditorGUI.indentLevel = 0;
         var rect = EditorGUILayout.GetControlRect(layoutOptions);
-        rect.x -= 15;
-        rect.width += 15;
+        EditorGUI.indentLevel = prevIndent;
         return EditorGUI.ColorField(rect, GUIContent.none, color, showEyedropper:false, showAlpha:true, hdr:true);
     }
 
@@ -423,7 +450,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             bool shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Toggle", GUI.skin.button, GUILayout.ExpandWidth(false));
             if (shouldBeIncluded && !isAlreadyIncluded)
             {
-                bindingsToToggle.Add(toggleBinding, (0, 1));
+                bindingsToToggle.Add(toggleBinding, (Vector4.zero, Vector4.one));
             }
             else if (!shouldBeIncluded && isAlreadyIncluded)
             {
@@ -451,44 +478,46 @@ public class CreateAV3ToggleMenu : EditorWindow
             GUILayout.Space(8);
             using var box = new EditorGUILayout.VerticalScope("box");
             GUILayout.Label($"Search bindings for {componentToSelectBindingFrom.GetType().Name}:", EditorStyles.boldLabel);
-            using var indentScope = new EditorGUI.IndentLevelScope();
-            using var cc = new EditorGUI.ChangeCheckScope();
-            bindingFilter.DrawGUI("Binding Filter");
-            if (cc.changed)
+            using (new EditorGUI.IndentLevelScope())
             {
-                filteredBindingCache = null;
-            }
-            filteredBindingCache ??= GetAnimatableBindings(componentToSelectBindingFrom)
-                .Where(b => bindingFilter.Matches(b.propertyName))
-                .Where(b => !new HashSet<char> {'y', 'z', 'w', 'g', 'b', 'a'}.Contains(b.propertyName.Last()))
-                .ToList();
-            GUILayout.Space(8);
-            if (filteredBindingCache.Count > bindingsPerPage)
-            {
-                using var _ = new EditorGUILayout.HorizontalScope();
-                var totalPages = Mathf.CeilToInt(filteredBindingCache.Count / (float)bindingsPerPage);
-                GUILayout.Label($"Page ({tabbedBindingPage + 1}/{totalPages})", GUILayout.Width(100));
-                using (new EditorGUI.DisabledScope(totalPages <= 1 || tabbedBindingPage <= 0))
+                using var cc = new EditorGUI.ChangeCheckScope();
+                bindingFilter.DrawGUI("Binding Filter");
+                if (cc.changed)
                 {
-                    if (GUILayout.Button("<", GUILayout.Width(20)))
-                    {
-                        tabbedBindingPage = Mathf.Max(tabbedBindingPage - 1, 0);
-                    }
+                    filteredBindingCache = null;
                 }
-                using (new EditorGUI.DisabledScope(totalPages <= 1 || tabbedBindingPage >= totalPages - 1))
+                filteredBindingCache ??= GetAnimatableBindings(componentToSelectBindingFrom)
+                    .Where(b => bindingFilter.Matches(b.propertyName))
+                    .Where(b => !new HashSet<char> {'y', 'z', 'w', 'g', 'b', 'a'}.Contains(b.propertyName.Last()))
+                    .ToList();
+                GUILayout.Space(8);
+                if (filteredBindingCache.Count > bindingsPerPage)
                 {
-                    if (GUILayout.Button(">", GUILayout.Width(20)))
+                    using var _ = new EditorGUILayout.HorizontalScope();
+                    var totalPages = Mathf.CeilToInt(filteredBindingCache.Count / (float)bindingsPerPage);
+                    GUILayout.Label($"Page ({tabbedBindingPage + 1}/{totalPages})", GUILayout.Width(100));
+                    using (new EditorGUI.DisabledScope(totalPages <= 1 || tabbedBindingPage <= 0))
                     {
-                        tabbedBindingPage = Mathf.Min(tabbedBindingPage + 1, totalPages - 1);
+                        if (GUILayout.Button("<", GUILayout.Width(20)))
+                        {
+                            tabbedBindingPage = Mathf.Max(tabbedBindingPage - 1, 0);
+                        }
                     }
+                    using (new EditorGUI.DisabledScope(totalPages <= 1 || tabbedBindingPage >= totalPages - 1))
+                    {
+                        if (GUILayout.Button(">", GUILayout.Width(20)))
+                        {
+                            tabbedBindingPage = Mathf.Min(tabbedBindingPage + 1, totalPages - 1);
+                        }
+                    }
+                    GUILayout.Space(10);
+                    tabbedBindingPage = EditorGUILayout.IntField(tabbedBindingPage + 1, GUILayout.Width(50)) - 1;
+                    tabbedBindingPage = Mathf.Clamp(tabbedBindingPage, 0, totalPages - 1);
                 }
-                GUILayout.Space(10);
-                tabbedBindingPage = EditorGUILayout.IntField(tabbedBindingPage + 1, GUILayout.Width(50)) - 1;
-                tabbedBindingPage = Mathf.Clamp(tabbedBindingPage, 0, totalPages - 1);
-            }
-            else
-            {
-                tabbedBindingPage = 0;
+                else
+                {
+                    tabbedBindingPage = 0;
+                }
             }
             foreach (var binding in filteredBindingCache.Skip(tabbedBindingPage * bindingsPerPage).Take(bindingsPerPage))
             {
@@ -506,7 +535,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                     }
                 }
                 ShowWarningIfBindingExists(binding, GUILayout.Width(20));
-                GUILayout.Label($"{binding.propertyName}{(binding.propertyName.EndsWith(".r") ? "gba" : "" )}");
+                GUILayout.Label($"{(binding.propertyName.EndsWith(".r") ? binding.propertyName[..^2] : binding.propertyName)}", GUILayout.ExpandWidth(true));
                 var avGO = FindAvatarDescriptor(Target).gameObject;
                 if (AnimationUtility.GetFloatValue(avGO, binding, out var sceneValue))
                 {
@@ -585,17 +614,24 @@ public class CreateAV3ToggleMenu : EditorWindow
             clipOn.name = ToggleName + "On";
             var clipOff = new AnimationClip();
             clipOff.name = ToggleName + "Off";
-            foreach (var pair in bindingsToToggle)
+            foreach ((var binding, var value) in bindingsToToggle)
             {
-                EditorCurveBinding binding = pair.Key;
-                var curveOn = new AnimationCurve();
-                curveOn.AddKey(0, pair.Value.onValue);
-                curveOn.AddKey(1 / 60f, pair.Value.onValue);
-                AnimationUtility.SetEditorCurve(clipOn, binding, curveOn);
-                var curveOff = new AnimationCurve();
-                curveOff.AddKey(0, pair.Value.offValue);
-                curveOff.AddKey(1 / 60f, pair.Value.offValue);
-                AnimationUtility.SetEditorCurve(clipOff, binding, curveOff);
+                void AddCurve(AnimationClip clip, EditorCurveBinding binding, float value)
+                {
+                    var curve = AnimationCurve.Linear(0, value, 0, value);
+                    AnimationUtility.SetEditorCurve(clip, binding, curve);
+                }
+                var extraBindings = GetRemainingVectorBindings(binding).ToArray();
+                AddCurve(clipOn, binding, value.onValue.x);
+                for (int i = 0; i < extraBindings.Length; i++)
+                {
+                    AddCurve(clipOn, extraBindings[i], value.onValue[i + 1]);
+                }
+                AddCurve(clipOff, binding, value.offValue.x);
+                for (int i = 0; i < extraBindings.Length; i++)
+                {
+                    AddCurve(clipOff, extraBindings[i], value.offValue[i + 1]);
+                }
             }
             AssetDatabase.CreateAsset(clipOn, $"{animFolder}/{clipOn.name}.anim");
             AssetDatabase.CreateAsset(clipOff, $"{animFolder}/{clipOff.name}.anim");
