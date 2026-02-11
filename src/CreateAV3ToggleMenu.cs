@@ -18,7 +18,7 @@ public class CreateAV3ToggleMenu : EditorWindow
     private bool defaultToggleState = false;
     private bool savedParameter = true;
     private bool syncedParameter = true;
-    private TextFilter bindingFilter = new() { Text = "^material\\.", Invert = true };
+    private TextFilter bindingFilter = new() { Text = "^(?!material\\.)" };
     private Component componentToSelectBindingFrom = null;
     private Vector2 scrollPos;
     private const int bindingsPerPage = 20;
@@ -155,9 +155,9 @@ public class CreateAV3ToggleMenu : EditorWindow
         if (fxLayer.parameters.Any(p => p.name == ToggleName))
             return "Layer Parameter Exists Already";
         var path = GetAnimationsFolderPath();
-        if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName}On.anim") != null)
+        if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName} On.anim") != null)
             return "Toggle On Animation Exists Already";
-        if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName}Off.anim") != null)
+        if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName} Off.anim") != null)
             return "Toggle Off Animation Exists Already";
         if (bindingsToToggle.Count == 0)
             return "No Bindings Selected";
@@ -599,21 +599,13 @@ public class CreateAV3ToggleMenu : EditorWindow
             string animFolder = GetAnimationsFolderPath();
             if (!AssetDatabase.IsValidFolder(animFolder))
                 AssetDatabase.CreateFolder(animFolder[..animFolder.LastIndexOf("/")], "Animations");
-            string pathToAvatarRoot = "";
             var t = Target.transform;
             var root = descriptor.transform;
-            if (t != root)
-            {
-                pathToAvatarRoot = t.name;
-                while ((t = t.parent) != root)
-                {
-                    pathToAvatarRoot = t.name + "/" + pathToAvatarRoot;
-                }
-            }
+            string pathToAvatarRoot = AnimationUtility.CalculateTransformPath(t, root);
             var clipOn = new AnimationClip();
-            clipOn.name = ToggleName + "On";
+            clipOn.name = ToggleName + " On";
             var clipOff = new AnimationClip();
-            clipOff.name = ToggleName + "Off";
+            clipOff.name = ToggleName + " Off";
             foreach ((var binding, var value) in bindingsToToggle)
             {
                 void AddCurve(AnimationClip clip, EditorCurveBinding binding, float value)
@@ -638,7 +630,7 @@ public class CreateAV3ToggleMenu : EditorWindow
 
             var param = new VRCExpressionParameters.Parameter()
             {
-                name = ToggleName,
+                name = ParameterName,
                 defaultValue = defaultToggleState ? 1.0f : 0.0f,
                 saved = savedParameter,
                 networkSynced = syncedParameter,
@@ -653,7 +645,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
             fxLayer.AddParameter(new AnimatorControllerParameter()
             {
-                name = ToggleName,
+                name = ParameterName,
                 type = AnimatorControllerParameterType.Bool,
                 defaultBool = defaultToggleState
             });
@@ -684,7 +676,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOn.hasFixedDuration = true;
             transitionToOn.hasExitTime = false;
             transitionToOn.duration = 0.0f;
-            transitionToOn.AddCondition(AnimatorConditionMode.If, 0, ToggleName);
+            transitionToOn.AddCondition(AnimatorConditionMode.If, 0, ParameterName);
             transitionToOn.hideFlags = HideFlags.HideInHierarchy;
             toggleOff.AddTransition(transitionToOn);
 
@@ -694,7 +686,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOff.hasFixedDuration = true;
             transitionToOff.hasExitTime = false;
             transitionToOff.duration = 0.0f;
-            transitionToOff.AddCondition(AnimatorConditionMode.IfNot, 0, ToggleName);
+            transitionToOff.AddCondition(AnimatorConditionMode.IfNot, 0, ParameterName);
             transitionToOff.hideFlags = HideFlags.HideInHierarchy;
             toggleOn.AddTransition(transitionToOff);
 
@@ -721,8 +713,8 @@ public class CreateAV3ToggleMenu : EditorWindow
 
             TargetMenu.controls.Add(new VRCExpressionsMenu.Control()
             {
-                name = ParameterName,
-                parameter = new VRCExpressionsMenu.Control.Parameter() { name = ToggleName },
+                name = ToggleName,
+                parameter = new VRCExpressionsMenu.Control.Parameter() { name = ParameterName },
                 type = VRCExpressionsMenu.Control.ControlType.Toggle
             });
             EditorUtility.SetDirty(TargetMenu);
