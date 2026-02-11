@@ -14,6 +14,7 @@ public class CreateAV3ToggleMenu : EditorWindow
 {
     private Dictionary<EditorCurveBinding, (float offValue, float onValue)> bindingsToToggle = new();
     private List<EditorCurveBinding> filteredBindingCache = null;
+    private bool updateTargetWithCurrentSelection = true;
     private bool defaultToggleState = false;
     private bool savedParameter = true;
     private bool syncedParameter = true;
@@ -375,8 +376,13 @@ public class CreateAV3ToggleMenu : EditorWindow
     {
         using var scrollView = new EditorGUILayout.ScrollViewScope(scrollPos);
         scrollPos = scrollView.scrollPosition;
-        Target = EditorGUILayout.ObjectField("Target", Target, typeof(GameObject), true) as GameObject;
-
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            Target = EditorGUILayout.ObjectField("Target", Target, typeof(GameObject), true) as GameObject;
+            updateTargetWithCurrentSelection =
+                GUILayout.Toggle(updateTargetWithCurrentSelection, "Auto Update With Selection", GUI.skin.button, GUILayout.ExpandWidth(false));
+        }
+        
         if (Target == null)
             return;
 
@@ -756,6 +762,19 @@ public class CreateAV3ToggleMenu : EditorWindow
         if (obj == null)
             return false;
         return FindAvatarDescriptor(obj) != null;
+    }
+
+    private void OnSelectionChange()
+    {
+        if (updateTargetWithCurrentSelection)
+        {
+            var obj = Selection.activeObject as GameObject;
+            if (obj != null && FindAvatarDescriptor(obj) != null)
+            {
+                Target = obj;
+                Repaint();
+            }
+        }
     }
 }
 #endif
