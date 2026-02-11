@@ -8,6 +8,7 @@ using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
 using System.Text.RegularExpressions;
+using BitConverter = System.BitConverter;
 
 public class CreateAV3ToggleMenu : EditorWindow
 {
@@ -155,6 +156,22 @@ public class CreateAV3ToggleMenu : EditorWindow
         return "";
     }
 
+    private readonly HashSet<string> knownToggleProperties = new() {
+        "m_IsActive", "m_Enabled",
+        // SkinnedMeshRenderer
+        "m_UpdateWhenOffscreen",
+        "m_ReceiveShadows",
+        "m_SkinnedMotionVectors",
+        // VRCParentConstraint
+        "IsActive",
+        "SolveInLocalSpace",
+        "FreezeToWorld",
+        "RebakeOffsetsWhenUnfrozen",
+        "Locked",
+        "AffectsPositionX", "AffectsPositionY", "AffectsPositionZ",
+        "AffectsRotationX", "AffectsRotationY", "AffectsRotationZ",
+    };
+
     void DrawBindingsToToggle()
     {
         var bindingLayout = GUILayout.ExpandWidth(true);
@@ -187,7 +204,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         foreach ((var binding, var values) in bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray())
         {
             using var horizontalScope = new EditorGUILayout.HorizontalScope();
-            bool isToggle = binding.propertyName == "m_IsActive" || binding.propertyName == "m_Enabled";
+            bool isToggle = knownToggleProperties.Contains(binding.propertyName);
             float FloatOrToggleField(float value)
             {
                 return isToggle
@@ -444,12 +461,29 @@ public class CreateAV3ToggleMenu : EditorWindow
                 using var horizontalScope = new EditorGUILayout.HorizontalScope();
                 GUILayout.Space(15);
                 bool isAlreadyIncluded = bindingsToToggle.ContainsKey(binding);
-                bool shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Select", GUI.skin.button, GUILayout.ExpandWidth(false));
+                bool shouldBeIncluded = isAlreadyIncluded;
+                using (new EditorGUI.DisabledScope(binding.isDiscreteCurve))
+                {
+                    shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Select", GUI.skin.button, GUILayout.ExpandWidth(false));
+                    if (binding.isDiscreteCurve)
+                    {
+                        GUI.Label(GUILayoutUtility.GetLastRect(),
+                            new GUIContent("", "Discrete curves are currently not supported"));
+                    }
+                }
                 ShowWarningIfBindingExists(binding, GUILayout.Width(20));
                 GUILayout.Label($"{binding.propertyName}");
                 if (AnimationUtility.GetFloatValue(FindAvatarDescriptor(Target).gameObject, binding, out var sceneValue))
                 {
-                    GUILayout.Label($"{sceneValue}", GUILayout.Width(60));
+                    if (binding.isDiscreteCurve)
+                    {
+                        sceneValue = BitConverter.SingleToInt32Bits(sceneValue);
+                    }
+                    var isToggle = knownToggleProperties.Contains(binding.propertyName);
+                    if (isToggle)
+                        GUILayout.Toggle(sceneValue > 0.5f, "", GUILayout.Width(60));
+                    else
+                        GUILayout.Label($"{sceneValue}", GUILayout.Width(60));
                 }
                 if (shouldBeIncluded && !isAlreadyIncluded)
                 {
