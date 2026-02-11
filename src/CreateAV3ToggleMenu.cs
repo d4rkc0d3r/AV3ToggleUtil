@@ -372,6 +372,29 @@ public class CreateAV3ToggleMenu : EditorWindow
         return (0, 1);
     }
 
+    IEnumerable<EditorCurveBinding> GetRemainingVectorBindings(EditorCurveBinding binding)
+    {
+        var name = binding.propertyName;
+        if (!name.EndsWith(".x") && !name.EndsWith(".r"))
+            yield break;
+        var prefix = name[..^2];
+        var suffixes = name.EndsWith(".x") ? new[] { ".y", ".z", ".w" } : new[] { ".g", ".b", ".a" };
+        foreach (var suffix in suffixes)
+        {
+            binding.propertyName = prefix + suffix;
+            if (GetAnimatableBindings(Target.GetComponent(binding.type)).Contains(binding))
+                yield return binding;
+        }
+    }
+
+    Color ColorField(Color color, params GUILayoutOption[] layoutOptions)
+    {
+        var rect = EditorGUILayout.GetControlRect(layoutOptions);
+        rect.x -= 15;
+        rect.width += 15;
+        return EditorGUI.ColorField(rect, GUIContent.none, color, showEyedropper:false, showAlpha:true, hdr:true);
+    }
+
     void OnGUI()
     {
         using var scrollView = new EditorGUILayout.ScrollViewScope(scrollPos);
@@ -382,7 +405,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             updateTargetWithCurrentSelection =
                 GUILayout.Toggle(updateTargetWithCurrentSelection, "Auto Update With Selection", GUI.skin.button, GUILayout.ExpandWidth(false));
         }
-        
+
         if (Target == null)
             return;
 
@@ -435,7 +458,10 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 filteredBindingCache = null;
             }
-            filteredBindingCache ??= GetAnimatableBindings(componentToSelectBindingFrom).Where(b => bindingFilter.Matches(b.propertyName)).ToList();
+            filteredBindingCache ??= GetAnimatableBindings(componentToSelectBindingFrom)
+                .Where(b => bindingFilter.Matches(b.propertyName))
+                .Where(b => !new HashSet<char> {'y', 'z', 'w', 'g', 'b', 'a'}.Contains(b.propertyName.Last()))
+                .ToList();
             GUILayout.Space(8);
             if (filteredBindingCache.Count > bindingsPerPage)
             {
@@ -480,18 +506,37 @@ public class CreateAV3ToggleMenu : EditorWindow
                     }
                 }
                 ShowWarningIfBindingExists(binding, GUILayout.Width(20));
-                GUILayout.Label($"{binding.propertyName}");
-                if (AnimationUtility.GetFloatValue(FindAvatarDescriptor(Target).gameObject, binding, out var sceneValue))
+                GUILayout.Label($"{binding.propertyName}{(binding.propertyName.EndsWith(".r") ? "gba" : "" )}");
+                var avGO = FindAvatarDescriptor(Target).gameObject;
+                if (AnimationUtility.GetFloatValue(avGO, binding, out var sceneValue))
                 {
+                    var width = GUILayout.Width(70);
                     if (binding.isDiscreteCurve)
                     {
                         sceneValue = BitConverter.SingleToInt32Bits(sceneValue);
                     }
                     var isToggle = knownToggleProperties.Contains(binding.propertyName);
-                    if (isToggle)
-                        GUILayout.Toggle(sceneValue > 0.5f, "", GUILayout.Width(60));
+                    if (binding.propertyName.EndsWith(".r"))
+                    {
+                        var vectorBindings = GetRemainingVectorBindings(binding).ToArray();
+                        var vectorValues = new float[4];
+                        for (int i = 0; i < 4; i++)
+                        {
+                            if (i == 0)
+                                vectorValues[i] = sceneValue;
+                            else if (i < vectorBindings.Length + 1)
+                                AnimationUtility.GetFloatValue(avGO, vectorBindings[i - 1], out vectorValues[i]);
+                        }
+                        ColorField(new Color(vectorValues[0], vectorValues[1], vectorValues[2], vectorValues[3]), width);
+                    }
+                    else if (isToggle)
+                    {
+                        GUILayout.Toggle(sceneValue > 0.5f, "", width);
+                    }
                     else
-                        GUILayout.Label($"{sceneValue}", GUILayout.Width(60));
+                    {
+                        GUILayout.Label($"{sceneValue}", width);
+                    }
                 }
                 if (shouldBeIncluded && !isAlreadyIncluded)
                 {
@@ -710,7 +755,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             EditorGUIUtility.PingObject(descriptor.baseAnimationLayers[4].animatorController);
     }
 
-    private static readonly HashSet<char> vectorChars = new() { 'x', 'y', 'z', 'w', 'r', 'g', 'b', 'a' };
+    private static readonly HashSet<char> vectorChars = new() { 'x', 'y', 'z', 'w' };
     
     private Dictionary<Component, List<EditorCurveBinding>> cachedAnimatableBindings = new();
     private List<EditorCurveBinding> GetAnimatableBindings(Component component) {
