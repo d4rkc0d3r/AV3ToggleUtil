@@ -15,6 +15,8 @@ public class CreateAV3ToggleMenu : EditorWindow
     private Dictionary<EditorCurveBinding, (float offValue, float onValue)> bindingsToToggle = new();
     private List<EditorCurveBinding> filteredBindingCache = null;
     private bool defaultToggleState = false;
+    private bool savedParameter = true;
+    private bool syncedParameter = true;
     private TextFilter bindingFilter = new() { Text = "^material\\.", Invert = true };
     private Component componentToSelectBindingFrom = null;
     private Vector2 scrollPos;
@@ -505,6 +507,8 @@ public class CreateAV3ToggleMenu : EditorWindow
         TargetMenu = EditorGUILayout.ObjectField("Menu", TargetMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
 
         defaultToggleState = EditorGUILayout.Toggle("Default Toggle State", defaultToggleState);
+        savedParameter = EditorGUILayout.Toggle("Saved Parameter", savedParameter);
+        syncedParameter = EditorGUILayout.Toggle("Synced Parameter", syncedParameter);
 
         GUILayout.Space(8);
 
@@ -549,7 +553,8 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 name = ToggleName,
                 defaultValue = defaultToggleState ? 1.0f : 0.0f,
-                saved = true,
+                saved = savedParameter,
+                networkSynced = syncedParameter,
                 valueType = VRCExpressionParameters.ValueType.Bool
             };
 
