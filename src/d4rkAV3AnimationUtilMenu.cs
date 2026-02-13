@@ -8,6 +8,8 @@ using UnityEditor.Animations;
 using System;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
 
+using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
+
 public class d4rkAV3AnimationUtilMenu : EditorWindow
 {
     private enum SelectionMode
@@ -748,19 +750,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         }
     }
 
-    public static VRCAvatarDescriptor FindAvatarDescriptor(GameObject obj)
-    {
-        VRCAvatarDescriptor descriptor;
-        while (!obj.TryGetComponent(out descriptor))
-        {
-            if (obj.transform.parent == null)
-                return null;
-            obj = obj.transform.parent.gameObject;
-        }
-        return descriptor;
-    }
-
-    [MenuItem("Tools/d4rkpl4y3r/AV3 Animation Util")]
+    [MenuItem("Tools/d4rkpl4y3r/AV3 Toggle Util/Animation Utility")]
     public static void d4rkAV3AnimationUtilMenuItem()
     {
         var window = GetWindow<d4rkAV3AnimationUtilMenu>();

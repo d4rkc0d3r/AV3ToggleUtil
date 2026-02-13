@@ -8,6 +8,8 @@ using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 
+using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
+
 public class CreateAV3MaterialAnimationMenu : EditorWindow
 {
     [System.Serializable]
@@ -396,32 +398,19 @@ public class CreateAV3MaterialAnimationMenu : EditorWindow
         EditorGUILayout.EndScrollView();
     }
 
-    public static VRCAvatarDescriptor FindAvatarDescriptor(GameObject obj)
-    {
-        VRCAvatarDescriptor descriptor = null;
-        while (!obj.TryGetComponent(out descriptor))
-        {
-            if (obj.transform.parent == null)
-                return null;
-            obj = obj.transform.parent.gameObject;
-        }
-        return descriptor;
-    }
-
     [MenuItem("GameObject/Create AV3 Material Animation", false, -1)]
     public static void CreateAV3MaterialAnimationMenuItem()
     {
-        var window = GetWindow(typeof(CreateAV3MaterialAnimationMenu)) as CreateAV3MaterialAnimationMenu;
-        window.target = FindAvatarDescriptor(Selection.gameObjects[0])?.gameObject;
+        var window = GetWindow<CreateAV3MaterialAnimationMenu>();
+        window.target = FindAvatarDescriptor(Selection.activeGameObject)?.gameObject;
         window.renderers = Selection.gameObjects.Select(go => go.GetComponent<Renderer>()).Where(r => r != null).ToList();
+        window.titleContent = new GUIContent("Create AV3 Material Animation");
     }
 
     [MenuItem("GameObject/Create AV3 Material Animation", true, -1)]
     public static bool CreateAV3MaterialAnimationMenuItemValidation()
     {
-        if (Selection.gameObjects.Length == 0)
-            return false;
-        return FindAvatarDescriptor(Selection.gameObjects[0]) != null;
+        return FindAvatarDescriptor(Selection.activeGameObject) != null;
     }
 }
 #endif

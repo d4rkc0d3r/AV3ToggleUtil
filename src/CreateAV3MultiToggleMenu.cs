@@ -8,6 +8,8 @@ using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 
+using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
+
 public class CreateAV3MultiToggleMenu : EditorWindow
 {
     private AnimationClip offClip = null;
@@ -284,32 +286,18 @@ public class CreateAV3MultiToggleMenu : EditorWindow
         EditorGUILayout.LabelField("FxLayerAssetPath", AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController));
     }
 
-    public static VRCAvatarDescriptor FindAvatarDescriptor(GameObject obj)
-    {
-        VRCAvatarDescriptor descriptor = null;
-        while (!obj.TryGetComponent(out descriptor))
-        {
-            if (obj.transform.parent == null)
-                return null;
-            obj = obj.transform.parent.gameObject;
-        }
-        return descriptor;
-    }
-
     [MenuItem("GameObject/Create AV3 Multi Toggle", false, -1)]
     public static void CreateAV3ToggleMenuItem()
     {
-        var window = GetWindow(typeof(CreateAV3MultiToggleMenu)) as CreateAV3MultiToggleMenu;
-        window.Target = Selection.activeObject as GameObject;
+        var window = GetWindow<CreateAV3MultiToggleMenu>();
+        window.Target = Selection.activeGameObject;
+        window.titleContent = new GUIContent("Create AV3 Multi Toggle");
     }
 
     [MenuItem("GameObject/Create AV3 Multi Toggle", true, -1)]
     public static bool CreateAV3ToggleMenuItemValidation()
     {
-        var obj = Selection.activeObject as GameObject;
-        if (obj == null)
-            return false;
-        return FindAvatarDescriptor(obj) != null;
+        return FindAvatarDescriptor(Selection.activeGameObject) != null;
     }
 }
 #endif
