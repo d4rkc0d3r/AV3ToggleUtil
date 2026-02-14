@@ -572,65 +572,66 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 EditorGUILayout.LabelField(selectedParameter);
                 EditorGUILayout.Space(6);
 
-                void DrawMenuUsageSection()
+                bool DrawMenuUsageSection()
                 {
-                    EditorGUILayout.LabelField("Sub-Menus / Controls Using Parameter", EditorStyles.boldLabel);
                     var usages = cachedScanResult.menuUsages;
-
                     if (usages.Count == 0)
-                    {
-                        EditorGUILayout.HelpBox("No Expression Menu controls reference this parameter.", MessageType.Info);
-                        return;
-                    }
+                        return false;
 
-                    foreach (var usage in usages)
+                    using (new EditorGUILayout.VerticalScope("box"))
                     {
-                        using (new EditorGUILayout.HorizontalScope())
+                        EditorGUILayout.LabelField("Sub-Menus / Controls Using Parameter", EditorStyles.boldLabel);
+
+                        foreach (var usage in usages)
                         {
-                            GUILayout.Label("•", GUILayout.Width(12));
-                            GUILayout.Label(usage.menuPath + " -> " + usage.controlName + " (" + usage.controlType + ")", GUILayout.ExpandWidth(true));
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                GUILayout.Label("•", GUILayout.Width(12));
+                                GUILayout.Label(usage.menuPath + " -> " + usage.controlName + " (" + usage.controlType + ")", GUILayout.ExpandWidth(true));
+                            }
                         }
                     }
+                    return true;
                 }
 
-                void DrawStateUsageSection(string title, Func<StateUsage, bool> predicate)
+                bool DrawStateUsageSection(string title, Func<StateUsage, bool> predicate)
                 {
-                    EditorGUILayout.Space(8);
-                    EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
-
                     var matches = cachedScanResult.stateUsages.Where(predicate).ToList();
                     if (matches.Count == 0)
-                    {
-                        EditorGUILayout.LabelField("None");
-                        return;
-                    }
+                        return false;
 
-                    foreach (var usage in matches)
+                    EditorGUILayout.Space(8);
+                    using (new EditorGUILayout.VerticalScope("box"))
                     {
-                        using (new EditorGUILayout.HorizontalScope())
+                        EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
+                        foreach (var usage in matches)
                         {
-                            GUILayout.Label("•", GUILayout.Width(12));
-                            GUILayout.Label(usage.controllerName + " / " + usage.layerName + " / " + usage.statePath, GUILayout.ExpandWidth(true));
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                GUILayout.Label("•", GUILayout.Width(12));
+                                GUILayout.Label(usage.controllerName + " / " + usage.layerName + " / " + usage.statePath, GUILayout.ExpandWidth(true));
+                            }
                         }
                     }
+                    return true;
                 }
 
-                void DrawClipSection(string title, IEnumerable<AnimationClip> clips)
+                bool DrawClipSection(string title, IEnumerable<AnimationClip> clips)
                 {
-                    EditorGUILayout.Space(8);
-                    EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
-
                     var ordered = clips.Where(c => c != null).Distinct().OrderBy(c => c.name, StringComparer.OrdinalIgnoreCase).ToList();
                     if (ordered.Count == 0)
-                    {
-                        EditorGUILayout.LabelField("None");
-                        return;
-                    }
+                        return false;
 
-                    for (int i = 0; i < ordered.Count; i++)
+                    EditorGUILayout.Space(8);
+                    using (new EditorGUILayout.VerticalScope("box"))
                     {
-                        EditorGUILayout.ObjectField(ordered[i], typeof(AnimationClip), false);
+                        EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
+                        for (int i = 0; i < ordered.Count; i++)
+                        {
+                            EditorGUILayout.ObjectField(ordered[i], typeof(AnimationClip), false);
+                        }
                     }
+                    return true;
                 }
 
                 DrawMenuUsageSection();
