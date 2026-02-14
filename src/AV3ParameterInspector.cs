@@ -343,6 +343,31 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return av.expressionParameters.parameters.FirstOrDefault(p => p != null && IsSameParameter(p.name, parameterName));
         }
 
+        private static List<(string controllerName, AnimatorControllerParameterType parameterType)> GetAnimatorControllerParameterInfos(
+            VRCAvatarDescriptor av,
+            string parameterName)
+        {
+            var results = new List<(string controllerName, AnimatorControllerParameterType parameterType)>();
+            if (av == null || string.IsNullOrEmpty(parameterName))
+                return results;
+
+            foreach (var controller in GetAllControllers(av).Distinct())
+            {
+                if (controller == null || controller.parameters == null)
+                    continue;
+
+                var parameter = controller.parameters.FirstOrDefault(p => p != null && IsSameParameter(p.name, parameterName));
+                if (parameter == null)
+                    continue;
+
+                results.Add((controller.name, parameter.type));
+            }
+
+            return results
+                .OrderBy(x => x.controllerName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         private ScanResult BuildScanResult(VRCAvatarDescriptor av, string parameterName)
         {
             var result = new ScanResult();
@@ -587,20 +612,29 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
                     GUILayout.Label("Selected Parameter", EditorStyles.boldLabel);
-                    using var h = new EditorGUILayout.HorizontalScope();
-                    GUILayout.Space(innerIndent);
-
-                    var vrcParameter = GetVRCExpressionParameterInfo(av, selectedParameter);
-                    if (vrcParameter != null)
+                    using (new EditorGUILayout.HorizontalScope())
                     {
-                        GUILayout.Label($"{selectedParameter}   ({vrcParameter.valueType}"
-                            + (vrcParameter.saved ? ", Saved" : "")
-                            + (vrcParameter.networkSynced ? ", Synced" : "")
-                            + $")");
+                        GUILayout.Space(innerIndent);
+                        var vrcParameter = GetVRCExpressionParameterInfo(av, selectedParameter);
+                        if (vrcParameter != null)
+                        {
+                            GUILayout.Label($"{selectedParameter}   ({vrcParameter.valueType}"
+                                + (vrcParameter.saved ? ", Saved" : "")
+                                + (vrcParameter.networkSynced ? ", Synced" : "")
+                                + $")");
+                        }
+                        else
+                        {
+                            GUILayout.Label(selectedParameter);
+                        }
                     }
-                    else
+
+                    var controllerParameterInfos = GetAnimatorControllerParameterInfos(av, selectedParameter);
+                    foreach (var info in controllerParameterInfos)
                     {
-                        GUILayout.Label(selectedParameter);
+                        using var controllerInfoRow = new EditorGUILayout.HorizontalScope();
+                        GUILayout.Space(innerIndent);
+                        GUILayout.Label($"{info.controllerName}   {info.parameterType}");
                     }
                 }
 
