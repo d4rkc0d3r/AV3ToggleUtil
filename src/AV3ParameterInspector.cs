@@ -335,6 +335,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return false;
         }
 
+        private static VRCExpressionParameters.Parameter GetVRCExpressionParameterInfo(VRCAvatarDescriptor av, string parameterName)
+        {
+            if (av == null || av.expressionParameters == null || av.expressionParameters.parameters == null || string.IsNullOrEmpty(parameterName))
+                return null;
+            return av.expressionParameters.parameters.FirstOrDefault(p => p != null && IsSameParameter(p.name, parameterName));
+        }
+
         private ScanResult BuildScanResult(VRCAvatarDescriptor av, string parameterName)
         {
             var result = new ScanResult();
@@ -568,9 +575,25 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using var rightScroll = new EditorGUILayout.ScrollViewScope(rightScrollPos);
                 rightScrollPos = rightScroll.scrollPosition;
 
-                EditorGUILayout.LabelField("Selected Parameter", EditorStyles.boldLabel);
-                EditorGUILayout.LabelField(selectedParameter);
-                EditorGUILayout.Space(6);
+                using (new EditorGUILayout.VerticalScope("box"))
+                {
+                    GUILayout.Label("Selected Parameter", EditorStyles.boldLabel);
+                    using var h = new EditorGUILayout.HorizontalScope();
+                    GUILayout.Space(15);
+
+                    var vrcParameter = GetVRCExpressionParameterInfo(av, selectedParameter);
+                    if (vrcParameter != null)
+                    {
+                        GUILayout.Label($"{selectedParameter}   ({vrcParameter.valueType}"
+                            + (vrcParameter.saved ? ", Saved" : "")
+                            + (vrcParameter.networkSynced ? ", Synced" : "")
+                            + $")");
+                    }
+                    else
+                    {
+                        GUILayout.Label(selectedParameter);
+                    }
+                }
 
                 bool DrawMenuUsageSection()
                 {
@@ -578,6 +601,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (usages.Count == 0)
                         return false;
 
+                    EditorGUILayout.Space(8);
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
                         EditorGUILayout.LabelField("Sub-Menus / Controls Using Parameter", EditorStyles.boldLabel);
@@ -586,7 +610,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
-                                GUILayout.Label("•", GUILayout.Width(12));
+                                GUILayout.Space(15);
                                 GUILayout.Label(usage.menuPath + " -> " + usage.controlName + " (" + usage.controlType + ")", GUILayout.ExpandWidth(true));
                             }
                         }
@@ -608,7 +632,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
-                                GUILayout.Label("•", GUILayout.Width(12));
+                                GUILayout.Space(15);
                                 GUILayout.Label(usage.controllerName + " / " + usage.layerName + " / " + usage.statePath, GUILayout.ExpandWidth(true));
                             }
                         }
@@ -628,6 +652,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
                         for (int i = 0; i < ordered.Count; i++)
                         {
+                            using var h = new EditorGUILayout.HorizontalScope();
+                            GUILayout.Space(15);
                             EditorGUILayout.ObjectField(ordered[i], typeof(AnimationClip), false);
                         }
                     }
@@ -640,10 +666,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 DrawStateUsageSection("States Using Parameter as Motion Time", s => s.motionTime);
                 DrawStateUsageSection("States Using Parameter in Parameter Drivers", s => s.parameterDriver);
 
-                DrawClipSection("Affected Animation Clips (Transition Matches)", cachedScanResult.transitionClips);
-                DrawClipSection("Affected Animation Clips (BlendTree Matches)", cachedScanResult.blendTreeClips);
-                DrawClipSection("Affected Animation Clips (Motion Time Matches)", cachedScanResult.motionTimeClips);
-
                 var allAffected = cachedScanResult.transitionClips
                     .Concat(cachedScanResult.blendTreeClips)
                     .Concat(cachedScanResult.motionTimeClips)
@@ -652,7 +674,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     .OrderBy(c => c.name, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                DrawClipSection("Affected Animation Clips (All)", allAffected);
+                DrawClipSection("Affected Animation Clips", allAffected);
             }
         }
 
