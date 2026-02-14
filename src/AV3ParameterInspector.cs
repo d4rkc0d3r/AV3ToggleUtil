@@ -24,6 +24,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private Vector2 rightScrollPos;
         private float leftPanelWidth = 220f;
         private bool isDraggingSplitter;
+        private bool sortParameters = true;
         private string selectedParameter = "";
 
         private int cachedAvatarId = 0;
@@ -89,16 +90,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private static List<string> GetAllParameterNames(VRCAvatarDescriptor av)
+        private static List<string> GetAllParameterNames(VRCAvatarDescriptor av, bool sortAlphabetically)
         {
-            var names = new HashSet<string>(StringComparer.Ordinal);
+            var names = new List<string>();
+            var knownNames = new HashSet<string>(StringComparer.Ordinal);
+
+            void AddParameterName(string name)
+            {
+                if (string.IsNullOrEmpty(name)) return;
+                if (!knownNames.Add(name)) return;
+                names.Add(name);
+            }
 
             if (av != null && av.expressionParameters != null && av.expressionParameters.parameters != null)
             {
                 foreach (var p in av.expressionParameters.parameters)
                 {
-                    if (p == null || string.IsNullOrEmpty(p.name)) continue;
-                    names.Add(p.name);
+                    if (p == null) continue;
+                    AddParameterName(p.name);
                 }
             }
 
@@ -107,12 +116,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (controller == null || controller.parameters == null) continue;
                 foreach (var p in controller.parameters)
                 {
-                    if (p == null || string.IsNullOrEmpty(p.name)) continue;
-                    names.Add(p.name);
+                    if (p == null) continue;
+                    AddParameterName(p.name);
                 }
             }
 
-            return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            if (sortAlphabetically)
+                return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+
+            return names;
         }
 
         private static bool TransitionUsesParameter(AnimatorTransitionBase transition, string parameterName)
@@ -471,6 +483,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using (new EditorGUI.DisabledScope(true))
                 {
                     EditorGUILayout.ObjectField(av, typeof(VRCAvatarDescriptor), true);
+                    EditorGUILayout.ObjectField(av != null ? av.expressionParameters : null, typeof(VRCExpressionParameters), false);
                 }
             }
 
@@ -480,7 +493,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return;
             }
 
-            var allParameters = GetAllParameterNames(av);
+            var allParameters = GetAllParameterNames(av, sortParameters);
             if (allParameters.Count == 0)
             {
                 EditorGUILayout.HelpBox("No parameters found in Expression Parameters or linked Animator Controllers.", MessageType.Info);
@@ -506,7 +519,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             using (new EditorGUILayout.VerticalScope(GUILayout.Width(leftPanelWidth)))
             {
-                EditorGUILayout.LabelField("Parameters", EditorStyles.boldLabel);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label($"Parameters ({allParameters.Count})", EditorStyles.boldLabel);
+                    sortParameters = GUILayout.Toggle(sortParameters, "A→Z", GUI.skin.button, GUILayout.ExpandWidth(false));
+                }
 
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
                 leftScrollPos = leftScroll.scrollPosition;
