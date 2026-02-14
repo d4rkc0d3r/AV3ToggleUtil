@@ -1,14 +1,14 @@
 ﻿#if UNITY_EDITOR
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
+using VRC.SDK3.Dynamics.Contact.Components;
+using VRC.SDK3.Dynamics.PhysBone.Components;
 
 using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
 
@@ -238,52 +238,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return state.timeParameterActive && IsSameParameter(state.timeParameter, parameterName);
         }
 
-        private static IEnumerable<string> GetDriverParameterNamesReflective(StateMachineBehaviour behaviour)
-        {
-            if (behaviour == null) yield break;
-
-            var behaviourType = behaviour.GetType();
-            var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-
-            object parametersObj = null;
-
-            var field = behaviourType.GetField("parameters", flags);
-            if (field != null)
-                parametersObj = field.GetValue(behaviour);
-
-            if (parametersObj == null)
-            {
-                var property = behaviourType.GetProperty("parameters", flags);
-                if (property != null && property.CanRead)
-                    parametersObj = property.GetValue(behaviour, null);
-            }
-
-            if (!(parametersObj is IEnumerable parameterEnumerable))
-                yield break;
-
-            foreach (var p in parameterEnumerable)
-            {
-                if (p == null) continue;
-
-                var pType = p.GetType();
-                string name = null;
-
-                var nameField = pType.GetField("name", flags);
-                if (nameField != null)
-                    name = nameField.GetValue(p) as string;
-
-                if (string.IsNullOrEmpty(name))
-                {
-                    var nameProperty = pType.GetProperty("name", flags);
-                    if (nameProperty != null && nameProperty.CanRead)
-                        name = nameProperty.GetValue(p, null) as string;
-                }
-
-                if (!string.IsNullOrEmpty(name))
-                    yield return name;
-            }
-        }
-
         private static bool StateUsesParameterDriver(AnimatorState state, string parameterName)
         {
             if (state == null || state.behaviours == null) return false;
@@ -304,16 +258,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         }
                     }
                     continue;
-                }
-
-                var typeName = behaviour.GetType().Name;
-                if (typeName.IndexOf("ParameterDriver", StringComparison.OrdinalIgnoreCase) < 0)
-                    continue;
-
-                foreach (var name in GetDriverParameterNamesReflective(behaviour))
-                {
-                    if (IsSameParameter(name, parameterName))
-                        return true;
                 }
             }
 
@@ -407,32 +351,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ToList();
         }
 
-        private static bool TryGetStringMember(object target, string memberName, out string value)
-        {
-            value = null;
-            if (target == null || string.IsNullOrEmpty(memberName))
-                return false;
-
-            var type = target.GetType();
-            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-
-            var field = type.GetField(memberName, flags);
-            if (field != null && field.FieldType == typeof(string))
-            {
-                value = field.GetValue(target) as string;
-                return true;
-            }
-
-            var property = type.GetProperty(memberName, flags);
-            if (property != null && property.PropertyType == typeof(string) && property.CanRead)
-            {
-                value = property.GetValue(target, null) as string;
-                return true;
-            }
-
-            return false;
-        }
-
         private static bool IsParameterWrittenByPhysBone(string selectedParameter, string configuredParameter)
         {
             if (string.IsNullOrEmpty(selectedParameter) || string.IsNullOrEmpty(configuredParameter))
@@ -451,32 +369,34 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return writers;
 
             var root = av.transform;
-            foreach (var component in root.GetComponentsInChildren<Component>(true))
+            foreach (var physBone in root.GetComponentsInChildren<VRCPhysBone>(true))
             {
-                if (component == null)
+                if (physBone == null || string.IsNullOrEmpty(physBone.parameter))
                     continue;
 
-                var typeName = component.GetType().Name;
-                var isPhysBone = typeName.Contains("PhysBone", StringComparison.OrdinalIgnoreCase);
-                var isContactReceiver = typeName.Contains("ContactReceiver", StringComparison.OrdinalIgnoreCase);
-                if (!isPhysBone && !isContactReceiver)
+                if (!IsParameterWrittenByPhysBone(selectedParameter, physBone.parameter))
                     continue;
 
-                if (!TryGetStringMember(component, "parameter", out var configuredParameter) || string.IsNullOrEmpty(configuredParameter))
-                    continue;
-
-                var matches = isPhysBone
-                    ? IsParameterWrittenByPhysBone(selectedParameter, configuredParameter)
-                    : IsSameParameter(selectedParameter, configuredParameter);
-                if (!matches)
-                    continue;
-
-                var path = AnimationUtility.CalculateTransformPath(component.transform, root);
+                var path = AnimationUtility.CalculateTransformPath(physBone.transform, root);
                 if (string.IsNullOrEmpty(path))
                     path = "(Root)";
 
-                var sourceType = isPhysBone ? "PhysBone" : "Contact";
-                writers.Add(new ComponentParameterWriter(sourceType, path, configuredParameter));
+                writers.Add(new ComponentParameterWriter("PhysBone", path, physBone.parameter));
+            }
+
+            foreach (var contactReceiver in root.GetComponentsInChildren<VRCContactReceiver>(true))
+            {
+                if (contactReceiver == null || string.IsNullOrEmpty(contactReceiver.parameter))
+                    continue;
+
+                if (!IsSameParameter(selectedParameter, contactReceiver.parameter))
+                    continue;
+
+                var path = AnimationUtility.CalculateTransformPath(contactReceiver.transform, root);
+                if (string.IsNullOrEmpty(path))
+                    path = "(Root)";
+
+                writers.Add(new ComponentParameterWriter("Contact", path, contactReceiver.parameter));
             }
 
             return writers
