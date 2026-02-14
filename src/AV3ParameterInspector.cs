@@ -578,11 +578,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using var rightScroll = new EditorGUILayout.ScrollViewScope(rightScrollPos);
                 rightScrollPos = rightScroll.scrollPosition;
 
+                var rightPanelWidth = Mathf.Max(200f, position.width - leftPanelWidth - SplitterWidth - 30f);
+                var columns = Mathf.Clamp(Mathf.FloorToInt(rightPanelWidth / 260f), 1, 3);
+                const float innerIndent = 30f;
+                const float columnSpacing = 4f;
+                var entryWidth = Mathf.Max(80f, (rightPanelWidth - innerIndent - (columns - 1) * columnSpacing) / columns);
+                
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
                     GUILayout.Label("Selected Parameter", EditorStyles.boldLabel);
                     using var h = new EditorGUILayout.HorizontalScope();
-                    GUILayout.Space(15);
+                    GUILayout.Space(innerIndent);
 
                     var vrcParameter = GetVRCExpressionParameterInfo(av, selectedParameter);
                     if (vrcParameter != null)
@@ -609,12 +615,48 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         EditorGUILayout.LabelField("Sub-Menus / Controls Using Parameter", EditorStyles.boldLabel);
 
-                        foreach (var usage in usages)
+                        var grouped = usages
+                            .GroupBy(x => x.menuPath)
+                            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+
+                        foreach (var group in grouped)
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
                                 GUILayout.Space(15);
-                                GUILayout.Label(usage.menuPath + " -> " + usage.controlName + " (" + usage.controlType + ")", GUILayout.ExpandWidth(true));
+                                GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
+                            }
+
+                            var controlNames = group
+                                .Select(x => $"{x.controlName}   ({x.controlType})")
+                                .Distinct()
+                                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+
+                            for (int i = 0; i < controlNames.Count; i += columns)
+                            {
+                                using (new EditorGUILayout.HorizontalScope())
+                                {
+                                    GUILayout.Space(innerIndent);
+                                    for (int col = 0; col < columns; col++)
+                                    {
+                                        var index = i + col;
+                                        if (index < controlNames.Count)
+                                        {
+                                            GUILayout.Label(controlNames[index], GUILayout.Width(entryWidth));
+                                        }
+                                        else
+                                        {
+                                            GUILayout.Space(entryWidth);
+                                        }
+
+                                        if (col < columns - 1)
+                                        {
+                                            GUILayout.Space(columnSpacing);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -644,12 +686,29 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
                             }
 
-                            foreach (var stateName in group.Select(x => x.stateName).Distinct().OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                            var stateNames = group.Select(x => x.stateName).Distinct().OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+                            for (int i = 0; i < stateNames.Count; i += columns)
                             {
                                 using (new EditorGUILayout.HorizontalScope())
                                 {
-                                    GUILayout.Space(30);
-                                    GUILayout.Label(stateName, GUILayout.ExpandWidth(true));
+                                    GUILayout.Space(innerIndent);
+                                    for (int col = 0; col < columns; col++)
+                                    {
+                                        var index = i + col;
+                                        if (index < stateNames.Count)
+                                        {
+                                            GUILayout.Label(stateNames[index], GUILayout.Width(entryWidth));
+                                        }
+                                        else
+                                        {
+                                            GUILayout.Space(entryWidth);
+                                        }
+
+                                        if (col < columns - 1)
+                                        {
+                                            GUILayout.Space(columnSpacing);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -667,11 +726,27 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
                         EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
-                        for (int i = 0; i < ordered.Count; i++)
+                        for (int i = 0; i < ordered.Count; i += columns)
                         {
                             using var h = new EditorGUILayout.HorizontalScope();
-                            GUILayout.Space(15);
-                            EditorGUILayout.ObjectField(ordered[i], typeof(AnimationClip), false);
+                            GUILayout.Space(innerIndent);
+                            for (int col = 0; col < columns; col++)
+                            {
+                                var index = i + col;
+                                if (index < ordered.Count)
+                                {
+                                    EditorGUILayout.ObjectField(ordered[index], typeof(AnimationClip), false, GUILayout.Width(entryWidth));
+                                }
+                                else
+                                {
+                                    GUILayout.Space(entryWidth);
+                                }
+
+                                if (col < columns - 1)
+                                {
+                                    GUILayout.Space(columnSpacing);
+                                }
+                            }
                         }
                     }
                     return true;
