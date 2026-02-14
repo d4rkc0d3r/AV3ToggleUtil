@@ -48,6 +48,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public string controllerName;
             public string layerName;
             public string statePath;
+            public string stateName;
             public AnimatorState state;
 
             public bool transitionIn;
@@ -412,7 +413,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (state == null) continue;
 
                                 var stateName = string.IsNullOrEmpty(states[i].state.name) ? "(Unnamed State)" : states[i].state.name;
-                                var statePath = string.IsNullOrEmpty(smPath) ? stateName : smPath + "/" + stateName;
+                                var subStateMachinePath = string.IsNullOrEmpty(smPath) ? "" : $" / {smPath}";
+                                var statePath = $"{controller.name} / {layer.name}{subStateMachinePath}";
 
                                 var usage = new StateUsage
                                 {
@@ -420,6 +422,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     controllerName = controller.name,
                                     layerName = layer.name,
                                     statePath = statePath,
+                                    stateName = stateName,
                                     state = state,
                                 };
 
@@ -453,7 +456,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     ? "(Unnamed StateMachine)"
                                     : childStateMachines[i].stateMachine.name;
 
-                                var childPath = string.IsNullOrEmpty(smPath) ? childName : smPath + "/" + childName;
+                                var childPath = string.IsNullOrEmpty(smPath) ? childName : $"{smPath} / {childName}";
                                 TraverseStateMachine(child, childPath);
                             }
                         }
@@ -472,8 +475,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ToList();
 
             result.stateUsages = result.stateUsages
-                .OrderBy(x => x.controllerName, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(x => x.layerName, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x.statePath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.stateName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.statePath, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -628,12 +631,26 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
                         EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
-                        foreach (var usage in matches)
+                        var grouped = matches
+                            .GroupBy(x => x.statePath)
+                            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+
+                        foreach (var group in grouped)
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
                                 GUILayout.Space(15);
-                                GUILayout.Label(usage.controllerName + " / " + usage.layerName + " / " + usage.statePath, GUILayout.ExpandWidth(true));
+                                GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
+                            }
+
+                            foreach (var stateName in group.Select(x => x.stateName).Distinct().OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                            {
+                                using (new EditorGUILayout.HorizontalScope())
+                                {
+                                    GUILayout.Space(30);
+                                    GUILayout.Label(stateName, GUILayout.ExpandWidth(true));
+                                }
                             }
                         }
                     }
