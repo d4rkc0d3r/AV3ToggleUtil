@@ -32,10 +32,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private ScanResult cachedScanResult;
         private bool forceRescan = true;
 
+        // https://creators.vrchat.com/avatars/animator-parameters/
         private static readonly HashSet<string> VRChatBuiltInParameters = new(StringComparer.Ordinal)
         {
             "IsLocal",
-            "AvatarVersion",
+            "PreviewMode",
             "Viseme",
             "Voice",
             "GestureLeft",
@@ -49,12 +50,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             "VelocityMagnitude",
             "Upright",
             "Grounded",
-            "AFK",
             "Seated",
+            "AFK",
+            "TrackingType",
             "VRMode",
             "MuteSelf",
             "InStation",
-            "Earmuffs"
+            "Earmuffs",
+            "IsOnFriendsList",
+            "AvatarVersion",
+            "IsAnimatorEnabled",
+
+            "ScaleModified",
+            "ScaleFactor",
+            "ScaleFactorInverse",
+            "EyeHeightAsMeters",
+            "EyeHeightAsPercent",
         };
 
         [Serializable]
