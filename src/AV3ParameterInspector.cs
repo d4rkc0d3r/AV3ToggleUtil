@@ -32,6 +32,31 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private ScanResult cachedScanResult;
         private bool forceRescan = true;
 
+        private static readonly HashSet<string> VRChatBuiltInParameters = new(StringComparer.Ordinal)
+        {
+            "IsLocal",
+            "AvatarVersion",
+            "Viseme",
+            "Voice",
+            "GestureLeft",
+            "GestureRight",
+            "GestureLeftWeight",
+            "GestureRightWeight",
+            "AngularY",
+            "VelocityX",
+            "VelocityY",
+            "VelocityZ",
+            "VelocityMagnitude",
+            "Upright",
+            "Grounded",
+            "AFK",
+            "Seated",
+            "VRMode",
+            "MuteSelf",
+            "InStation",
+            "Earmuffs"
+        };
+
         [Serializable]
         private class MenuUsage
         {
@@ -67,6 +92,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public HashSet<AnimationClip> transitionClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> blendTreeClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> motionTimeClips = new HashSet<AnimationClip>();
+        }
+
+        private readonly struct ComponentParameterWriter
+        {
+            public readonly string sourceType;
+            public readonly string path;
+            public readonly string configuredParameter;
+
+            public ComponentParameterWriter(string sourceType, string path, string configuredParameter)
+            {
+                this.sourceType = sourceType;
+                this.path = path;
+                this.configuredParameter = configuredParameter;
+            }
         }
 
         private static bool IsSameParameter(string a, string b)
@@ -368,6 +407,85 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ToList();
         }
 
+        private static bool TryGetStringMember(object target, string memberName, out string value)
+        {
+            value = null;
+            if (target == null || string.IsNullOrEmpty(memberName))
+                return false;
+
+            var type = target.GetType();
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+            var field = type.GetField(memberName, flags);
+            if (field != null && field.FieldType == typeof(string))
+            {
+                value = field.GetValue(target) as string;
+                return true;
+            }
+
+            var property = type.GetProperty(memberName, flags);
+            if (property != null && property.PropertyType == typeof(string) && property.CanRead)
+            {
+                value = property.GetValue(target, null) as string;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsParameterWrittenByPhysBone(string selectedParameter, string configuredParameter)
+        {
+            if (string.IsNullOrEmpty(selectedParameter) || string.IsNullOrEmpty(configuredParameter))
+                return false;
+
+            if (IsSameParameter(selectedParameter, configuredParameter))
+                return true;
+
+            return selectedParameter.StartsWith(configuredParameter + "_", StringComparison.Ordinal);
+        }
+
+        private static List<ComponentParameterWriter> GetComponentParameterWriters(VRCAvatarDescriptor av, string selectedParameter)
+        {
+            var writers = new List<ComponentParameterWriter>();
+            if (av == null || av.transform == null || string.IsNullOrEmpty(selectedParameter))
+                return writers;
+
+            var root = av.transform;
+            foreach (var component in root.GetComponentsInChildren<Component>(true))
+            {
+                if (component == null)
+                    continue;
+
+                var typeName = component.GetType().Name;
+                var isPhysBone = typeName.Contains("PhysBone", StringComparison.OrdinalIgnoreCase);
+                var isContactReceiver = typeName.Contains("ContactReceiver", StringComparison.OrdinalIgnoreCase);
+                if (!isPhysBone && !isContactReceiver)
+                    continue;
+
+                if (!TryGetStringMember(component, "parameter", out var configuredParameter) || string.IsNullOrEmpty(configuredParameter))
+                    continue;
+
+                var matches = isPhysBone
+                    ? IsParameterWrittenByPhysBone(selectedParameter, configuredParameter)
+                    : IsSameParameter(selectedParameter, configuredParameter);
+                if (!matches)
+                    continue;
+
+                var path = AnimationUtility.CalculateTransformPath(component.transform, root);
+                if (string.IsNullOrEmpty(path))
+                    path = "(Root)";
+
+                var sourceType = isPhysBone ? "PhysBone" : "Contact";
+                writers.Add(new ComponentParameterWriter(sourceType, path, configuredParameter));
+            }
+
+            return writers
+                .OrderBy(x => x.sourceType, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.path, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.configuredParameter, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         private ScanResult BuildScanResult(VRCAvatarDescriptor av, string parameterName)
         {
             var result = new ScanResult();
@@ -611,21 +729,28 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
+                    var componentWriters = GetComponentParameterWriters(av, selectedParameter);
+                    const float width = 200f;
+
                     GUILayout.Label("Selected Parameter", EditorStyles.boldLabel);
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         GUILayout.Space(innerIndent);
+                        GUILayout.Label($"{selectedParameter}", GUILayout.Width(width));
                         var vrcParameter = GetVRCExpressionParameterInfo(av, selectedParameter);
                         if (vrcParameter != null)
                         {
-                            GUILayout.Label($"{selectedParameter}   ({vrcParameter.valueType}"
+                            GUILayout.Label($"{vrcParameter.valueType}"
                                 + (vrcParameter.saved ? ", Saved" : "")
-                                + (vrcParameter.networkSynced ? ", Synced" : "")
-                                + $")");
+                                + (vrcParameter.networkSynced ? ", Synced" : ""));
                         }
-                        else
+                        else if (VRChatBuiltInParameters.Contains(selectedParameter))
                         {
-                            GUILayout.Label(selectedParameter);
+                            GUILayout.Label($"VRChat Built-in Parameter");
+                        }
+                        else if (componentWriters.Count == 1)
+                        {
+                            GUILayout.Label($"{componentWriters[0].sourceType}: '{componentWriters[0].path}'");
                         }
                     }
 
@@ -634,7 +759,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         using var controllerInfoRow = new EditorGUILayout.HorizontalScope();
                         GUILayout.Space(innerIndent);
-                        GUILayout.Label($"{info.controllerName}   {info.parameterType}");
+                        GUILayout.Label($"{info.controllerName}", GUILayout.Width(width));
+                        GUILayout.Label($"{info.parameterType}");
+                    }
+
+                    if (componentWriters.Count > 1)
+                    {
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Space(innerIndent);
+                            GUILayout.Label("Set by PhysBones / Contact Receivers");
+                        }
+
+                        foreach (var writer in componentWriters)
+                        {
+                            using var writerRow = new EditorGUILayout.HorizontalScope();
+                            GUILayout.Space(innerIndent + 15);
+                            GUILayout.Label($"{writer.sourceType}: '{writer.path}'");
+                        }
                     }
                 }
 
