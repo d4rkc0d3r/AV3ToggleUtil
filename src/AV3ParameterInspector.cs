@@ -652,11 +652,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using var rightScroll = new EditorGUILayout.ScrollViewScope(rightScrollPos);
                 rightScrollPos = rightScroll.scrollPosition;
 
-                var rightPanelWidth = Mathf.Max(200f, position.width - leftPanelWidth - SplitterWidth - 34f);
+                var rightPanelWidth = Mathf.Max(200f, position.width - leftPanelWidth - SplitterWidth - 30f);
                 var columns = Mathf.Clamp(Mathf.FloorToInt(rightPanelWidth / 260f), 1, 3);
                 const float innerIndent = 30f;
                 const float columnSpacing = 4f;
-                var entryWidth = Mathf.Max(80f, (rightPanelWidth - innerIndent - (columns - 1) * columnSpacing) / columns);
+                var entryWidth = Mathf.Max(80f, Mathf.Floor((rightPanelWidth - innerIndent - (columns - 1) * (columnSpacing + 3)) / columns));
                 
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
