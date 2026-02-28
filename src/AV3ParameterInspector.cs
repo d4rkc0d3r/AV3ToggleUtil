@@ -24,7 +24,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private Vector2 rightScrollPos;
         private float leftPanelWidth = 220f;
         private bool isDraggingSplitter;
-        private bool sortParameters = true;
+        private bool sortParameters = false;
         private string selectedParameter = "";
 
         private int cachedAvatarId = 0;
@@ -646,6 +646,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 isDraggingSplitter = false;
                 evt.Use();
             }
+            if (isDraggingSplitter)
+            {
+                var currentCursorRect = new Rect(evt.mousePosition.x - 11, evt.mousePosition.y - 11, 21f, 21f);
+                EditorGUIUtility.AddCursorRect(currentCursorRect, MouseCursor.ResizeHorizontal);
+            }
 
             using (new EditorGUILayout.VerticalScope())
             {
@@ -699,7 +704,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         using (new EditorGUILayout.HorizontalScope())
                         {
                             GUILayout.Space(innerIndent);
-                            GUILayout.Label("Set by PhysBones / Contact Receivers");
+                            GUILayout.Label("Set by PhysBones & Contact Receivers");
                         }
 
                         foreach (var writer in componentWriters)
@@ -720,7 +725,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     EditorGUILayout.Space(8);
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
-                        EditorGUILayout.LabelField("Sub-Menus / Controls Using Parameter", EditorStyles.boldLabel);
+                        EditorGUILayout.LabelField("Sub-Menus & Controls Using Parameter", EditorStyles.boldLabel);
 
                         var grouped = usages
                             .GroupBy(x => x.menuPath)
