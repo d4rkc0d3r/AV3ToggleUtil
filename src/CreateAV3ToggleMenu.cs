@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEditor;
-using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using UnityEditor.Animations;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
@@ -96,18 +95,6 @@ public class CreateAV3ToggleMenu : EditorWindow
         var text = ToggleName.Replace(" ", "");
         text = string.IsNullOrEmpty(text) ? GetDefaultToggleName() : text;
         return text;
-    }
-
-    private bool ClickableLastRect()
-    {
-        var rect = GUILayoutUtility.GetLastRect();
-        EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
-        var clicked = Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition) && Event.current.button == 0;
-        if (clicked)
-        {
-            Event.current.Use();
-        }
-        return clicked;
     }
 
     private static string TrimAfterLastSlash(string path)

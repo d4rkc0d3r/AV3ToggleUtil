@@ -687,6 +687,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         else if (componentWriters.Count == 1)
                         {
                             GUILayout.Label($"{componentWriters[0].sourceType}: '{componentWriters[0].path}'");
+                            SelectTransformByPathFromLastRect(av.transform, componentWriters[0].path);
                         }
                     }
 
@@ -712,6 +713,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             using var writerRow = new EditorGUILayout.HorizontalScope();
                             GUILayout.Space(innerIndent + 15);
                             GUILayout.Label($"{writer.sourceType}: '{writer.path}'");
+                            SelectTransformByPathFromLastRect(av.transform, writer.path);
                         }
                     }
                 }
