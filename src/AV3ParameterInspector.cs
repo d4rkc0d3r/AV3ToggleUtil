@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using d4rkpl4y3r.AV3ToggleUtil.Util;
 using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -35,6 +36,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private ScanResult cachedScanResult;
         private bool forceRescan = true;
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
+        private TextFilter parameterFilter = new() { IsRegex = false, SmallButtons = true };
 
         // https://creators.vrchat.com/avatars/animator-parameters/
         private static readonly HashSet<string> VRChatBuiltInParameters = new(StringComparer.Ordinal)
@@ -656,18 +658,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             using (new EditorGUILayout.VerticalScope(GUILayout.Width(leftPanelWidth)))
             {
+                var filteredParameters = allParameters.Where(p => parameterFilter.Matches(p)).ToList();
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    GUILayout.Label($"Parameters ({allParameters.Count})", EditorStyles.boldLabel);
+                    GUILayout.Label($"Parameters ({filteredParameters.Count}/{allParameters.Count})", EditorStyles.boldLabel);
                     sortParameters = GUILayout.Toggle(sortParameters, "A→Z", GUI.skin.button, GUILayout.ExpandWidth(false));
                 }
+                parameterFilter.DrawGUI();
 
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
                 leftScrollPos = leftScroll.scrollPosition;
 
-                for (int i = 0; i < allParameters.Count; i++)
+                for (int i = 0; i < filteredParameters.Count; i++)
                 {
-                    var parameter = allParameters[i];
+                    var parameter = filteredParameters[i];
                     using var cc = new EditorGUI.ChangeCheckScope();
                     var selected = GUILayout.Toggle(IsSameParameter(selectedParameter, parameter), parameter, GUI.skin.button, GUILayout.ExpandWidth(true));
                     if (cc.changed && selected && !IsSameParameter(selectedParameter, parameter))

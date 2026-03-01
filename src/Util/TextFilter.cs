@@ -66,6 +66,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             }
         }
 
+        public bool SmallButtons = false;
+
         private readonly Dictionary<string, bool> matchCache = new();
 
         public bool Matches(string input)
@@ -93,7 +95,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             return matchCache[input] = contains ^ invert;
         }
 
-        public void DrawGUI(string label)
+        public void DrawGUI(string label = null)
         {
             using var _ = new EditorGUILayout.HorizontalScope();
             using var cc = new EditorGUI.ChangeCheckScope();
@@ -109,16 +111,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             if (regexError != null)
                 GUI.contentColor = new Color(1f, 1f, 0.3f);
 
-            var rect = EditorGUILayout.GetControlRect();
-            text = EditorGUI.TextField(rect, new GUIContent(label), text);
+            var rect = EditorGUILayout.GetControlRect(!string.IsNullOrEmpty(label));
+            if (string.IsNullOrEmpty(label))
+                text = EditorGUI.TextField(rect, text);
+            else
+                text = EditorGUI.TextField(rect, label, text);
             if (regexError != null)
                 GUI.Label(rect, new GUIContent("", regexError));
 
             GUI.contentColor = prevColor;
 
-            isRegex = GUILayout.Toggle(isRegex, "Regex", GUI.skin.button, GUILayout.ExpandWidth(false));
-            isCaseSensitive = GUILayout.Toggle(isCaseSensitive, "Case", GUI.skin.button, GUILayout.ExpandWidth(false));
-            invert = GUILayout.Toggle(invert, "Invert", GUI.skin.button, GUILayout.ExpandWidth(false));
+            void ToggleButton(ref bool value, string label, string tooltip)
+            {
+                value = GUILayout.Toggle(value, new GUIContent(SmallButtons ? label[0].ToString() : label, tooltip), GUI.skin.button, GUILayout.ExpandWidth(false));
+            }
+
+            ToggleButton(ref isRegex, "Regex", "Use regular expression");
+            ToggleButton(ref isCaseSensitive, "Case", "Case sensitive");
+            ToggleButton(ref invert, "Invert", "Invert match");
 
             if (cc.changed)
             {
