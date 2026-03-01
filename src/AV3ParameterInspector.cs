@@ -85,9 +85,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public AnimatorController controller;
             public string controllerName;
             public string layerName;
+            public int layerIndex;
             public string statePath;
             public string stateName;
             public AnimatorState state;
+            public AnimatorStateMachine stateMachine;
+            public string subStateMachinePath;
 
             public bool transitionIn;
             public bool transitionOut;
@@ -497,9 +500,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     controller = controller,
                                     controllerName = controller.name,
                                     layerName = layer.name,
+                                    layerIndex = layerIndex,
                                     statePath = statePath,
                                     stateName = stateName,
                                     state = state,
+                                    stateMachine = sm,
+                                    subStateMachinePath = smPath,
                                 };
 
                                 usage.transitionOut = state.transitions != null && state.transitions.Any(t => TransitionUsesParameter(t, parameterName));
@@ -605,8 +611,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (usage == null || usage.controller == null || usage.state == null)
                 return;
 
+            FocusAnimatorStateMachine(usage);
+
             Selection.activeObject = usage.state;
             EditorGUIUtility.PingObject(usage.state);
+            AssetDatabase.OpenAsset(usage.state);
+        }
+
+        private static void FocusAnimatorStateMachine(StateUsage usage)
+        {
+            if (usage == null || usage.controller == null)
+                return;
 
             AssetDatabase.OpenAsset(usage.controller);
 
@@ -620,13 +635,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     animatorWindow.Show();
                     animatorWindow.Focus();
 
-                    var layerIndex = Array.FindIndex(usage.controller.layers, l => string.Equals(l.name, usage.layerName, StringComparison.Ordinal));
+                    var layerIndex = usage.layerIndex;
+                    if (layerIndex < 0 || layerIndex >= usage.controller.layers.Length)
+                        layerIndex = Array.FindIndex(usage.controller.layers, l => string.Equals(l.name, usage.layerName, StringComparison.Ordinal));
+
                     TrySetLayerIndexOnAnimatorWindow(animatorWindow, layerIndex);
                     animatorWindow.Repaint();
                 }
             }
 
-            AssetDatabase.OpenAsset(usage.state);
+            if (usage.stateMachine != null)
+            {
+                Selection.activeObject = usage.stateMachine;
+                EditorGUIUtility.PingObject(usage.stateMachine);
+                AssetDatabase.OpenAsset(usage.stateMachine);
+            }
         }
 
         private void OnGUI()
@@ -860,16 +883,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
                         var grouped = matches
-                            .GroupBy(x => x.statePath)
-                            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                            .GroupBy(x => new { x.controller, x.layerIndex, x.subStateMachinePath })
+                            .OrderBy(g => g.First().statePath, StringComparer.OrdinalIgnoreCase)
                             .ToList();
 
                         foreach (var group in grouped)
                         {
+                            var representative = group.First();
                             using (new EditorGUILayout.HorizontalScope())
                             {
                                 GUILayout.Space(15);
-                                GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
+                                GUILayout.Label(representative.statePath, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
+                                if (ClickableLastRect())
+                                    FocusAnimatorStateMachine(representative);
                             }
 
                             var states = group
