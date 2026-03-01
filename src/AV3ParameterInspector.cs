@@ -31,6 +31,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private string cachedParameter = "";
         private ScanResult cachedScanResult;
         private bool forceRescan = true;
+        private VRCAvatarDescriptor lastFoundAvatarDescriptor;
 
         // https://creators.vrchat.com/avatars/animator-parameters/
         private static readonly HashSet<string> VRChatBuiltInParameters = new(StringComparer.Ordinal)
@@ -557,9 +558,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return result;
         }
 
+        private VRCAvatarDescriptor GetCurrentOrLastAvatarDescriptor()
+        {
+            var selectedAvatarDescriptor = FindAvatarDescriptor(Selection.activeGameObject);
+            if (selectedAvatarDescriptor != null)
+            {
+                lastFoundAvatarDescriptor = selectedAvatarDescriptor;
+                return selectedAvatarDescriptor;
+            }
+
+            return lastFoundAvatarDescriptor;
+        }
+
         private void OnGUI()
         {
-            var av = FindAvatarDescriptor(Selection.activeGameObject);
+            var av = GetCurrentOrLastAvatarDescriptor();
 
             using (new EditorGUILayout.HorizontalScope())
             {
