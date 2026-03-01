@@ -569,11 +569,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var selectedAvatarDescriptor = FindAvatarDescriptor(Selection.activeGameObject);
             if (selectedAvatarDescriptor != null)
-            {
                 lastFoundAvatarDescriptor = selectedAvatarDescriptor;
-                return selectedAvatarDescriptor;
-            }
-
             return lastFoundAvatarDescriptor;
         }
 
@@ -584,25 +580,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             var type = animatorWindow.GetType();
             var bindingFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-
-            var layerIndexProperty = type.GetProperty("layerIndex", bindingFlags)
-                ?? type.GetProperty("selectedLayerIndex", bindingFlags)
-                ?? type.GetProperty("activeLayerIndex", bindingFlags);
+            var layerIndexProperty = type.GetProperty("selectedLayerIndex", bindingFlags);
             if (layerIndexProperty != null && layerIndexProperty.CanWrite)
             {
                 layerIndexProperty.SetValue(animatorWindow, layerIndex);
                 return true;
             }
-
-            var layerIndexField = type.GetField("m_LayerIndex", bindingFlags)
-                ?? type.GetField("m_SelectedLayerIndex", bindingFlags)
-                ?? type.GetField("m_ActiveLayerIndex", bindingFlags);
-            if (layerIndexField != null)
-            {
-                layerIndexField.SetValue(animatorWindow, layerIndex);
-                return true;
-            }
-
             return false;
         }
 
@@ -625,11 +608,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             AssetDatabase.OpenAsset(usage.controller);
 
-            var animatorWindowType = Type.GetType("UnityEditor.Graphs.AnimatorControllerTool, UnityEditor.Graphs")
-                ?? Type.GetType("UnityEditor.AnimatorWindow, UnityEditor");
+            var animatorWindowType = Type.GetType("UnityEditor.Graphs.AnimatorControllerTool, UnityEditor.Graphs");
             if (animatorWindowType != null)
             {
-                var animatorWindow = EditorWindow.GetWindow(animatorWindowType);
+                var animatorWindow = GetWindow(animatorWindowType);
                 if (animatorWindow != null)
                 {
                     animatorWindow.Show();
