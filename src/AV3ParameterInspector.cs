@@ -652,6 +652,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
+        private static void SelectExpressionsMenuObject(VRCExpressionsMenu menu)
+        {
+            if (menu == null)
+                return;
+
+            Selection.activeObject = menu;
+            EditorGUIUtility.PingObject(menu);
+        }
+
         private void OnGUI()
         {
             var av = GetCurrentOrLastAvatarDescriptor();
@@ -831,19 +840,23 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                         foreach (var group in grouped)
                         {
+                            var representative = group.FirstOrDefault();
+                            var groupedMenu = representative?.menu;
                             using (new EditorGUILayout.HorizontalScope())
                             {
                                 GUILayout.Space(15);
                                 GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
+                                if (ClickableLastRect())
+                                    SelectExpressionsMenuObject(groupedMenu);
                             }
 
-                            var controlNames = group
-                                .Select(x => $"{x.controlName}   ({x.controlType})")
+                            var controls = group
+                                .Select(x => new { x.controlName, x.controlType })
                                 .Distinct()
-                                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                                .OrderBy(x => x.controlName, StringComparer.OrdinalIgnoreCase)
                                 .ToList();
 
-                            for (int i = 0; i < controlNames.Count; i += columns)
+                            for (int i = 0; i < controls.Count; i += columns)
                             {
                                 using (new EditorGUILayout.HorizontalScope())
                                 {
@@ -851,9 +864,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     for (int col = 0; col < columns; col++)
                                     {
                                         var index = i + col;
-                                        if (index < controlNames.Count)
+                                        if (index < controls.Count)
                                         {
-                                            GUILayout.Label(controlNames[index], GUILayout.Width(entryWidth));
+                                            var control = controls[index];
+                                            GUILayout.Label($"{control.controlName}   ({control.controlType})", GUILayout.Width(entryWidth));
+                                            if (ClickableLastRect())
+                                                SelectExpressionsMenuObject(groupedMenu);
                                         }
                                         else
                                         {
