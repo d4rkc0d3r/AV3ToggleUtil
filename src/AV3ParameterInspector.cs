@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -570,6 +571,64 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return lastFoundAvatarDescriptor;
         }
 
+        private static bool TrySetLayerIndexOnAnimatorWindow(EditorWindow animatorWindow, int layerIndex)
+        {
+            if (animatorWindow == null || layerIndex < 0)
+                return false;
+
+            var type = animatorWindow.GetType();
+            var bindingFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+            var layerIndexProperty = type.GetProperty("layerIndex", bindingFlags)
+                ?? type.GetProperty("selectedLayerIndex", bindingFlags)
+                ?? type.GetProperty("activeLayerIndex", bindingFlags);
+            if (layerIndexProperty != null && layerIndexProperty.CanWrite)
+            {
+                layerIndexProperty.SetValue(animatorWindow, layerIndex);
+                return true;
+            }
+
+            var layerIndexField = type.GetField("m_LayerIndex", bindingFlags)
+                ?? type.GetField("m_SelectedLayerIndex", bindingFlags)
+                ?? type.GetField("m_ActiveLayerIndex", bindingFlags);
+            if (layerIndexField != null)
+            {
+                layerIndexField.SetValue(animatorWindow, layerIndex);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static void FocusAnimatorState(StateUsage usage)
+        {
+            if (usage == null || usage.controller == null || usage.state == null)
+                return;
+
+            Selection.activeObject = usage.state;
+            EditorGUIUtility.PingObject(usage.state);
+
+            AssetDatabase.OpenAsset(usage.controller);
+
+            var animatorWindowType = Type.GetType("UnityEditor.Graphs.AnimatorControllerTool, UnityEditor.Graphs")
+                ?? Type.GetType("UnityEditor.AnimatorWindow, UnityEditor");
+            if (animatorWindowType != null)
+            {
+                var animatorWindow = EditorWindow.GetWindow(animatorWindowType);
+                if (animatorWindow != null)
+                {
+                    animatorWindow.Show();
+                    animatorWindow.Focus();
+
+                    var layerIndex = Array.FindIndex(usage.controller.layers, l => string.Equals(l.name, usage.layerName, StringComparison.Ordinal));
+                    TrySetLayerIndexOnAnimatorWindow(animatorWindow, layerIndex);
+                    animatorWindow.Repaint();
+                }
+            }
+
+            AssetDatabase.OpenAsset(usage.state);
+        }
+
         private void OnGUI()
         {
             var av = GetCurrentOrLastAvatarDescriptor();
@@ -813,8 +872,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
                             }
 
-                            var stateNames = group.Select(x => x.stateName).Distinct().OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
-                            for (int i = 0; i < stateNames.Count; i += columns)
+                            var states = group
+                                .Where(x => x.state != null)
+                                .GroupBy(x => x.state)
+                                .Select(g => g.First())
+                                .OrderBy(x => x.stateName, StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+
+                            for (int i = 0; i < states.Count; i += columns)
                             {
                                 using (new EditorGUILayout.HorizontalScope())
                                 {
@@ -822,9 +887,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     for (int col = 0; col < columns; col++)
                                     {
                                         var index = i + col;
-                                        if (index < stateNames.Count)
+                                        if (index < states.Count)
                                         {
-                                            GUILayout.Label(stateNames[index], GUILayout.Width(entryWidth));
+                                            var stateUsage = states[index];
+                                            GUILayout.Label(stateUsage.stateName, GUILayout.Width(entryWidth));
+                                            if (ClickableLastRect())
+                                                FocusAnimatorState(stateUsage);
                                         }
                                         else
                                         {
