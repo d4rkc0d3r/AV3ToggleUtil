@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -12,6 +13,7 @@ using VRC.SDK3.Dynamics.Contact.Components;
 using VRC.SDK3.Dynamics.PhysBone.Components;
 
 using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
+using Object = UnityEngine.Object;
 
 namespace d4rkpl4y3r.AV3ToggleUtil
 {
@@ -573,40 +575,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return lastFoundAvatarDescriptor;
         }
 
-        private static bool TrySetLayerIndexOnAnimatorWindow(EditorWindow animatorWindow, int layerIndex)
-        {
-            if (animatorWindow == null || layerIndex < 0)
-                return false;
-
-            var type = animatorWindow.GetType();
-            var bindingFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            var layerIndexProperty = type.GetProperty("selectedLayerIndex", bindingFlags);
-            if (layerIndexProperty != null && layerIndexProperty.CanWrite)
-            {
-                layerIndexProperty.SetValue(animatorWindow, layerIndex);
-                return true;
-            }
-            return false;
-        }
-
         private static void FocusAnimatorState(StateUsage usage)
         {
             if (usage == null || usage.controller == null || usage.state == null)
                 return;
 
-            FocusAnimatorStateMachine(usage);
-
-            Selection.activeObject = usage.state;
-            EditorGUIUtility.PingObject(usage.state);
-            AssetDatabase.OpenAsset(usage.state);
+            FocusAnimatorLayer(usage);
+            SelectAndPingObject(usage.state);
         }
 
-        private static void FocusAnimatorStateMachine(StateUsage usage)
+        private static void FocusAnimatorLayer(StateUsage usage)
         {
             if (usage == null || usage.controller == null)
                 return;
-
-            AssetDatabase.OpenAsset(usage.controller);
 
             var animatorWindowType = Type.GetType("UnityEditor.Graphs.AnimatorControllerTool, UnityEditor.Graphs");
             if (animatorWindowType != null)
@@ -616,31 +597,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     animatorWindow.Show();
                     animatorWindow.Focus();
-
-                    var layerIndex = usage.layerIndex;
-                    if (layerIndex < 0 || layerIndex >= usage.controller.layers.Length)
-                        layerIndex = Array.FindIndex(usage.controller.layers, l => string.Equals(l.name, usage.layerName, StringComparison.Ordinal));
-
-                    TrySetLayerIndexOnAnimatorWindow(animatorWindow, layerIndex);
+                    Traverse.Create(animatorWindow).Property("animatorController").SetValue(usage.controller);
+                    Traverse.Create(animatorWindow).Property("selectedLayerIndex").SetValue(usage.layerIndex);
                     animatorWindow.Repaint();
                 }
             }
-
-            if (usage.stateMachine != null)
-            {
-                Selection.activeObject = usage.stateMachine;
-                EditorGUIUtility.PingObject(usage.stateMachine);
-                AssetDatabase.OpenAsset(usage.stateMachine);
-            }
         }
 
-        private static void SelectExpressionsMenuObject(VRCExpressionsMenu menu)
+        private static void SelectAndPingObject(Object obj)
         {
-            if (menu == null)
-                return;
-
-            Selection.activeObject = menu;
-            EditorGUIUtility.PingObject(menu);
+            Selection.activeObject = obj;
+            EditorGUIUtility.PingObject(obj);
         }
 
         private void OnGUI()
@@ -829,7 +796,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 GUILayout.Space(15);
                                 GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
                                 if (ClickableLastRect())
-                                    SelectExpressionsMenuObject(groupedMenu);
+                                    SelectAndPingObject(groupedMenu);
                             }
 
                             var controls = group
@@ -851,7 +818,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                             var control = controls[index];
                                             GUILayout.Label($"{control.controlName}   ({control.controlType})", GUILayout.Width(entryWidth));
                                             if (ClickableLastRect())
-                                                SelectExpressionsMenuObject(groupedMenu);
+                                                SelectAndPingObject(groupedMenu);
                                         }
                                         else
                                         {
@@ -893,7 +860,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 GUILayout.Space(15);
                                 GUILayout.Label(representative.statePath, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
                                 if (ClickableLastRect())
-                                    FocusAnimatorStateMachine(representative);
+                                    FocusAnimatorLayer(representative);
                             }
 
                             var states = group
