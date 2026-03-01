@@ -662,7 +662,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Label($"Parameters ({filteredParameters.Count}/{allParameters.Count})", EditorStyles.boldLabel);
-                    sortParameters = GUILayout.Toggle(sortParameters, "A→Z", GUI.skin.button, GUILayout.ExpandWidth(false));
+                    sortParameters = GUILayout.Toggle(sortParameters, new GUIContent("A→Z", "Sort alphabetically"), GUI.skin.button, GUILayout.ExpandWidth(false));
                 }
                 parameterFilter.DrawGUI();
 
