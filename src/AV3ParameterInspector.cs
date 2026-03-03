@@ -230,7 +230,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (visitedTrees == null) visitedTrees = new HashSet<BlendTree>();
             if (!visitedTrees.Add(tree)) return false;
 
-            if (IsSameParameter(tree.blendParameter, parameterName) || IsSameParameter(tree.blendParameterY, parameterName))
+            var isSecondParameterUsed = tree.blendType != BlendTreeType.Simple1D && tree.blendType != BlendTreeType.Direct;
+            if (IsSameParameter(tree.blendParameter, parameterName) || (isSecondParameterUsed && IsSameParameter(tree.blendParameterY, parameterName)))
                 return true;
 
             var children = tree.children;
