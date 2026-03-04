@@ -720,6 +720,34 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 const float innerIndent = 30f;
                 const float columnSpacing = 4f;
                 var entryWidth = Mathf.Max(80f, Mathf.Floor((rightPanelWidth - innerIndent - (columns - 1) * (columnSpacing + 3)) / columns));
+
+                void DrawColumnEntries<T>(IReadOnlyList<T> entries, Action<T> drawEntry)
+                {
+                    for (int i = 0; i < entries.Count; i += columns)
+                    {
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Space(innerIndent);
+                            for (int col = 0; col < columns; col++)
+                            {
+                                var index = i + col;
+                                if (index < entries.Count)
+                                {
+                                    drawEntry(entries[index]);
+                                }
+                                else
+                                {
+                                    GUILayout.Space(entryWidth);
+                                }
+
+                                if (col < columns - 1)
+                                {
+                                    GUILayout.Space(columnSpacing);
+                                }
+                            }
+                        }
+                    }
+                }
                 
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
@@ -810,33 +838,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 .OrderBy(x => x.controlName, StringComparer.OrdinalIgnoreCase)
                                 .ToList();
 
-                            for (int i = 0; i < controls.Count; i += columns)
+                            DrawColumnEntries(controls, control =>
                             {
-                                using (new EditorGUILayout.HorizontalScope())
-                                {
-                                    GUILayout.Space(innerIndent);
-                                    for (int col = 0; col < columns; col++)
-                                    {
-                                        var index = i + col;
-                                        if (index < controls.Count)
-                                        {
-                                            var control = controls[index];
-                                            GUILayout.Label($"{control.controlName}   ({control.controlType})", GUILayout.Width(entryWidth));
-                                            if (ClickableLastRect())
-                                                SelectAndPingObject(groupedMenu);
-                                        }
-                                        else
-                                        {
-                                            GUILayout.Space(entryWidth);
-                                        }
-
-                                        if (col < columns - 1)
-                                        {
-                                            GUILayout.Space(columnSpacing);
-                                        }
-                                    }
-                                }
-                            }
+                                GUILayout.Label($"{control.controlName}   ({control.controlType})", GUILayout.Width(entryWidth));
+                                if (ClickableLastRect())
+                                    SelectAndPingObject(groupedMenu);
+                            });
                         }
                     }
                     return true;
@@ -875,33 +882,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 .OrderBy(x => x.stateName, StringComparer.OrdinalIgnoreCase)
                                 .ToList();
 
-                            for (int i = 0; i < states.Count; i += columns)
+                            DrawColumnEntries(states, stateUsage =>
                             {
-                                using (new EditorGUILayout.HorizontalScope())
-                                {
-                                    GUILayout.Space(innerIndent);
-                                    for (int col = 0; col < columns; col++)
-                                    {
-                                        var index = i + col;
-                                        if (index < states.Count)
-                                        {
-                                            var stateUsage = states[index];
-                                            GUILayout.Label(stateUsage.stateName, GUILayout.Width(entryWidth));
-                                            if (ClickableLastRect())
-                                                FocusAnimatorState(stateUsage);
-                                        }
-                                        else
-                                        {
-                                            GUILayout.Space(entryWidth);
-                                        }
-
-                                        if (col < columns - 1)
-                                        {
-                                            GUILayout.Space(columnSpacing);
-                                        }
-                                    }
-                                }
-                            }
+                                GUILayout.Label(stateUsage.stateName, GUILayout.Width(entryWidth));
+                                if (ClickableLastRect())
+                                    FocusAnimatorState(stateUsage);
+                            });
                         }
                     }
                     return true;
@@ -917,28 +903,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
                         EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
-                        for (int i = 0; i < ordered.Count; i += columns)
+                        DrawColumnEntries(ordered, clip =>
                         {
-                            using var h = new EditorGUILayout.HorizontalScope();
-                            GUILayout.Space(innerIndent);
-                            for (int col = 0; col < columns; col++)
-                            {
-                                var index = i + col;
-                                if (index < ordered.Count)
-                                {
-                                    EditorGUILayout.ObjectField(ordered[index], typeof(AnimationClip), false, GUILayout.Width(entryWidth));
-                                }
-                                else
-                                {
-                                    GUILayout.Space(entryWidth);
-                                }
-
-                                if (col < columns - 1)
-                                {
-                                    GUILayout.Space(columnSpacing);
-                                }
-                            }
-                        }
+                            EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false, GUILayout.Width(entryWidth));
+                        });
                     }
                     return true;
                 }
