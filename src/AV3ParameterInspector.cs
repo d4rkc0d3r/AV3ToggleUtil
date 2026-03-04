@@ -301,7 +301,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         for (int p = 0; p < typedDriver.parameters.Count; p++)
                         {
-                            if (IsSameParameter(typedDriver.parameters[p].name, parameterName))
+                            var parameter = typedDriver.parameters[p];
+                            if (IsSameParameter(parameter.name, parameterName))
+                                return true;
+
+                            if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                                && IsSameParameter(parameter.source, parameterName))
                                 return true;
                         }
                     }
@@ -613,11 +618,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     var driverChanged = false;
                     for (int p = 0; p < driver.parameters.Count; p++)
                     {
-                        if (!IsSameParameter(driver.parameters[p].name, oldParameter))
-                            continue;
+                        var parameter = driver.parameters[p];
 
-                        driver.parameters[p].name = newParameter;
-                        driverChanged = true;
+                        if (IsSameParameter(parameter.name, oldParameter))
+                        {
+                            parameter.name = newParameter;
+                            driverChanged = true;
+                        }
+
+                        if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                            && IsSameParameter(parameter.source, oldParameter))
+                        {
+                            parameter.source = newParameter;
+                            driverChanged = true;
+                        }
                     }
 
                     if (driverChanged)
