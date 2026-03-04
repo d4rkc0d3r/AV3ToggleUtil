@@ -37,6 +37,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private bool forceRescan = true;
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
         private TextFilter parameterFilter = new() { IsRegex = false, SmallButtons = true };
+        private bool renameMode = false;
+        private string renameDraft = "";
+        private string renameDraftSource = "";
 
         // https://creators.vrchat.com/avatars/animator-parameters/
         private static readonly HashSet<string> VRChatBuiltInParameters = new(StringComparer.Ordinal)
@@ -427,6 +430,372 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ToList();
         }
 
+        private static bool RenameTransitionConditions(AnimatorTransitionBase transition, string oldParameter, string newParameter)
+        {
+            if (transition == null || transition.conditions == null)
+                return false;
+
+            var conditions = transition.conditions;
+            var changed = false;
+            for (int i = 0; i < conditions.Length; i++)
+            {
+                if (!IsSameParameter(conditions[i].parameter, oldParameter))
+                    continue;
+
+                conditions[i].parameter = newParameter;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                transition.conditions = conditions;
+                EditorUtility.SetDirty(transition);
+            }
+
+            return changed;
+        }
+
+        private static bool RenameBlendTreeParameters(Motion motion, string oldParameter, string newParameter, HashSet<BlendTree> visitedTrees = null)
+        {
+            if (!(motion is BlendTree tree))
+                return false;
+
+            if (visitedTrees == null)
+                visitedTrees = new HashSet<BlendTree>();
+            if (!visitedTrees.Add(tree))
+                return false;
+
+            var changed = false;
+            if (IsSameParameter(tree.blendParameter, oldParameter))
+            {
+                tree.blendParameter = newParameter;
+                changed = true;
+            }
+
+            if (IsSameParameter(tree.blendParameterY, oldParameter))
+            {
+                tree.blendParameterY = newParameter;
+                changed = true;
+            }
+
+            var children = tree.children;
+            var childrenChanged = false;
+            for (int i = 0; i < children.Length; i++)
+            {
+                if (IsSameParameter(children[i].directBlendParameter, oldParameter))
+                {
+                    children[i].directBlendParameter = newParameter;
+                    childrenChanged = true;
+                    changed = true;
+                }
+
+                if (RenameBlendTreeParameters(children[i].motion, oldParameter, newParameter, visitedTrees))
+                    changed = true;
+            }
+
+            if (childrenChanged)
+                tree.children = children;
+
+            if (changed)
+                EditorUtility.SetDirty(tree);
+
+            return changed;
+        }
+
+        private static bool RenameInStateMachine(AnimatorStateMachine stateMachine, string oldParameter, string newParameter)
+        {
+            if (stateMachine == null)
+                return false;
+
+            var changed = false;
+
+            var anyStateTransitions = stateMachine.anyStateTransitions;
+            if (anyStateTransitions != null)
+            {
+                for (int i = 0; i < anyStateTransitions.Length; i++)
+                {
+                    if (RenameTransitionConditions(anyStateTransitions[i], oldParameter, newParameter))
+                        changed = true;
+                }
+            }
+
+            var entryTransitions = stateMachine.entryTransitions;
+            if (entryTransitions != null)
+            {
+                for (int i = 0; i < entryTransitions.Length; i++)
+                {
+                    if (RenameTransitionConditions(entryTransitions[i], oldParameter, newParameter))
+                        changed = true;
+                }
+            }
+
+            var states = stateMachine.states;
+            for (int i = 0; i < states.Length; i++)
+            {
+                var state = states[i].state;
+                if (state == null)
+                    continue;
+
+                if (state.transitions != null)
+                {
+                    for (int t = 0; t < state.transitions.Length; t++)
+                    {
+                        if (RenameTransitionConditions(state.transitions[t], oldParameter, newParameter))
+                            changed = true;
+                    }
+                }
+
+                if (state.timeParameterActive && IsSameParameter(state.timeParameter, oldParameter))
+                {
+                    state.timeParameter = newParameter;
+                    EditorUtility.SetDirty(state);
+                    changed = true;
+                }
+
+                if (RenameBlendTreeParameters(state.motion, oldParameter, newParameter))
+                    changed = true;
+
+                var stateBehaviours = state.behaviours;
+                if (stateBehaviours == null)
+                    continue;
+
+                for (int b = 0; b < stateBehaviours.Length; b++)
+                {
+                    var behaviour = stateBehaviours[b];
+                    if (!(behaviour is VRCAvatarParameterDriver driver) || driver.parameters == null)
+                        continue;
+
+                    var driverChanged = false;
+                    for (int p = 0; p < driver.parameters.Count; p++)
+                    {
+                        if (!IsSameParameter(driver.parameters[p].name, oldParameter))
+                            continue;
+
+                        driver.parameters[p].name = newParameter;
+                        driverChanged = true;
+                    }
+
+                    if (driverChanged)
+                    {
+                        EditorUtility.SetDirty(driver);
+                        changed = true;
+                    }
+                }
+            }
+
+            var childStateMachines = stateMachine.stateMachines;
+            for (int i = 0; i < childStateMachines.Length; i++)
+            {
+                if (RenameInStateMachine(childStateMachines[i].stateMachine, oldParameter, newParameter))
+                    changed = true;
+            }
+
+            return changed;
+        }
+
+        private static bool RenameInAnimatorController(AnimatorController controller, string oldParameter, string newParameter)
+        {
+            if (controller == null)
+                return false;
+
+            var changed = false;
+
+            var controllerParameters = controller.parameters;
+            var parametersChanged = false;
+            for (int i = 0; i < controllerParameters.Length; i++)
+            {
+                if (!IsSameParameter(controllerParameters[i].name, oldParameter))
+                    continue;
+
+                controllerParameters[i].name = newParameter;
+                parametersChanged = true;
+            }
+
+            if (parametersChanged)
+            {
+                controller.parameters = controllerParameters;
+                changed = true;
+            }
+
+            if (controller.layers != null)
+            {
+                for (int i = 0; i < controller.layers.Length; i++)
+                {
+                    if (RenameInStateMachine(controller.layers[i].stateMachine, oldParameter, newParameter))
+                        changed = true;
+                }
+            }
+
+            if (changed)
+                EditorUtility.SetDirty(controller);
+
+            return changed;
+        }
+
+        private static bool RenameInExpressionParameters(VRCAvatarDescriptor av, string oldParameter, string newParameter)
+        {
+            var expressionParameters = av != null ? av.expressionParameters : null;
+            if (expressionParameters == null || expressionParameters.parameters == null)
+                return false;
+
+            var changed = false;
+            for (int i = 0; i < expressionParameters.parameters.Length; i++)
+            {
+                var parameter = expressionParameters.parameters[i];
+                if (parameter == null || !IsSameParameter(parameter.name, oldParameter))
+                    continue;
+
+                parameter.name = newParameter;
+                changed = true;
+            }
+
+            if (changed)
+                EditorUtility.SetDirty(expressionParameters);
+
+            return changed;
+        }
+
+        private static bool RenameInExpressionMenus(VRCAvatarDescriptor av, string oldParameter, string newParameter)
+        {
+            var rootMenu = av != null ? av.expressionsMenu : null;
+            if (rootMenu == null)
+                return false;
+
+            var changed = false;
+            var visitedMenus = new HashSet<VRCExpressionsMenu>();
+
+            void Traverse(VRCExpressionsMenu menu)
+            {
+                if (menu == null || !visitedMenus.Add(menu))
+                    return;
+
+                var menuChanged = false;
+                var controls = menu.controls;
+                if (controls != null)
+                {
+                    for (int i = 0; i < controls.Count; i++)
+                    {
+                        var control = controls[i];
+                        if (control == null)
+                            continue;
+
+                        if (control.parameter != null && IsSameParameter(control.parameter.name, oldParameter))
+                        {
+                            control.parameter.name = newParameter;
+                            menuChanged = true;
+                        }
+
+                        if (control.subParameters != null)
+                        {
+                            for (int s = 0; s < control.subParameters.Length; s++)
+                            {
+                                var subParameter = control.subParameters[s];
+                                if (subParameter == null || !IsSameParameter(subParameter.name, oldParameter))
+                                    continue;
+
+                                subParameter.name = newParameter;
+                                menuChanged = true;
+                            }
+                        }
+
+                        if (control.type == VRCExpressionsMenu.Control.ControlType.SubMenu && control.subMenu != null)
+                            Traverse(control.subMenu);
+                    }
+                }
+
+                if (menuChanged)
+                {
+                    EditorUtility.SetDirty(menu);
+                    changed = true;
+                }
+            }
+
+            Traverse(rootMenu);
+            return changed;
+        }
+
+        private static bool RenameInComponentParameters(VRCAvatarDescriptor av, string oldParameter, string newParameter)
+        {
+            if (av == null || av.transform == null)
+                return false;
+
+            var changed = false;
+            var root = av.transform;
+
+            foreach (var physBone in root.GetComponentsInChildren<VRCPhysBone>(true))
+            {
+                if (physBone == null || string.IsNullOrEmpty(physBone.parameter))
+                    continue;
+
+                if (IsSameParameter(physBone.parameter, oldParameter))
+                {
+                    physBone.parameter = newParameter;
+                    EditorUtility.SetDirty(physBone);
+                    changed = true;
+                    continue;
+                }
+
+                if (!IsParameterWrittenByPhysBone(oldParameter, physBone.parameter))
+                    continue;
+
+                var oldSuffix = oldParameter.Substring(physBone.parameter.Length);
+                var nextBaseParameter = newParameter;
+                if (!string.IsNullOrEmpty(oldSuffix)
+                    && newParameter.Length > oldSuffix.Length
+                    && newParameter.EndsWith(oldSuffix, StringComparison.Ordinal))
+                {
+                    nextBaseParameter = newParameter.Substring(0, newParameter.Length - oldSuffix.Length);
+                }
+
+                if (IsSameParameter(physBone.parameter, nextBaseParameter))
+                    continue;
+
+                physBone.parameter = nextBaseParameter;
+                EditorUtility.SetDirty(physBone);
+                changed = true;
+            }
+
+            foreach (var contactReceiver in root.GetComponentsInChildren<VRCContactReceiver>(true))
+            {
+                if (contactReceiver == null || string.IsNullOrEmpty(contactReceiver.parameter))
+                    continue;
+
+                if (!IsSameParameter(contactReceiver.parameter, oldParameter))
+                    continue;
+
+                contactReceiver.parameter = newParameter;
+                EditorUtility.SetDirty(contactReceiver);
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private bool ApplyParameterRename(VRCAvatarDescriptor av, string oldParameter, string newParameter)
+        {
+            if (av == null || string.IsNullOrEmpty(oldParameter) || string.IsNullOrEmpty(newParameter) || IsSameParameter(oldParameter, newParameter))
+                return false;
+
+            var changed = false;
+            changed |= RenameInExpressionParameters(av, oldParameter, newParameter);
+            changed |= RenameInExpressionMenus(av, oldParameter, newParameter);
+            changed |= RenameInComponentParameters(av, oldParameter, newParameter);
+
+            foreach (var controller in GetAllControllers(av).Distinct())
+            {
+                if (RenameInAnimatorController(controller, oldParameter, newParameter))
+                    changed = true;
+            }
+
+            if (!changed)
+                return false;
+
+            EditorUtility.SetDirty(av);
+            forceRescan = true;
+            cachedScanResult = null;
+            return true;
+        }
+
         private ScanResult BuildScanResult(VRCAvatarDescriptor av, string parameterName)
         {
             var result = new ScanResult();
@@ -646,6 +1015,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 forceRescan = true;
             }
 
+            if (!IsSameParameter(renameDraftSource, selectedParameter))
+            {
+                renameDraftSource = selectedParameter;
+                renameDraft = selectedParameter;
+            }
+
             var avatarId = av.GetInstanceID();
             if (forceRescan || cachedScanResult == null || cachedAvatarId != avatarId || !IsSameParameter(cachedParameter, selectedParameter))
             {
@@ -679,6 +1054,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         selectedParameter = parameter;
                         forceRescan = true;
+                        renameMode = false;
                         GUI.FocusControl(null);
                     }
                 }
@@ -743,6 +1119,52 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (col < columns - 1)
                                 {
                                     GUILayout.Space(columnSpacing);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                var isBuiltInParameter = VRChatBuiltInParameters.Contains(selectedParameter);
+                if (isBuiltInParameter)
+                    renameMode = false;
+
+                using (new EditorGUILayout.VerticalScope("box"))
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        using (new EditorGUI.DisabledScope(isBuiltInParameter))
+                        {
+                            using var cc = new EditorGUI.ChangeCheckScope();
+                            renameMode = GUILayout.Toggle(renameMode, "Rename", GUI.skin.button, GUILayout.Width(100f));
+                            if (cc.changed && renameMode)
+                            {
+                                renameDraftSource = selectedParameter;
+                                renameDraft = selectedParameter;
+                                GUI.FocusControl(null);
+                            }
+                        }
+                    }
+
+                    if (renameMode)
+                    {
+                        using var renameHorizontal = new EditorGUILayout.HorizontalScope();
+                        GUILayout.Space(innerIndent);
+                        renameDraft = EditorGUILayout.TextField(renameDraft);
+                        using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(renameDraft) || IsSameParameter(renameDraft, selectedParameter)))
+                        {
+                            if (GUILayout.Button("Apply", GUILayout.Width(100f)))
+                            {
+                                if (ApplyParameterRename(av, selectedParameter, renameDraft))
+                                {
+                                    selectedParameter = renameDraft;
+                                    renameDraftSource = selectedParameter;
+                                    renameDraft = selectedParameter;
+                                    forceRescan = true;
+                                    renameMode = false;
+                                    GUI.FocusControl(null);
+                                    Repaint();
+                                    return;
                                 }
                             }
                         }
