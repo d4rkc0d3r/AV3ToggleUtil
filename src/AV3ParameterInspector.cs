@@ -103,6 +103,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public bool transitionOut;
             public bool blendTree;
             public bool motionTime;
+            public bool speed;
+            public bool mirror;
+            public bool cycleOffset;
             public bool parameterDriver;
         }
 
@@ -115,6 +118,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public HashSet<AnimationClip> transitionClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> blendTreeClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> motionTimeClips = new HashSet<AnimationClip>();
+            public HashSet<AnimationClip> speedClips = new HashSet<AnimationClip>();
+            public HashSet<AnimationClip> mirrorClips = new HashSet<AnimationClip>();
+            public HashSet<AnimationClip> cycleOffsetClips = new HashSet<AnimationClip>();
         }
 
         private readonly struct ComponentParameterWriter
@@ -260,6 +266,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             if (state == null) return false;
             return state.timeParameterActive && IsSameParameter(state.timeParameter, parameterName);
+        }
+
+        private static bool StateUsesSpeedParameter(AnimatorState state, string parameterName)
+        {
+            if (state == null) return false;
+            return state.speedParameterActive && IsSameParameter(state.speedParameter, parameterName);
+        }
+
+        private static bool StateUsesMirrorParameter(AnimatorState state, string parameterName)
+        {
+            if (state == null) return false;
+            return state.mirrorParameterActive && IsSameParameter(state.mirrorParameter, parameterName);
+        }
+
+        private static bool StateUsesCycleOffsetParameter(AnimatorState state, string parameterName)
+        {
+            if (state == null) return false;
+            return state.cycleOffsetParameterActive && IsSameParameter(state.cycleOffsetParameter, parameterName);
         }
 
         private static bool StateUsesParameterDriver(AnimatorState state, string parameterName)
@@ -548,6 +572,27 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (state.timeParameterActive && IsSameParameter(state.timeParameter, oldParameter))
                 {
                     state.timeParameter = newParameter;
+                    EditorUtility.SetDirty(state);
+                    changed = true;
+                }
+
+                if (state.speedParameterActive && IsSameParameter(state.speedParameter, oldParameter))
+                {
+                    state.speedParameter = newParameter;
+                    EditorUtility.SetDirty(state);
+                    changed = true;
+                }
+
+                if (state.mirrorParameterActive && IsSameParameter(state.mirrorParameter, oldParameter))
+                {
+                    state.mirrorParameter = newParameter;
+                    EditorUtility.SetDirty(state);
+                    changed = true;
+                }
+
+                if (state.cycleOffsetParameterActive && IsSameParameter(state.cycleOffsetParameter, oldParameter))
+                {
+                    state.cycleOffsetParameter = newParameter;
                     EditorUtility.SetDirty(state);
                     changed = true;
                 }
@@ -896,9 +941,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (usage.motionTime)
                                     CollectClipsFromMotion(state.motion, result.motionTimeClips);
 
+                                usage.speed = StateUsesSpeedParameter(state, parameterName);
+                                if (usage.speed)
+                                    CollectClipsFromMotion(state.motion, result.speedClips);
+
+                                usage.mirror = StateUsesMirrorParameter(state, parameterName);
+                                if (usage.mirror)
+                                    CollectClipsFromMotion(state.motion, result.mirrorClips);
+
+                                usage.cycleOffset = StateUsesCycleOffsetParameter(state, parameterName);
+                                if (usage.cycleOffset)
+                                    CollectClipsFromMotion(state.motion, result.cycleOffsetClips);
+
                                 usage.parameterDriver = StateUsesParameterDriver(state, parameterName);
 
-                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.parameterDriver)
+                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriver)
                                     result.stateUsages.Add(usage);
                             }
 
@@ -1337,11 +1394,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 DrawStateUsageSection("States Using Parameter in Transition Conditions (In/Out)", s => s.transitionIn || s.transitionOut);
                 DrawStateUsageSection("States Using Parameter in Blend Trees", s => s.blendTree);
                 DrawStateUsageSection("States Using Parameter as Motion Time", s => s.motionTime);
+                DrawStateUsageSection("States Using Parameter as Speed", s => s.speed);
+                DrawStateUsageSection("States Using Parameter as Mirror", s => s.mirror);
+                DrawStateUsageSection("States Using Parameter as Cycle Offset", s => s.cycleOffset);
                 DrawStateUsageSection("States Using Parameter in Parameter Drivers", s => s.parameterDriver);
 
                 var allAffected = cachedScanResult.transitionClips
                     .Concat(cachedScanResult.blendTreeClips)
                     .Concat(cachedScanResult.motionTimeClips)
+                    .Concat(cachedScanResult.speedClips)
+                    .Concat(cachedScanResult.mirrorClips)
+                    .Concat(cachedScanResult.cycleOffsetClips)
                     .Where(c => c != null)
                     .Distinct()
                     .OrderBy(c => c.name, StringComparer.OrdinalIgnoreCase)
