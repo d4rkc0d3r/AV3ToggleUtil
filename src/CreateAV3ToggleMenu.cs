@@ -160,15 +160,15 @@ public class CreateAV3ToggleMenu : EditorWindow
         "m_UpdateWhenOffscreen",
         "m_ReceiveShadows",
         "m_SkinnedMotionVectors",
-        // VRCParentConstraint
-        "IsActive",
-        "SolveInLocalSpace",
-        "FreezeToWorld",
-        "RebakeOffsetsWhenUnfrozen",
-        "Locked",
-        "AffectsPositionX", "AffectsPositionY", "AffectsPositionZ",
-        "AffectsRotationX", "AffectsRotationY", "AffectsRotationZ",
     };
+
+    bool IsToggleBinding(EditorCurveBinding binding)
+    {
+        if (knownToggleProperties.Contains(binding.propertyName))
+            return true;
+        return binding.type.GetField(binding.propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?.FieldType == typeof(bool);
+    }
 
     void DrawBindingsToToggle()
     {
@@ -202,7 +202,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         foreach ((var binding, var values) in bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray())
         {
             using var horizontalScope = new EditorGUILayout.HorizontalScope();
-            bool isToggle = knownToggleProperties.Contains(binding.propertyName);
+            bool isToggle = IsToggleBinding(binding);
             bool isColor = binding.propertyName.EndsWith(".r");
             Vector4 ValueField(Vector4 value)
             {
@@ -534,7 +534,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                     {
                         sceneValue = BitConverter.SingleToInt32Bits(sceneValue);
                     }
-                    var isToggle = knownToggleProperties.Contains(binding.propertyName);
+                    var isToggle = IsToggleBinding(binding);
                     if (binding.propertyName.EndsWith(".r"))
                     {
                         var vectorBindings = GetRemainingVectorBindings(binding).ToArray();
