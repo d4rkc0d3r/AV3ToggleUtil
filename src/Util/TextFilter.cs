@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 
 namespace d4rkpl4y3r.AV3ToggleUtil.Util
 {
+    [Serializable]
     public class TextFilter
     {
         private string text = "";
@@ -123,7 +124,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
             void ToggleButton(ref bool value, string label, string tooltip)
             {
-                value = GUILayout.Toggle(value, new GUIContent(SmallButtons ? label[0].ToString() : label, tooltip), GUI.skin.button, GUILayout.ExpandWidth(false));
+                value = GUILayout.Toggle(value,
+                    new GUIContent(SmallButtons ? label[0].ToString() : label, tooltip),
+                    SmallButtons ? EditorStyles.miniButton : GUI.skin.button,
+                    GUILayout.ExpandWidth(false));
             }
 
             ToggleButton(ref isRegex, "Regex", "Use regular expression");
