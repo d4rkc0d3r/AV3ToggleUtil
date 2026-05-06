@@ -14,7 +14,34 @@ using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
 
 public class CreateAV3ToggleMenu : EditorWindow
 {
-    private Dictionary<EditorCurveBinding, (Vector4 offValue, Vector4 onValue)> bindingsToToggle = new();
+    private readonly struct ToggleBindingValue
+    {
+        public readonly bool isObjectReference;
+        public readonly Vector4 offValue;
+        public readonly Vector4 onValue;
+        public readonly Object offObject;
+        public readonly Object onObject;
+
+        public ToggleBindingValue(Vector4 offValue, Vector4 onValue)
+        {
+            isObjectReference = false;
+            this.offValue = offValue;
+            this.onValue = onValue;
+            offObject = null;
+            onObject = null;
+        }
+
+        public ToggleBindingValue(Object offObject, Object onObject)
+        {
+            isObjectReference = true;
+            offValue = Vector4.zero;
+            onValue = Vector4.zero;
+            this.offObject = offObject;
+            this.onObject = onObject;
+        }
+    }
+
+    private Dictionary<EditorCurveBinding, ToggleBindingValue> bindingsToToggle = new();
     private List<EditorCurveBinding> filteredBindingCache = null;
     private bool updateTargetWithCurrentSelection = true;
     private bool defaultToggleState = false;
@@ -162,6 +189,46 @@ public class CreateAV3ToggleMenu : EditorWindow
         "m_SkinnedMotionVectors",
     };
 
+    private const string MaterialArrayPropertyPrefix = "m_Materials.Array.data[";
+
+    private static bool IsMaterialSwapBinding(EditorCurveBinding binding)
+    {
+        return binding.isPPtrCurve && binding.propertyName.StartsWith(MaterialArrayPropertyPrefix, StringComparison.Ordinal);
+    }
+
+    private static int GetMaterialSlotIndex(EditorCurveBinding binding)
+    {
+        if (!IsMaterialSwapBinding(binding))
+            return -1;
+        var start = MaterialArrayPropertyPrefix.Length;
+        var end = binding.propertyName.IndexOf(']', start);
+        return end > start && int.TryParse(binding.propertyName[start..end], out var index) ? index : -1;
+    }
+
+    private Component GetBindingComponent(EditorCurveBinding binding)
+    {
+        return Target?.GetComponents<Component>()
+            .FirstOrDefault(component => component != null && binding.type.IsAssignableFrom(component.GetType()));
+    }
+
+    private Material GetCurrentMaterial(EditorCurveBinding binding)
+    {
+        if (GetBindingComponent(binding) is not Renderer renderer)
+            return null;
+        var slotIndex = GetMaterialSlotIndex(binding);
+        if (slotIndex < 0)
+            return null;
+        var materials = renderer.sharedMaterials;
+        return slotIndex < materials.Length ? materials[slotIndex] : null;
+    }
+
+    private static ToggleBindingValue FlipBindingValue(ToggleBindingValue value)
+    {
+        return value.isObjectReference
+            ? new ToggleBindingValue(value.onObject, value.offObject)
+            : new ToggleBindingValue(value.onValue, value.offValue);
+    }
+
     bool IsToggleBinding(EditorCurveBinding binding)
     {
         if (knownToggleProperties.Contains(binding.propertyName))
@@ -173,7 +240,7 @@ public class CreateAV3ToggleMenu : EditorWindow
     void DrawBindingsToToggle()
     {
         var bindingLayout = GUILayout.ExpandWidth(true);
-        var valueLayout = GUILayout.Width(60);
+        var valueLayout = GUILayout.Width(80);
         var invertLayout = GUILayout.Width(40);
         var removeButtonLayout = GUILayout.Width(20);
         float spacing = 10;
@@ -191,7 +258,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 foreach (var pair in bindingsToToggle.ToArray())
                 {
-                    bindingsToToggle[pair.Key] = (pair.Value.onValue, pair.Value.offValue);
+                    bindingsToToggle[pair.Key] = FlipBindingValue(pair.Value);
                 }
             }
             if (GUILayout.Button("X", removeButtonLayout))
@@ -204,6 +271,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             using var horizontalScope = new EditorGUILayout.HorizontalScope();
             bool isToggle = IsToggleBinding(binding);
             bool isColor = binding.propertyName.EndsWith(".r");
+            bool isMaterialSwap = IsMaterialSwapBinding(binding);
             Vector4 ValueField(Vector4 value)
             {
                 if (isColor)
@@ -215,22 +283,51 @@ public class CreateAV3ToggleMenu : EditorWindow
                     : EditorGUILayout.FloatField(value.x, valueLayout);
                 return new Vector4(newValue, 0, 0, 0);
             }
+            Object MaterialField(Object value)
+            {
+                return EditorGUILayout.ObjectField(value, typeof(Material), false, valueLayout);
+            }
             var displayName = isColor ? binding.propertyName[..^2] : binding.propertyName;
             GUILayout.Label($"{binding.type.Name}:{displayName}", bindingLayout);
             ShowWarningIfBindingExists(binding, GUILayout.Width(20));
             using var cc = new EditorGUI.ChangeCheckScope();
-            var newOffValue = ValueField(values.offValue);
+            var newOffValue = values.offValue;
+            var newOnValue = values.onValue;
+            var newOffObject = values.offObject;
+            var newOnObject = values.onObject;
+            if (isMaterialSwap)
+                newOffObject = MaterialField(values.offObject);
+            else
+                newOffValue = ValueField(values.offValue);
             GUILayout.Space(spacing);
-            var newOnValue = ValueField(values.onValue);
+            if (isMaterialSwap)
+                newOnObject = MaterialField(values.onObject);
+            else
+                newOnValue = ValueField(values.onValue);
             GUILayout.Space(spacing);
             if (GUILayout.Button("Flip", invertLayout) || (isToggle && cc.changed))
             {
-                newOffValue = values.onValue;
-                newOnValue = values.offValue;
+                if (isMaterialSwap)
+                {
+                    newOffObject = values.onObject;
+                    newOnObject = values.offObject;
+                }
+                else
+                {
+                    newOffValue = values.onValue;
+                    newOnValue = values.offValue;
+                }
             }
-            if (newOffValue != values.offValue || newOnValue != values.onValue)
+            if (isMaterialSwap)
             {
-                bindingsToToggle[binding] = (newOffValue, newOnValue);
+                if (newOffObject != values.offObject || newOnObject != values.onObject)
+                {
+                    bindingsToToggle[binding] = new ToggleBindingValue(newOffObject, newOnObject);
+                }
+            }
+            else if (newOffValue != values.offValue || newOnValue != values.onValue)
+            {
+                bindingsToToggle[binding] = new ToggleBindingValue(newOffValue, newOnValue);
             }
             if (GUILayout.Button("X", removeButtonLayout))
             {
@@ -269,6 +366,8 @@ public class CreateAV3ToggleMenu : EditorWindow
                 if (clip == null)
                     return;
                 foreach (var b in AnimationUtility.GetCurveBindings(clip))
+                    AddBinding(b, controller, clip, layerName, layerID);
+                foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip))
                     AddBinding(b, controller, clip, layerName, layerID);
             }
 
@@ -359,8 +458,13 @@ public class CreateAV3ToggleMenu : EditorWindow
         return text;
     }
 
-    (Vector4 offValue, Vector4 onValue) GetDefaultValuesForBinding(EditorCurveBinding binding)
+    ToggleBindingValue GetDefaultValuesForBinding(EditorCurveBinding binding)
     {
+        if (IsMaterialSwapBinding(binding))
+        {
+            return new ToggleBindingValue(null, GetCurrentMaterial(binding));
+        }
+
         Vector4 currentValue = Vector4.zero;
         var avGO = FindAvatarDescriptor(Target).gameObject;
         if (AnimationUtility.GetFloatValue(avGO, binding, out var sceneValue))
@@ -378,14 +482,14 @@ public class CreateAV3ToggleMenu : EditorWindow
         if (!currentValue.Equals(Vector4.zero))
         {
             if (binding.propertyName.EndsWith(".r"))
-                return (Color.black, currentValue);
-            return (Vector4.zero, currentValue);
+                return new ToggleBindingValue(Color.black, currentValue);
+            return new ToggleBindingValue(Vector4.zero, currentValue);
         }
         if (binding.propertyName.StartsWith("blendShape"))
         {
-            return (Vector4.zero, Vector4.one * 100);
+            return new ToggleBindingValue(Vector4.zero, Vector4.one * 100);
         }
-        return (Vector4.zero, Vector4.one);
+        return new ToggleBindingValue(Vector4.zero, Vector4.one);
     }
 
     IEnumerable<EditorCurveBinding> GetRemainingVectorBindings(EditorCurveBinding binding)
@@ -440,7 +544,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             bool shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Toggle", GUI.skin.button, GUILayout.ExpandWidth(false));
             if (shouldBeIncluded && !isAlreadyIncluded)
             {
-                bindingsToToggle.Add(toggleBinding, (Vector4.zero, Vector4.one));
+                bindingsToToggle.Add(toggleBinding, new ToggleBindingValue(Vector4.zero, Vector4.one));
             }
             else if (!shouldBeIncluded && isAlreadyIncluded)
             {
@@ -515,10 +619,11 @@ public class CreateAV3ToggleMenu : EditorWindow
                 GUILayout.Space(15);
                 bool isAlreadyIncluded = bindingsToToggle.ContainsKey(binding);
                 bool shouldBeIncluded = isAlreadyIncluded;
-                using (new EditorGUI.DisabledScope(binding.isDiscreteCurve))
+                bool isUnsupportedDiscreteCurve = binding.isDiscreteCurve && !IsMaterialSwapBinding(binding);
+                using (new EditorGUI.DisabledScope(isUnsupportedDiscreteCurve))
                 {
                     shouldBeIncluded = GUILayout.Toggle(isAlreadyIncluded, "Select", GUI.skin.button, GUILayout.ExpandWidth(false));
-                    if (binding.isDiscreteCurve)
+                    if (isUnsupportedDiscreteCurve)
                     {
                         GUI.Label(GUILayoutUtility.GetLastRect(),
                             new GUIContent("", "Discrete curves are currently not supported"));
@@ -527,9 +632,13 @@ public class CreateAV3ToggleMenu : EditorWindow
                 ShowWarningIfBindingExists(binding, GUILayout.Width(20));
                 GUILayout.Label($"{(binding.propertyName.EndsWith(".r") ? binding.propertyName[..^2] : binding.propertyName)}", GUILayout.ExpandWidth(true));
                 var avGO = FindAvatarDescriptor(Target).gameObject;
-                if (AnimationUtility.GetFloatValue(avGO, binding, out var sceneValue))
+                var width = GUILayout.Width(80);
+                if (IsMaterialSwapBinding(binding))
                 {
-                    var width = GUILayout.Width(70);
+                    EditorGUILayout.ObjectField(GetCurrentMaterial(binding), typeof(Material), false, width);
+                }
+                else if (AnimationUtility.GetFloatValue(avGO, binding, out var sceneValue))
+                {
                     if (binding.isDiscreteCurve)
                     {
                         sceneValue = BitConverter.SingleToInt32Bits(sceneValue);
@@ -602,6 +711,18 @@ public class CreateAV3ToggleMenu : EditorWindow
                 {
                     var curve = AnimationCurve.Linear(0, value, 0, value);
                     AnimationUtility.SetEditorCurve(clip, binding, curve);
+                }
+                void AddMaterialCurve(AnimationClip clip, EditorCurveBinding binding, Object material)
+                {
+                    AnimationUtility.SetObjectReferenceCurve(clip, binding, new[] {
+                        new ObjectReferenceKeyframe() { time = 0.0f, value = material }
+                    });
+                }
+                if (IsMaterialSwapBinding(binding))
+                {
+                    AddMaterialCurve(clipOn, binding, value.onObject);
+                    AddMaterialCurve(clipOff, binding, value.offObject);
+                    continue;
                 }
                 var extraBindings = GetRemainingVectorBindings(binding).ToArray();
                 AddCurve(clipOn, binding, value.onValue.x);
@@ -788,7 +909,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             // these are ui properties from thry editor so we never want to animate them
             if (Regex.IsMatch(propName, @"^material\.[smg]_(start|end)"))
                 continue;
-            if (animatableBinding.isPPtrCurve)
+            if (animatableBinding.isPPtrCurve && !propName.StartsWith("m_Materials.Array.data["))
                 continue;
             if (propName.Length > 2 && propName[^2] == '.' && vectorChars.Contains(propName[^1]))
                 continue;
