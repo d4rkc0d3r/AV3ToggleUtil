@@ -169,7 +169,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             return "Parameter Exists Already";
         if (fxLayer.layers.Any(l => l.name == ToggleName))
             return "Layer Exists Already";
-        if (fxLayer.parameters.Any(p => p.name == ToggleName))
+        if (fxLayer.parameters.Any(p => p.name == ParameterName))
             return "Layer Parameter Exists Already";
         var path = GetAnimationsFolderPath();
         if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName} On.anim") != null)
