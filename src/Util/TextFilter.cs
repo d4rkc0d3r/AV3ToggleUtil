@@ -117,6 +117,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 text = EditorGUI.TextField(rect, text);
             else
                 text = EditorGUI.TextField(rect, label, text);
+
+            var currentEvent = Event.current;
+            if (currentEvent.type == EventType.ContextClick && rect.Contains(currentEvent.mousePosition))
+            {
+                text = "";
+                matchCache.Clear();
+                currentEvent.Use();
+            }
+
             if (regexError != null)
                 GUI.Label(rect, new GUIContent("", regexError));
 
