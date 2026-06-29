@@ -60,13 +60,18 @@ public class CreateAV3ToggleMenu : EditorWindow
         {
             if (target == value)
                 return;
+            var previousAvatarDescriptor = FindAvatarDescriptor(target);
+            var nextAvatarDescriptor = FindAvatarDescriptor(value);
             target = value;
-            toggleName = "";
-            bindingsToToggle.Clear();
             cachedAnimatableBindings.Clear();
             filteredBindingCache = null;
             componentToSelectBindingFrom = null;
             cache_GetExistingAnimationsForBinding = null;
+            if (previousAvatarDescriptor != nextAvatarDescriptor)
+            {
+                toggleName = "";
+                bindingsToToggle.Clear();
+            }
             if (Target == null)
                 return;
             defaultToggleState = Target.activeSelf;
@@ -124,6 +129,59 @@ public class CreateAV3ToggleMenu : EditorWindow
         return text;
     }
 
+    private VRCExpressionsMenu.Control GetExistingTargetMenuControl()
+    {
+        return TargetMenu?.controls.FirstOrDefault(control => control != null && control.name == ToggleName);
+    }
+
+    private static string GetMenuControlParameterName(VRCExpressionsMenu.Control control)
+    {
+        return string.IsNullOrWhiteSpace(control?.parameter?.name) ? null : control.parameter.name;
+    }
+
+    private string GetExistingMenuControlParameterName()
+    {
+        return GetMenuControlParameterName(GetExistingTargetMenuControl());
+    }
+
+    private string GetEffectiveParameterName()
+    {
+        return GetExistingMenuControlParameterName() ?? ParameterName;
+    }
+
+    private VRCExpressionParameters.Parameter GetExistingExpressionParameter(string parameterName)
+    {
+        return FindAvatarDescriptor(Target)?.expressionParameters?.FindParameter(parameterName);
+    }
+
+    private AnimatorControllerParameter GetExistingFxParameter(string parameterName)
+    {
+        return (FindAvatarDescriptor(Target)?.baseAnimationLayers[4].animatorController as AnimatorController)
+            ?.parameters.FirstOrDefault(parameter => parameter.name == parameterName);
+    }
+
+    private string GetReusedParameterName()
+    {
+        var menuControlParameterName = GetExistingMenuControlParameterName();
+        if (menuControlParameterName != null)
+            return menuControlParameterName;
+        var parameterToUse = ParameterName;
+        return GetExistingExpressionParameter(parameterToUse) != null || GetExistingFxParameter(parameterToUse) != null
+            ? parameterToUse
+            : null;
+    }
+
+    private string GetCreateButtonLabel(string errorMsg)
+    {
+        var reusedParameterName = GetReusedParameterName();
+        var label = reusedParameterName == null ? "Create" : $"Create (reuse {reusedParameterName})";
+        if (string.IsNullOrEmpty(errorMsg))
+            return label;
+        return reusedParameterName == null
+            ? $"Create ({errorMsg})"
+            : $"Create (reuse {reusedParameterName}, {errorMsg})";
+    }
+
     private static string TrimAfterLastSlash(string path)
     {
         int lastSlash = path.LastIndexOf("/");
@@ -160,17 +218,26 @@ public class CreateAV3ToggleMenu : EditorWindow
             return "No Custom Parameters Found";
         if (AssetDatabase.GetAssetPath(av.expressionsMenu) == "")
             return "No Custom Menu Found";
-        if (TargetMenu.controls.Count >= 8)
+        var existingMenuControl = GetExistingTargetMenuControl();
+        var menuControlParameterName = GetMenuControlParameterName(existingMenuControl);
+        if (existingMenuControl == null && TargetMenu.controls.Count >= 8)
             return "Target Menu Is Full Already";
+        if (existingMenuControl != null && existingMenuControl.type != VRCExpressionsMenu.Control.ControlType.Toggle)
+            return "Existing Menu Entry Is Not A Toggle";
+        if (existingMenuControl != null && menuControlParameterName == null)
+            return "Existing Menu Entry Has No Parameter";
         var fxLayer = av.baseAnimationLayers[4].animatorController as AnimatorController;
         if (AssetDatabase.GetAssetPath(fxLayer) == "")
             return "No Custom FxLayer Found";
-        if (av.expressionParameters.FindParameter(ParameterName) != null)
-            return "Parameter Exists Already";
+        var effectiveParameterName = menuControlParameterName ?? ParameterName;
+        var existingExpressionParameter = av.expressionParameters.FindParameter(effectiveParameterName);
+        if (existingExpressionParameter != null && existingExpressionParameter.valueType != VRCExpressionParameters.ValueType.Bool)
+            return "Existing Parameter Is Not A Bool";
         if (fxLayer.layers.Any(l => l.name == ToggleName))
             return "Layer Exists Already";
-        if (fxLayer.parameters.Any(p => p.name == ParameterName))
-            return "Layer Parameter Exists Already";
+        var existingFxParameter = fxLayer.parameters.FirstOrDefault(p => p.name == effectiveParameterName);
+        if (existingFxParameter != null && existingFxParameter.type != AnimatorControllerParameterType.Bool)
+            return "Existing Layer Parameter Is Not A Bool";
         var path = GetAnimationsFolderPath();
         if (AssetDatabase.LoadAssetAtPath<AnimationClip>($"{path}/{ToggleName} On.anim") != null)
             return "Toggle On Animation Exists Already";
@@ -237,6 +304,59 @@ public class CreateAV3ToggleMenu : EditorWindow
             ?.FieldType == typeof(bool);
     }
 
+    private string GetBindingObjectName(EditorCurveBinding binding)
+    {
+        if (string.IsNullOrEmpty(binding.path))
+            return FindAvatarDescriptor(Target)?.name ?? Target?.name ?? string.Empty;
+        return binding.path[(binding.path.LastIndexOf('/') + 1)..];
+    }
+
+    private string GetBindingObjectPath(EditorCurveBinding binding)
+    {
+        var avatarName = FindAvatarDescriptor(Target)?.name ?? Target?.name ?? string.Empty;
+        if (string.IsNullOrEmpty(binding.path))
+            return avatarName;
+        return string.IsNullOrEmpty(avatarName) ? binding.path : $"{avatarName}/{binding.path}";
+    }
+
+    private Dictionary<EditorCurveBinding, string> GetSelectedBindingLabels(EditorCurveBinding[] bindings)
+    {
+        var bindingInfo = bindings.Select(binding =>
+        {
+            var displayName = binding.propertyName.EndsWith(".r") ? binding.propertyName[..^2] : binding.propertyName;
+            return new
+            {
+                binding,
+                baseLabel = $"{binding.type.Name}:{displayName}",
+                objectName = GetBindingObjectName(binding),
+                objectPath = GetBindingObjectPath(binding)
+            };
+        }).ToArray();
+
+        var labels = new Dictionary<EditorCurveBinding, string>();
+        foreach (var group in bindingInfo.GroupBy(info => info.baseLabel))
+        {
+            if (group.Count() == 1)
+            {
+                var entry = group.First();
+                labels[entry.binding] = entry.baseLabel;
+                continue;
+            }
+
+            var objectNameCounts = group
+                .GroupBy(entry => entry.objectName)
+                .ToDictionary(nameGroup => nameGroup.Key, nameGroup => nameGroup.Count());
+
+            foreach (var entry in group)
+            {
+                var prefix = objectNameCounts[entry.objectName] > 1 ? entry.objectPath : entry.objectName;
+                labels[entry.binding] = $"{prefix}/{entry.baseLabel}";
+            }
+        }
+
+        return labels;
+    }
+
     void DrawBindingsToToggle()
     {
         var bindingLayout = GUILayout.ExpandWidth(true);
@@ -266,7 +386,9 @@ public class CreateAV3ToggleMenu : EditorWindow
                 bindingsToToggle.Clear();
             }
         }
-        foreach ((var binding, var values) in bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray())
+        var sortedBindings = bindingsToToggle.OrderBy(pair => pair.Key.type.Name).ThenBy(pair => pair.Key.propertyName).ToArray();
+        var bindingLabels = GetSelectedBindingLabels(sortedBindings.Select(pair => pair.Key).ToArray());
+        foreach ((var binding, var values) in sortedBindings)
         {
             using var horizontalScope = new EditorGUILayout.HorizontalScope();
             bool isToggle = IsToggleBinding(binding);
@@ -287,8 +409,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             {
                 return EditorGUILayout.ObjectField(value, typeof(Material), false, valueLayout);
             }
-            var displayName = isColor ? binding.propertyName[..^2] : binding.propertyName;
-            GUILayout.Label($"{binding.type.Name}:{displayName}", bindingLayout);
+            GUILayout.Label(bindingLabels[binding], bindingLayout);
             ShowWarningIfBindingExists(binding, GUILayout.Width(20));
             using var cc = new EditorGUI.ChangeCheckScope();
             var newOffValue = values.offValue;
@@ -680,7 +801,14 @@ public class CreateAV3ToggleMenu : EditorWindow
         GUILayout.Space(8);
 
         toggleName = TextFieldWithDefault("Toggle Name", toggleName, GetDefaultToggleName());
-        parameterName = TextFieldWithDefault("Parameter Name", parameterName, GetDefaultParameterName());
+        var existingMenuControlParameterName = GetExistingMenuControlParameterName();
+        using (new EditorGUI.DisabledScope(existingMenuControlParameterName != null))
+        {
+            parameterName = TextFieldWithDefault(
+                "Parameter Name",
+            existingMenuControlParameterName ?? parameterName,
+            existingMenuControlParameterName ?? GetDefaultParameterName());
+        }
 
         var descriptor = FindAvatarDescriptor(Target);
         TargetMenu = EditorGUILayout.ObjectField("Menu", TargetMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
@@ -693,8 +821,10 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         string errorMsg = CanCreateToggle();
         GUI.enabled = errorMsg == "";
-        if (GUILayout.Button("Create" + ((errorMsg == "") ? "" : " (" + errorMsg + ")")))
+        if (GUILayout.Button(GetCreateButtonLabel(errorMsg)))
         {
+            var existingMenuControl = GetExistingTargetMenuControl();
+            var effectiveParameterName = GetMenuControlParameterName(existingMenuControl) ?? ParameterName;
             string animFolder = GetAnimationsFolderPath();
             if (!AssetDatabase.IsValidFolder(animFolder))
                 AssetDatabase.CreateFolder(animFolder[..animFolder.LastIndexOf("/")], "Animations");
@@ -741,25 +871,31 @@ public class CreateAV3ToggleMenu : EditorWindow
 
             var param = new VRCExpressionParameters.Parameter()
             {
-                name = ParameterName,
+                name = effectiveParameterName,
                 defaultValue = defaultToggleState ? 1.0f : 0.0f,
                 saved = savedParameter,
                 networkSynced = syncedParameter,
                 valueType = VRCExpressionParameters.ValueType.Bool
             };
 
-            descriptor.expressionParameters.parameters = descriptor.expressionParameters.parameters
-                .Union(new VRCExpressionParameters.Parameter[] { param }).ToArray();
-            EditorUtility.SetDirty(descriptor.expressionParameters);
-            AssetDatabase.SaveAssets();
+            if (descriptor.expressionParameters.FindParameter(effectiveParameterName) == null)
+            {
+                descriptor.expressionParameters.parameters = descriptor.expressionParameters.parameters
+                    .Union(new VRCExpressionParameters.Parameter[] { param }).ToArray();
+                EditorUtility.SetDirty(descriptor.expressionParameters);
+                AssetDatabase.SaveAssets();
+            }
 
             var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
-            fxLayer.AddParameter(new AnimatorControllerParameter()
+            if (!fxLayer.parameters.Any(p => p.name == effectiveParameterName))
             {
-                name = ParameterName,
-                type = AnimatorControllerParameterType.Bool,
-                defaultBool = defaultToggleState
-            });
+                fxLayer.AddParameter(new AnimatorControllerParameter()
+                {
+                    name = effectiveParameterName,
+                    type = AnimatorControllerParameterType.Bool,
+                    defaultBool = defaultToggleState
+                });
+            }
 
             var layer = new AnimatorControllerLayer();
             layer.name = ToggleName;
@@ -787,7 +923,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOn.hasFixedDuration = true;
             transitionToOn.hasExitTime = false;
             transitionToOn.duration = 0.0f;
-            transitionToOn.AddCondition(AnimatorConditionMode.If, 0, ParameterName);
+            transitionToOn.AddCondition(AnimatorConditionMode.If, 0, effectiveParameterName);
             transitionToOn.hideFlags = HideFlags.HideInHierarchy;
             toggleOff.AddTransition(transitionToOn);
 
@@ -797,7 +933,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             transitionToOff.hasFixedDuration = true;
             transitionToOff.hasExitTime = false;
             transitionToOff.duration = 0.0f;
-            transitionToOff.AddCondition(AnimatorConditionMode.IfNot, 0, ParameterName);
+            transitionToOff.AddCondition(AnimatorConditionMode.IfNot, 0, effectiveParameterName);
             transitionToOff.hideFlags = HideFlags.HideInHierarchy;
             toggleOn.AddTransition(transitionToOff);
 
@@ -822,14 +958,17 @@ public class CreateAV3ToggleMenu : EditorWindow
             AssetDatabase.AddObjectToAsset(layer.stateMachine, fxLayerPath);
             AssetDatabase.SaveAssets();
 
-            TargetMenu.controls.Add(new VRCExpressionsMenu.Control()
+            if (existingMenuControl == null)
             {
-                name = ToggleName,
-                parameter = new VRCExpressionsMenu.Control.Parameter() { name = ParameterName },
-                type = VRCExpressionsMenu.Control.ControlType.Toggle
-            });
-            EditorUtility.SetDirty(TargetMenu);
-            AssetDatabase.SaveAssets();
+                TargetMenu.controls.Add(new VRCExpressionsMenu.Control()
+                {
+                    name = ToggleName,
+                    parameter = new VRCExpressionsMenu.Control.Parameter() { name = effectiveParameterName },
+                    type = VRCExpressionsMenu.Control.ControlType.Toggle
+                });
+                EditorUtility.SetDirty(TargetMenu);
+                AssetDatabase.SaveAssets();
+            }
         }
         GUI.enabled = true;
 
