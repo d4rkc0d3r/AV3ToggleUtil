@@ -1426,6 +1426,45 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 DrawClipSection("Affected Animation Clips", allAffected);
 
+                HashSet<string> MergePropertyNames(HashSet<string> propertyNames)
+                {
+                    var merged = new HashSet<string>();
+                    var groups = propertyNames
+                        .Where(p => !string.IsNullOrEmpty(p))
+                        .GroupBy(p =>
+                        {
+                            int lastDot = p.LastIndexOf('.');
+                            if (lastDot > 0 && lastDot < p.Length - 1)
+                            {
+                                string suffix = p[(lastDot + 1)..];
+                                if (suffix.Length == 1)
+                                    return p[..lastDot];
+                            }
+                            return p;
+                        })
+                        .ToList();
+
+                    foreach (var group in groups)
+                    {
+                        var first = group.First();
+                        int lastDot = first.LastIndexOf('.');
+                        if (lastDot > 0 && lastDot < first.Length - 1)
+                        {
+                            string suffix = first[(lastDot + 1)..];
+                            if (suffix.Length == 1 && group.Count() > 1)
+                            {
+                                string prefix = first[..(lastDot + 1)];
+                                var letters = group.Select(p => p[(lastDot + 1)..]).OrderBy(s => s).ToList();
+                                merged.Add(prefix + string.Concat(letters));
+                                continue;
+                            }
+                        }
+                        foreach (var name in group)
+                            merged.Add(name);
+                    }
+                    return merged;
+                }
+
                 // Collect unique components bound in the affected clips with their property names
                 var componentPropertyMap = new Dictionary<Component, HashSet<string>>();
                 if (av != null && allAffected.Count > 0)
@@ -1466,7 +1505,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         DrawColumnEntries(components, comp =>
                         {
                             var props = componentPropertyMap[comp];
-                            var tooltip = string.Join(", ", props.OrderBy(p => p));
+                            var merged = MergePropertyNames(props);
+                            var tooltip = string.Join(", ", merged.OrderBy(p => p));
                             EditorGUILayout.ObjectField("", comp, comp.GetType(), true, GUILayout.Width(entryWidth));
                             EditorGUI.LabelField(GUILayoutUtility.GetLastRect(), new GUIContent("", tooltip));
                         });
