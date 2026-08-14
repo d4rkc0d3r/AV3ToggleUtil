@@ -40,7 +40,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private bool renameMode = false;
         private string renameDraft = "";
         private string renameDraftSource = "";
-        private bool showComponentProperties = false;
+        private bool showComponentProperties = true;
 
         // https://creators.vrchat.com/avatars/animator-parameters/
         private static readonly HashSet<string> VRChatBuiltInParameters = new(StringComparer.Ordinal)
@@ -1549,7 +1549,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         public static void AV3ParameterInspectorMenuItem()
         {
             var window = GetWindow<AV3ParameterInspector>();
-            window.titleContent = new GUIContent("d4rk AV3 Parameter Inspector");
+            window.titleContent = new GUIContent("d4rk Parameter Inspector");
             window.Show();
         }
 
