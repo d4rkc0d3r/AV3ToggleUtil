@@ -1425,6 +1425,53 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     .ToList();
 
                 DrawClipSection("Affected Animation Clips", allAffected);
+
+                // Collect unique components bound in the affected clips with their property names
+                var componentPropertyMap = new Dictionary<Component, HashSet<string>>();
+                if (av != null && allAffected.Count > 0)
+                {
+                    foreach (var clip in allAffected)
+                    {
+                        if (clip == null) continue;
+                        foreach (var binding in AnimationUtility.GetCurveBindings(clip).Concat(AnimationUtility.GetObjectReferenceCurveBindings(clip)))
+                        {
+                            Transform t = AV3Helper.FindTransformByAvatarPath(av.transform, binding.path);
+                            if (t == null) continue;
+                            Component comp = null;
+                            if (binding.type == typeof(Transform) || binding.type == typeof(GameObject))
+                                comp = t;
+                            else if (typeof(Component).IsAssignableFrom(binding.type))
+                                comp = t.GetComponent(binding.type);
+                            if (comp != null)
+                            {
+                                if (!componentPropertyMap.TryGetValue(comp, out var props))
+                                {
+                                    props = new HashSet<string>();
+                                    componentPropertyMap[comp] = props;
+                                }
+                                props.Add(binding.propertyName);
+                            }
+                        }
+                    }
+                }
+
+                if (componentPropertyMap.Count > 0)
+                {
+                    EditorGUILayout.Space(8);
+                    using (new EditorGUILayout.VerticalScope("box"))
+                    {
+                        EditorGUILayout.LabelField("Components Bound in Animation Clips", EditorStyles.boldLabel);
+                        var components = componentPropertyMap.Keys.ToList();
+                        components.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
+                        DrawColumnEntries(components, comp =>
+                        {
+                            var props = componentPropertyMap[comp];
+                            var tooltip = string.Join(", ", props.OrderBy(p => p));
+                            EditorGUILayout.ObjectField("", comp, comp.GetType(), true, GUILayout.Width(entryWidth));
+                            EditorGUI.LabelField(GUILayoutUtility.GetLastRect(), new GUIContent("", tooltip));
+                        });
+                    }
+                }
             }
         }
 
