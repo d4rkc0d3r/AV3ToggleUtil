@@ -40,6 +40,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private bool renameMode = false;
         private string renameDraft = "";
         private string renameDraftSource = "";
+        private bool showComponentProperties = false;
 
         // https://creators.vrchat.com/avatars/animator-parameters/
         private static readonly HashSet<string> VRChatBuiltInParameters = new(StringComparer.Ordinal)
@@ -1500,16 +1501,45 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
                         EditorGUILayout.LabelField("Components Bound in Animation Clips", EditorStyles.boldLabel);
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Space(innerIndent);
+                            showComponentProperties = GUILayout.Toggle(showComponentProperties, "Show Properties", GUILayout.Width(120f));
+                        }
                         var components = componentPropertyMap.Keys.ToList();
                         components.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
-                        DrawColumnEntries(components, comp =>
+                        if (showComponentProperties)
                         {
-                            var props = componentPropertyMap[comp];
-                            var merged = MergePropertyNames(props);
-                            var tooltip = string.Join(", ", merged.OrderBy(p => p));
-                            EditorGUILayout.ObjectField("", comp, comp.GetType(), true, GUILayout.Width(entryWidth));
-                            EditorGUI.LabelField(GUILayoutUtility.GetLastRect(), new GUIContent("", tooltip));
-                        });
+                            foreach (var comp in components)
+                            {
+                                using (new EditorGUILayout.HorizontalScope())
+                                {
+                                    GUILayout.Space(innerIndent);
+                                    EditorGUILayout.ObjectField("", comp, comp.GetType(), true, GUILayout.Width(entryWidth));
+                                }
+                                var props = componentPropertyMap[comp];
+                                var merged = MergePropertyNames(props);
+                                foreach (var prop in merged.OrderBy(p => p))
+                                {
+                                    using (new EditorGUILayout.HorizontalScope())
+                                    {
+                                        GUILayout.Space(innerIndent + 15);
+                                        EditorGUILayout.LabelField(prop, EditorStyles.label);
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            DrawColumnEntries(components, comp =>
+                            {
+                                var props = componentPropertyMap[comp];
+                                var merged = MergePropertyNames(props);
+                                var tooltip = string.Join(", ", merged.OrderBy(p => p));
+                                EditorGUILayout.ObjectField("", comp, comp.GetType(), true, GUILayout.Width(entryWidth));
+                                EditorGUI.LabelField(GUILayoutUtility.GetLastRect(), new GUIContent("", tooltip));
+                            });
+                        }
                     }
                 }
             }
