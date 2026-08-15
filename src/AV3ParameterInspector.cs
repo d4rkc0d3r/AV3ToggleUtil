@@ -84,12 +84,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             [System.ComponentModel.Description("All")]
             All,
-            [System.ComponentModel.Description("Unused")]
-            Unused,
             [System.ComponentModel.Description("PhysBone")]
             PhysBone,
             [System.ComponentModel.Description("Contact")]
             Contact,
+            [System.ComponentModel.Description("Unused")]
+            Unused,
             [System.ComponentModel.Description("Driver")]
             Driver,
             [System.ComponentModel.Description("Built In")]
