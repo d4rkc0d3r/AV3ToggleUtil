@@ -35,6 +35,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private Dictionary<string, ScanResult> scanResultCache = new(StringComparer.Ordinal);
         private HashSet<string> usedParametersCache;
         private int usedParametersCacheAvatarId = 0;
+        private (HashSet<string> physBoneParameters, HashSet<string> contactParameters) componentSourceCache;
+        private int componentSourceCacheAvatarId = 0;
+        private HashSet<string> driverParametersCache;
+        private int driverParametersCacheAvatarId = 0;
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
         private TextFilter parameterFilter = new() { IsRegex = false, SmallButtons = true };
         private ParameterFilterMode filterMode = ParameterFilterMode.All;
@@ -81,9 +85,29 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private enum ParameterFilterMode
         {
+            [System.ComponentModel.Description("All")]
             All,
+            [System.ComponentModel.Description("Unused")]
             Unused,
+            [System.ComponentModel.Description("PhysBone")]
+            PhysBone,
+            [System.ComponentModel.Description("Contact")]
+            Contact,
+            [System.ComponentModel.Description("Driver")]
+            Driver,
+            [System.ComponentModel.Description("Built In")]
+            BuiltIn,
+            [System.ComponentModel.Description("File")]
+            File,
         }
+
+        private static readonly string[] FilterModeLabels = System.Linq.Enumerable
+            .Cast<ParameterFilterMode>(Enum.GetValues(typeof(ParameterFilterMode)))
+            .Select(mode =>
+                mode.GetType().GetField(mode.ToString())
+                    ?.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>()?.Description
+                ?? mode.ToString())
+            .ToArray();
 
         [Serializable]
         private class MenuUsage
@@ -860,6 +884,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             EditorUtility.SetDirty(av);
             scanResultCache.Clear();
             usedParametersCache = null;
+            componentSourceCacheAvatarId = 0;
+            driverParametersCacheAvatarId = 0;
             return true;
         }
 
@@ -1018,46 +1044,151 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return result;
         }
 
-        private HashSet<string> GetUsedParameters(VRCAvatarDescriptor av, List<string> allParameters)
+        private void EnsureParametersScanned(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            var missingParameters = allParameters.Where(p => !scanResultCache.ContainsKey(p)).ToList();
+            if (missingParameters.Count == 0)
+                return;
+
+            if (missingParameters.Count > 3)
+            {
+                try
+                {
+                    for (int i = 0; i < missingParameters.Count; i++)
+                    {
+                        var parameter = missingParameters[i];
+                        EditorUtility.DisplayProgressBar("Scanning Parameters", $"{i + 1}/{missingParameters.Count} {parameter}", (i + 1f) / missingParameters.Count);
+                        scanResultCache[parameter] = BuildScanResult(av, parameter);
+                    }
+                }
+                finally
+                {
+                    EditorUtility.ClearProgressBar();
+                }
+            }
+            else
+            {
+                foreach (var parameter in missingParameters)
+                    scanResultCache[parameter] = BuildScanResult(av, parameter);
+            }
+        }
+
+        private HashSet<string> GetParametersMatching(VRCAvatarDescriptor av, List<string> allParameters, Func<ScanResult, bool> predicate, ref HashSet<string> cache, ref int cacheAvatarId)
         {
             var avatarId = av.GetInstanceID();
-            if (usedParametersCache == null || usedParametersCacheAvatarId != avatarId)
+            if (cache == null || cacheAvatarId != avatarId)
             {
-                var missingParameters = allParameters.Where(p => !scanResultCache.ContainsKey(p)).ToList();
-                if (missingParameters.Count > 3)
-                {
-                    try
-                    {
-                        for (int i = 0; i < missingParameters.Count; i++)
-                        {
-                            var parameter = missingParameters[i];
-                            EditorUtility.DisplayProgressBar("Scanning Parameters", $"{i + 1}/{missingParameters.Count} {parameter}", (i + 1f) / missingParameters.Count);
-                            scanResultCache[parameter] = BuildScanResult(av, parameter);
-                        }
-                    }
-                    finally
-                    {
-                        EditorUtility.ClearProgressBar();
-                    }
-                }
-                else
-                {
-                    foreach (var parameter in missingParameters)
-                        scanResultCache[parameter] = BuildScanResult(av, parameter);
-                }
+                EnsureParametersScanned(av, allParameters);
 
-                var used = new HashSet<string>(StringComparer.Ordinal);
+                var result = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var parameter in allParameters)
                 {
-                    if (scanResultCache[parameter].stateUsages.Count > 0)
-                        used.Add(parameter);
+                    if (predicate(scanResultCache[parameter]))
+                        result.Add(parameter);
                 }
 
-                usedParametersCache = used;
-                usedParametersCacheAvatarId = avatarId;
+                cache = result;
+                cacheAvatarId = avatarId;
             }
 
-            return usedParametersCache;
+            return cache;
+        }
+
+        private HashSet<string> GetUsedParameters(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            return GetParametersMatching(av, allParameters, r => r.stateUsages.Count > 0, ref usedParametersCache, ref usedParametersCacheAvatarId);
+        }
+
+        private (HashSet<string> physBoneParameters, HashSet<string> contactParameters) GetComponentSourceParameters(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            var avatarId = av.GetInstanceID();
+            if (componentSourceCacheAvatarId != avatarId)
+            {
+                var physBoneParameters = new HashSet<string>(StringComparer.Ordinal);
+                var contactParameters = new HashSet<string>(StringComparer.Ordinal);
+
+                if (av.transform != null)
+                {
+                    var root = av.transform;
+                    var physBoneConfiguredParameters = new List<string>();
+                    var contactConfiguredParameters = new List<string>();
+
+                    foreach (var physBone in root.GetComponentsInChildren<VRCPhysBone>(true))
+                    {
+                        if (physBone != null && !string.IsNullOrEmpty(physBone.parameter))
+                            physBoneConfiguredParameters.Add(physBone.parameter);
+                    }
+
+                    foreach (var contactReceiver in root.GetComponentsInChildren<VRCContactReceiver>(true))
+                    {
+                        if (contactReceiver != null && !string.IsNullOrEmpty(contactReceiver.parameter))
+                            contactConfiguredParameters.Add(contactReceiver.parameter);
+                    }
+
+                    foreach (var parameter in allParameters)
+                    {
+                        foreach (var configuredParameter in physBoneConfiguredParameters)
+                        {
+                            if (IsParameterWrittenByPhysBone(parameter, configuredParameter))
+                            {
+                                physBoneParameters.Add(parameter);
+                                break;
+                            }
+                        }
+
+                        foreach (var configuredParameter in contactConfiguredParameters)
+                        {
+                            if (IsSameParameter(parameter, configuredParameter))
+                            {
+                                contactParameters.Add(parameter);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                componentSourceCache = (physBoneParameters, contactParameters);
+                componentSourceCacheAvatarId = avatarId;
+            }
+
+            return componentSourceCache;
+        }
+
+        private HashSet<string> GetDriverParameters(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            return GetParametersMatching(av, allParameters, r => r.stateUsages.Any(s => s.parameterDriver), ref driverParametersCache, ref driverParametersCacheAvatarId);
+        }
+
+        private static HashSet<string> GetExpressionFileParameters(VRCAvatarDescriptor av)
+        {
+            var expressionParams = av.expressionParameters?.parameters;
+            if (expressionParams == null)
+                return null;
+
+            return new HashSet<string>(
+                expressionParams.Where(p => p != null && !string.IsNullOrEmpty(p.name)).Select(p => p.name),
+                StringComparer.Ordinal);
+        }
+
+        private (HashSet<string> included, HashSet<string> excluded) GetFilterParameterSets(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            switch (filterMode)
+            {
+                case ParameterFilterMode.Unused:
+                    return (null, GetUsedParameters(av, allParameters));
+                case ParameterFilterMode.PhysBone:
+                    return (GetComponentSourceParameters(av, allParameters).physBoneParameters, null);
+                case ParameterFilterMode.Contact:
+                    return (GetComponentSourceParameters(av, allParameters).contactParameters, null);
+                case ParameterFilterMode.Driver:
+                    return (GetDriverParameters(av, allParameters), null);
+                case ParameterFilterMode.BuiltIn:
+                    return (VRChatBuiltInParameters, null);
+                case ParameterFilterMode.File:
+                    return (GetExpressionFileParameters(av), null);
+                default:
+                    return (null, null);
+            }
         }
 
         private VRCAvatarDescriptor GetCurrentOrLastAvatarDescriptor()
@@ -1159,12 +1290,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             using (new EditorGUILayout.VerticalScope(GUILayout.Width(leftPanelWidth)))
             {
-                var usedParameters = filterMode == ParameterFilterMode.Unused
-                    ? GetUsedParameters(av, allParameters)
-                    : null;
+                var (includedParameters, excludedParameters) = GetFilterParameterSets(av, allParameters);
+
                 var filteredParameters = allParameters
                     .Where(p => parameterFilter.Matches(p))
-                    .Where(p => usedParameters == null || !usedParameters.Contains(p))
+                    .Where(p => (includedParameters == null || includedParameters.Contains(p))
+                              && (excludedParameters == null || !excludedParameters.Contains(p)))
                     .ToList();
                 using (new EditorGUILayout.HorizontalScope())
                 {
@@ -1172,7 +1303,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     sortParameters = GUILayout.Toggle(sortParameters, new GUIContent("A→Z", "Sort alphabetically"), GUI.skin.button, GUILayout.ExpandWidth(false));
                 }
                 parameterFilter.DrawGUI();
-                filterMode = (ParameterFilterMode)EditorGUILayout.Popup("Filter", (int)filterMode, new[] { "All", "Unused" });
+                filterMode = (ParameterFilterMode)EditorGUILayout.Popup("Filter", (int)filterMode, FilterModeLabels);
 
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
                 leftScrollPos = leftScroll.scrollPosition;
