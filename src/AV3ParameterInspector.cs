@@ -1023,16 +1023,33 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var avatarId = av.GetInstanceID();
             if (usedParametersCache == null || usedParametersCacheAvatarId != avatarId)
             {
+                var missingParameters = allParameters.Where(p => !scanResultCache.ContainsKey(p)).ToList();
+                if (missingParameters.Count > 3)
+                {
+                    try
+                    {
+                        for (int i = 0; i < missingParameters.Count; i++)
+                        {
+                            var parameter = missingParameters[i];
+                            EditorUtility.DisplayProgressBar("Scanning Parameters", $"{i + 1}/{missingParameters.Count} {parameter}", (i + 1f) / missingParameters.Count);
+                            scanResultCache[parameter] = BuildScanResult(av, parameter);
+                        }
+                    }
+                    finally
+                    {
+                        EditorUtility.ClearProgressBar();
+                    }
+                }
+                else
+                {
+                    foreach (var parameter in missingParameters)
+                        scanResultCache[parameter] = BuildScanResult(av, parameter);
+                }
+
                 var used = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var parameter in allParameters)
                 {
-                    if (!scanResultCache.TryGetValue(parameter, out var result))
-                    {
-                        result = BuildScanResult(av, parameter);
-                        scanResultCache[parameter] = result;
-                    }
-
-                    if (result.stateUsages.Count > 0)
+                    if (scanResultCache[parameter].stateUsages.Count > 0)
                         used.Add(parameter);
                 }
 
