@@ -32,11 +32,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private string selectedParameter = "";
 
         private int cachedAvatarId = 0;
-        private string cachedParameter = "";
-        private ScanResult cachedScanResult;
-        private bool forceRescan = true;
+        private Dictionary<string, ScanResult> scanResultCache = new(StringComparer.Ordinal);
+        private HashSet<string> usedParametersCache;
+        private int usedParametersCacheAvatarId = 0;
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
         private TextFilter parameterFilter = new() { IsRegex = false, SmallButtons = true };
+        private ParameterFilterMode filterMode = ParameterFilterMode.All;
         private bool renameMode = false;
         private string renameDraft = "";
         private string renameDraftSource = "";
@@ -77,6 +78,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             "EyeHeightAsMeters",
             "EyeHeightAsPercent",
         };
+
+        private enum ParameterFilterMode
+        {
+            All,
+            Unused,
+        }
 
         [Serializable]
         private class MenuUsage
@@ -851,8 +858,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return false;
 
             EditorUtility.SetDirty(av);
-            forceRescan = true;
-            cachedScanResult = null;
+            scanResultCache.Clear();
+            usedParametersCache = null;
             return true;
         }
 
@@ -1011,6 +1018,31 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return result;
         }
 
+        private HashSet<string> GetUsedParameters(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            var avatarId = av.GetInstanceID();
+            if (usedParametersCache == null || usedParametersCacheAvatarId != avatarId)
+            {
+                var used = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var parameter in allParameters)
+                {
+                    if (!scanResultCache.TryGetValue(parameter, out var result))
+                    {
+                        result = BuildScanResult(av, parameter);
+                        scanResultCache[parameter] = result;
+                    }
+
+                    if (result.stateUsages.Count > 0)
+                        used.Add(parameter);
+                }
+
+                usedParametersCache = used;
+                usedParametersCacheAvatarId = avatarId;
+            }
+
+            return usedParametersCache;
+        }
+
         private VRCAvatarDescriptor GetCurrentOrLastAvatarDescriptor()
         {
             var selectedAvatarDescriptor = FindAvatarDescriptor(Selection.activeGameObject);
@@ -1084,7 +1116,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (string.IsNullOrEmpty(selectedParameter) || !allParameters.Contains(selectedParameter))
             {
                 selectedParameter = allParameters[0];
-                forceRescan = true;
             }
 
             if (!IsSameParameter(renameDraftSource, selectedParameter))
@@ -1094,25 +1125,37 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
 
             var avatarId = av.GetInstanceID();
-            if (forceRescan || cachedScanResult == null || cachedAvatarId != avatarId || !IsSameParameter(cachedParameter, selectedParameter))
+            if (avatarId != cachedAvatarId)
+            {
+                scanResultCache.Clear();
+                usedParametersCache = null;
+                cachedAvatarId = avatarId;
+            }
+
+            if (!scanResultCache.TryGetValue(selectedParameter, out var cachedScanResult))
             {
                 cachedScanResult = BuildScanResult(av, selectedParameter);
-                cachedAvatarId = avatarId;
-                cachedParameter = selectedParameter;
-                forceRescan = false;
+                scanResultCache[selectedParameter] = cachedScanResult;
             }
 
             using var horizontal = new EditorGUILayout.HorizontalScope();
 
             using (new EditorGUILayout.VerticalScope(GUILayout.Width(leftPanelWidth)))
             {
-                var filteredParameters = allParameters.Where(p => parameterFilter.Matches(p)).ToList();
+                var usedParameters = filterMode == ParameterFilterMode.Unused
+                    ? GetUsedParameters(av, allParameters)
+                    : null;
+                var filteredParameters = allParameters
+                    .Where(p => parameterFilter.Matches(p))
+                    .Where(p => usedParameters == null || !usedParameters.Contains(p))
+                    .ToList();
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Label($"Parameters ({filteredParameters.Count}/{allParameters.Count})", EditorStyles.boldLabel);
                     sortParameters = GUILayout.Toggle(sortParameters, new GUIContent("A→Z", "Sort alphabetically"), GUI.skin.button, GUILayout.ExpandWidth(false));
                 }
                 parameterFilter.DrawGUI();
+                filterMode = (ParameterFilterMode)EditorGUILayout.Popup("Filter", (int)filterMode, new[] { "All", "Unused" });
 
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
                 leftScrollPos = leftScroll.scrollPosition;
@@ -1125,7 +1168,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (cc.changed && selected && !IsSameParameter(selectedParameter, parameter))
                     {
                         selectedParameter = parameter;
-                        forceRescan = true;
                         renameMode = false;
                         GUI.FocusControl(null);
                     }
@@ -1232,7 +1274,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     selectedParameter = renameDraft;
                                     renameDraftSource = selectedParameter;
                                     renameDraft = selectedParameter;
-                                    forceRescan = true;
                                     renameMode = false;
                                     GUI.FocusControl(null);
                                     Repaint();
@@ -1555,7 +1596,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private void OnSelectionChange()
         {
-            forceRescan = true;
             Repaint();
         }
     }
