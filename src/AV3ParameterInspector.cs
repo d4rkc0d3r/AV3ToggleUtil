@@ -34,11 +34,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private int cachedAvatarId = 0;
         private Dictionary<string, ScanResult> scanResultCache = new(StringComparer.Ordinal);
         private HashSet<string> usedParametersCache;
-        private int usedParametersCacheAvatarId = 0;
         private (HashSet<string> physBoneParameters, HashSet<string> contactParameters) componentSourceCache;
-        private int componentSourceCacheAvatarId = 0;
         private HashSet<string> driverParametersCache;
-        private int driverParametersCacheAvatarId = 0;
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
         private TextFilter parameterFilter = new() { IsRegex = false, SmallButtons = true };
         private ParameterFilterMode filterMode = ParameterFilterMode.All;
@@ -882,10 +879,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return false;
 
             EditorUtility.SetDirty(av);
-            scanResultCache.Clear();
-            usedParametersCache = null;
-            componentSourceCacheAvatarId = 0;
-            driverParametersCacheAvatarId = 0;
+            ResetCaches();
             return true;
         }
 
@@ -1044,6 +1038,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return result;
         }
 
+        private void ResetCaches()
+        {
+            scanResultCache.Clear();
+            usedParametersCache = null;
+            driverParametersCache = null;
+            componentSourceCache = default;
+        }
+
         private void EnsureParametersScanned(VRCAvatarDescriptor av, List<string> allParameters)
         {
             var missingParameters = allParameters.Where(p => !scanResultCache.ContainsKey(p)).ToList();
@@ -1073,10 +1075,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private HashSet<string> GetParametersMatching(VRCAvatarDescriptor av, List<string> allParameters, Func<ScanResult, bool> predicate, ref HashSet<string> cache, ref int cacheAvatarId)
+        private HashSet<string> GetParametersMatching(VRCAvatarDescriptor av, List<string> allParameters, Func<ScanResult, bool> predicate, ref HashSet<string> cache)
         {
-            var avatarId = av.GetInstanceID();
-            if (cache == null || cacheAvatarId != avatarId)
+            if (cache == null)
             {
                 EnsureParametersScanned(av, allParameters);
 
@@ -1088,7 +1089,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
 
                 cache = result;
-                cacheAvatarId = avatarId;
             }
 
             return cache;
@@ -1096,13 +1096,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private HashSet<string> GetUsedParameters(VRCAvatarDescriptor av, List<string> allParameters)
         {
-            return GetParametersMatching(av, allParameters, r => r.stateUsages.Count > 0, ref usedParametersCache, ref usedParametersCacheAvatarId);
+            return GetParametersMatching(av, allParameters, r => r.stateUsages.Count > 0, ref usedParametersCache);
         }
 
         private (HashSet<string> physBoneParameters, HashSet<string> contactParameters) GetComponentSourceParameters(VRCAvatarDescriptor av, List<string> allParameters)
         {
-            var avatarId = av.GetInstanceID();
-            if (componentSourceCacheAvatarId != avatarId)
+            if (componentSourceCache.physBoneParameters == null)
             {
                 var physBoneParameters = new HashSet<string>(StringComparer.Ordinal);
                 var contactParameters = new HashSet<string>(StringComparer.Ordinal);
@@ -1148,7 +1147,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
 
                 componentSourceCache = (physBoneParameters, contactParameters);
-                componentSourceCacheAvatarId = avatarId;
             }
 
             return componentSourceCache;
@@ -1156,7 +1154,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private HashSet<string> GetDriverParameters(VRCAvatarDescriptor av, List<string> allParameters)
         {
-            return GetParametersMatching(av, allParameters, r => r.stateUsages.Any(s => s.parameterDriver), ref driverParametersCache, ref driverParametersCacheAvatarId);
+            return GetParametersMatching(av, allParameters, r => r.stateUsages.Any(s => s.parameterDriver), ref driverParametersCache);
         }
 
         private static HashSet<string> GetExpressionFileParameters(VRCAvatarDescriptor av)
@@ -1275,9 +1273,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var avatarId = av.GetInstanceID();
             if (avatarId != cachedAvatarId)
             {
-                scanResultCache.Clear();
-                usedParametersCache = null;
                 cachedAvatarId = avatarId;
+                ResetCaches();
             }
 
             if (!scanResultCache.TryGetValue(selectedParameter, out var cachedScanResult))
