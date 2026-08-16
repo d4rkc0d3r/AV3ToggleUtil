@@ -98,7 +98,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             File,
         }
 
-        private static readonly string[] FilterModeLabels = System.Linq.Enumerable
+        private static readonly string[] FilterModeLabels = Enumerable
             .Cast<ParameterFilterMode>(Enum.GetValues(typeof(ParameterFilterMode)))
             .Select(mode =>
                 mode.GetType().GetField(mode.ToString())
@@ -1299,9 +1299,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     GUILayout.Label($"Parameters ({filteredParameters.Count}/{allParameters.Count})", EditorStyles.boldLabel);
                     sortParameters = GUILayout.Toggle(sortParameters, new GUIContent("A→Z", "Sort alphabetically"), GUI.skin.button, GUILayout.ExpandWidth(false));
                 }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label("Filter");
+                    GUILayout.FlexibleSpace();
+                    filterMode = (ParameterFilterMode)EditorGUILayout.Popup((int)filterMode, FilterModeLabels, GUILayout.Width(80));
+                }
                 parameterFilter.DrawGUI();
-                filterMode = (ParameterFilterMode)EditorGUILayout.Popup("Filter", (int)filterMode, FilterModeLabels);
-
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
                 leftScrollPos = leftScroll.scrollPosition;
 
