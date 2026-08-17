@@ -1680,7 +1680,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             if (suffix.Length == 1 && group.Count() > 1)
                             {
                                 string prefix = first[..(lastDot + 1)];
-                                var letters = group.Select(p => p[(lastDot + 1)..]).OrderBy(s => s).ToList();
+                                var componentLetters = group.Select(p => p[(lastDot + 1)..]).ToList();
+                                var letterSet = new HashSet<string>(componentLetters);
+                                string orderKey = null;
+                                if (letterSet.SetEquals(new[] { "r", "g", "b", "a" }))
+                                    orderKey = "rgba";
+                                else if (letterSet.SetEquals(new[] { "x", "y", "z", "w" }))
+                                    orderKey = "xyzw";
+                                var letters = orderKey != null
+                                    ? componentLetters.OrderBy(s => orderKey.IndexOf(s[0])).ToList()
+                                    : componentLetters.OrderBy(s => s).ToList();
                                 merged.Add(prefix + string.Concat(letters));
                                 continue;
                             }
