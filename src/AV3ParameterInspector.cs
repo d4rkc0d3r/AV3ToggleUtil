@@ -136,6 +136,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public bool mirror;
             public bool cycleOffset;
             public bool parameterDriver;
+            public bool playAudio;
         }
 
         [Serializable]
@@ -150,6 +151,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public HashSet<AnimationClip> speedClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> mirrorClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> cycleOffsetClips = new HashSet<AnimationClip>();
+            public HashSet<AnimationClip> playAudioClips = new HashSet<AnimationClip>();
         }
 
         private readonly struct ComponentParameterWriter
@@ -341,6 +343,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                     continue;
                 }
+            }
+
+            return false;
+        }
+
+        private static bool StateUsesPlayAudioParameter(AnimatorState state, string parameterName)
+        {
+            if (state == null || state.behaviours == null) return false;
+
+            for (int i = 0; i < state.behaviours.Length; i++)
+            {
+                if (state.behaviours[i] is VRCAnimatorPlayAudio playAudio
+                    && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                    && IsSameParameter(playAudio.ParameterName, parameterName))
+                    return true;
             }
 
             return false;
@@ -997,7 +1014,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                                 usage.parameterDriver = StateUsesParameterDriver(state, parameterName);
 
-                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriver)
+                                usage.playAudio = StateUsesPlayAudioParameter(state, parameterName);
+                                if (usage.playAudio)
+                                    CollectClipsFromMotion(state.motion, result.playAudioClips);
+
+                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriver || usage.playAudio)
                                     result.stateUsages.Add(usage);
                             }
 
@@ -1603,6 +1624,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 DrawStateUsageSection("States Using Parameter as Mirror", s => s.mirror);
                 DrawStateUsageSection("States Using Parameter as Cycle Offset", s => s.cycleOffset);
                 DrawStateUsageSection("States Using Parameter in Parameter Drivers", s => s.parameterDriver);
+                DrawStateUsageSection("States Using Parameter in Play Audio Scripts", s => s.playAudio);
 
                 var allAffected = cachedScanResult.transitionClips
                     .Concat(cachedScanResult.blendTreeClips)
@@ -1610,6 +1632,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     .Concat(cachedScanResult.speedClips)
                     .Concat(cachedScanResult.mirrorClips)
                     .Concat(cachedScanResult.cycleOffsetClips)
+                    .Concat(cachedScanResult.playAudioClips)
                     .Where(c => c != null)
                     .Distinct()
                     .OrderBy(c => c.name, StringComparer.OrdinalIgnoreCase)
