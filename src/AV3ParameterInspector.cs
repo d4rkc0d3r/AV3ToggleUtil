@@ -686,6 +686,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         changed = true;
                     }
                 }
+
+                for (int b = 0; b < stateBehaviours.Length; b++)
+                {
+                    if (stateBehaviours[b] is VRCAnimatorPlayAudio playAudio
+                        && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                        && IsSameParameter(playAudio.ParameterName, oldParameter))
+                    {
+                        playAudio.ParameterName = newParameter;
+                        EditorUtility.SetDirty(playAudio);
+                        changed = true;
+                    }
+                }
             }
 
             var childStateMachines = stateMachine.stateMachines;
