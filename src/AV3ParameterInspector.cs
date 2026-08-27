@@ -29,7 +29,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private float leftPanelWidth = 220f;
         private bool isDraggingSplitter;
         private bool sortParameters = false;
-        private string selectedParameter = "";
+        internal string selectedParameter = "";
 
         private int cachedAvatarId = 0;
         private Dictionary<string, ScanResult> scanResultCache = new(StringComparer.Ordinal);
@@ -1785,6 +1785,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var window = GetWindow<AV3ParameterInspector>();
             window.titleContent = new GUIContent("d4rk Parameter Inspector");
             window.Show();
+        }
+
+        public static AV3ParameterInspector OpenWithParameter(string parameterName)
+        {
+            var window = GetWindow<AV3ParameterInspector>();
+            window.titleContent = new GUIContent("d4rk Parameter Inspector");
+            if (!string.IsNullOrEmpty(parameterName))
+                window.selectedParameter = parameterName;
+            window.Show();
+            return window;
         }
 
         private void OnSelectionChange()

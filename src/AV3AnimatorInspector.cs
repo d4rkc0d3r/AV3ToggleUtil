@@ -568,7 +568,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         EditorGUILayout.LabelField($"{title} ({list.Count})", EditorStyles.boldLabel);
                         DrawColumnEntries(list, parameter =>
                         {
-                            GUILayout.Label(parameter, GUILayout.Width(entryWidth));
+                            GUILayout.Label(new GUIContent(parameter, "Click to open in Parameter Inspector"), GUILayout.Width(entryWidth));
+                            if (ClickableLastRect())
+                                AV3ParameterInspector.OpenWithParameter(parameter);
                         });
                     }
                     return true;
