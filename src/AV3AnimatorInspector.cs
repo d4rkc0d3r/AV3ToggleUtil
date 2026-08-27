@@ -127,6 +127,144 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ToList();
         }
 
+        private class LayerParameterScan
+        {
+            public readonly HashSet<string> transitionParameters = new(StringComparer.Ordinal);
+            public readonly HashSet<string> stateParameters = new(StringComparer.Ordinal);
+            public readonly HashSet<string> driverParameters = new(StringComparer.Ordinal);
+            public readonly HashSet<string> playAudioParameters = new(StringComparer.Ordinal);
+        }
+
+        private static void CollectTransitionConditionParameters(AnimatorTransitionBase transition, HashSet<string> parameters)
+        {
+            if (transition == null || transition.conditions == null) return;
+            for (int i = 0; i < transition.conditions.Length; i++)
+            {
+                if (!string.IsNullOrEmpty(transition.conditions[i].parameter))
+                    parameters.Add(transition.conditions[i].parameter);
+            }
+        }
+
+        private static void CollectBlendTreeParameters(Motion motion, HashSet<string> parameters, HashSet<BlendTree> visitedTrees = null)
+        {
+            if (motion == null) return;
+            if (!(motion is BlendTree tree)) return;
+
+            if (visitedTrees == null) visitedTrees = new HashSet<BlendTree>();
+            if (!visitedTrees.Add(tree)) return;
+
+            var isSecondParameterUsed = tree.blendType != BlendTreeType.Simple1D && tree.blendType != BlendTreeType.Direct;
+            if (!string.IsNullOrEmpty(tree.blendParameter))
+                parameters.Add(tree.blendParameter);
+            if (isSecondParameterUsed && !string.IsNullOrEmpty(tree.blendParameterY))
+                parameters.Add(tree.blendParameterY);
+
+            var children = tree.children;
+            if (tree.blendType == BlendTreeType.Direct)
+            {
+                for (int i = 0; i < children.Length; i++)
+                {
+                    if (!string.IsNullOrEmpty(children[i].directBlendParameter))
+                        parameters.Add(children[i].directBlendParameter);
+                }
+            }
+
+            for (int i = 0; i < children.Length; i++)
+            {
+                CollectBlendTreeParameters(children[i].motion, parameters, visitedTrees);
+            }
+        }
+
+        private static void ScanLayerParameters(AnimatorControllerLayer layer, LayerParameterScan scan)
+        {
+            if (layer == null || layer.stateMachine == null)
+                return;
+
+            void TraverseStateMachine(AnimatorStateMachine stateMachine)
+            {
+                if (stateMachine == null)
+                    return;
+
+                var anyStateTransitions = stateMachine.anyStateTransitions;
+                if (anyStateTransitions != null)
+                {
+                    for (int i = 0; i < anyStateTransitions.Length; i++)
+                    {
+                        CollectTransitionConditionParameters(anyStateTransitions[i], scan.transitionParameters);
+                    }
+                }
+
+                var states = stateMachine.states;
+                for (int i = 0; i < states.Length; i++)
+                {
+                    var state = states[i].state;
+                    if (state == null)
+                        continue;
+
+                    var transitions = state.transitions;
+                    if (transitions != null)
+                    {
+                        for (int t = 0; t < transitions.Length; t++)
+                        {
+                            CollectTransitionConditionParameters(transitions[t], scan.transitionParameters);
+                        }
+                    }
+
+                    if (state.timeParameterActive && !string.IsNullOrEmpty(state.timeParameter))
+                        scan.stateParameters.Add(state.timeParameter);
+                    if (state.speedParameterActive && !string.IsNullOrEmpty(state.speedParameter))
+                        scan.stateParameters.Add(state.speedParameter);
+                    if (state.mirrorParameterActive && !string.IsNullOrEmpty(state.mirrorParameter))
+                        scan.stateParameters.Add(state.mirrorParameter);
+                    if (state.cycleOffsetParameterActive && !string.IsNullOrEmpty(state.cycleOffsetParameter))
+                        scan.stateParameters.Add(state.cycleOffsetParameter);
+
+                    CollectBlendTreeParameters(state.motion, scan.stateParameters);
+
+                    var behaviours = state.behaviours;
+                    if (behaviours != null)
+                    {
+                        for (int b = 0; b < behaviours.Length; b++)
+                        {
+                            if (behaviours[b] is VRCAvatarParameterDriver driver && driver.parameters != null)
+                            {
+                                for (int p = 0; p < driver.parameters.Count; p++)
+                                {
+                                    var parameter = driver.parameters[p];
+                                    if (parameter == null)
+                                        continue;
+
+                                    if (!string.IsNullOrEmpty(parameter.name))
+                                        scan.driverParameters.Add(parameter.name);
+
+                                    if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                                        && !string.IsNullOrEmpty(parameter.source))
+                                    {
+                                        scan.driverParameters.Add(parameter.source);
+                                    }
+                                }
+                            }
+
+                            if (behaviours[b] is VRCAnimatorPlayAudio playAudio
+                                && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                                && !string.IsNullOrEmpty(playAudio.ParameterName))
+                            {
+                                scan.playAudioParameters.Add(playAudio.ParameterName);
+                            }
+                        }
+                    }
+                }
+
+                var childStateMachines = stateMachine.stateMachines;
+                for (int i = 0; i < childStateMachines.Length; i++)
+                {
+                    TraverseStateMachine(childStateMachines[i].stateMachine);
+                }
+            }
+
+            TraverseStateMachine(layer.stateMachine);
+        }
+
         private static void CollectClipsFromMotion(Motion motion, HashSet<AnimationClip> clips, HashSet<BlendTree> visitedTrees = null)
         {
             if (motion == null || clips == null)
@@ -284,6 +422,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             var selectedLayer = layers[selectedLayerIndex];
             var layerClips = GetClipsInLayer(selectedLayer);
+            var layerScan = new LayerParameterScan();
+            ScanLayerParameters(selectedLayer, layerScan);
 
             using var horizontal = new EditorGUILayout.HorizontalScope();
 
@@ -413,7 +553,34 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
 
-                // Section 1: Animation Clips used in the selected layer
+                bool DrawParameterSection(string title, IEnumerable<string> parameters)
+                {
+                    var list = parameters
+                        .Where(p => !string.IsNullOrEmpty(p))
+                        .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    if (list.Count == 0)
+                        return false;
+
+                    EditorGUILayout.Space(8);
+                    using (new EditorGUILayout.VerticalScope("box"))
+                    {
+                        EditorGUILayout.LabelField($"{title} ({list.Count})", EditorStyles.boldLabel);
+                        DrawColumnEntries(list, parameter =>
+                        {
+                            GUILayout.Label(parameter, GUILayout.Width(entryWidth));
+                        });
+                    }
+                    return true;
+                }
+
+                DrawParameterSection("Parameters in Transition Conditions", layerScan.transitionParameters);
+                DrawParameterSection("Parameters Used in States (Motion Time / Speed / Mirror / Cycle Offset / Blend Trees)", layerScan.stateParameters);
+                DrawParameterSection("Parameters Used in Parameter Drivers", layerScan.driverParameters);
+                DrawParameterSection("Parameters Used in Play Audio", layerScan.playAudioParameters);
+
+                // Section: Animation Clips used in the selected layer
+                EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
                     EditorGUILayout.LabelField($"Animation Clips in Layer '{(string.IsNullOrEmpty(selectedLayer.name) ? "(Unnamed Layer)" : selectedLayer.name)}' ({layerClips.Count})", EditorStyles.boldLabel);
