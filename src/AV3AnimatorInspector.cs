@@ -20,6 +20,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private Vector2 leftScrollPos;
         private Vector2 rightScrollPos;
         private SplitterState splitter = new();
+        private ColumnGrid columnGrid = new();
         private bool showComponentProperties = true;
 
         private AnimatorController selectedController;
@@ -492,38 +493,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 rightScrollPos = rightScroll.scrollPosition;
 
                 var rightPanelWidth = Mathf.Max(200f, position.width - splitter.leftPanelWidth - SplitterState.SplitterWidth - 30f);
-                var columns = Mathf.Clamp(Mathf.FloorToInt(rightPanelWidth / 260f), 1, 3);
-                const float innerIndent = 30f;
-                const float columnSpacing = 4f;
-                var entryWidth = Mathf.Max(80f, Mathf.Floor((rightPanelWidth - innerIndent - (columns - 1) * (columnSpacing + 3)) / columns));
-
-                void DrawColumnEntries<T>(IReadOnlyList<T> entries, Action<T> drawEntry)
-                {
-                    for (int i = 0; i < entries.Count; i += columns)
-                    {
-                        using (new EditorGUILayout.HorizontalScope())
-                        {
-                            GUILayout.Space(innerIndent);
-                            for (int col = 0; col < columns; col++)
-                            {
-                                var index = i + col;
-                                if (index < entries.Count)
-                                {
-                                    drawEntry(entries[index]);
-                                }
-                                else
-                                {
-                                    GUILayout.Space(entryWidth);
-                                }
-
-                                if (col < columns - 1)
-                                {
-                                    GUILayout.Space(columnSpacing);
-                                }
-                            }
-                        }
-                    }
-                }
+                columnGrid.Recalculate(rightPanelWidth);
+                const float innerIndent = ColumnGrid.InnerIndent;
+                var entryWidth = columnGrid.entryWidth;
 
                 bool DrawParameterSection(string title, IEnumerable<string> parameters)
                 {
@@ -538,7 +510,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
                         EditorGUILayout.LabelField($"{title} ({list.Count})", EditorStyles.boldLabel);
-                        DrawColumnEntries(list, parameter =>
+                        columnGrid.DrawEntries(list, parameter =>
                         {
                             GUILayout.Label(new GUIContent(parameter, "Click to open in Parameter Inspector"), GUILayout.Width(entryWidth));
                             if (ClickableLastRect())
@@ -564,7 +536,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                     else
                     {
-                        DrawColumnEntries(layerClips, clip =>
+                        columnGrid.DrawEntries(layerClips, clip =>
                         {
                             EditorGUILayout.ObjectField(clip, typeof(AnimationClip), false, GUILayout.Width(entryWidth));
                         });
@@ -611,7 +583,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         }
                         else
                         {
-                            DrawColumnEntries(components, comp =>
+                            columnGrid.DrawEntries(components, comp =>
                             {
                                 var props = componentPropertyMap[comp];
                                 var merged = MergePropertyNames(props);
