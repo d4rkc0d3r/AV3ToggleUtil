@@ -889,7 +889,6 @@ public class CreateAV3ToggleMenu : EditorWindow
                 descriptor.expressionParameters.parameters = descriptor.expressionParameters.parameters
                     .Union(new VRCExpressionParameters.Parameter[] { param }).ToArray();
                 EditorUtility.SetDirty(descriptor.expressionParameters);
-                AssetDatabase.SaveAssets();
             }
 
             var fxLayer = GetFxController();
@@ -956,13 +955,11 @@ public class CreateAV3ToggleMenu : EditorWindow
 
             var fxLayerPath = AssetDatabase.GetAssetPath(fxLayer);
             fxLayer.AddLayer(layer);
-            AssetDatabase.SaveAssets();
             AssetDatabase.AddObjectToAsset(toggleOff, fxLayerPath);
             AssetDatabase.AddObjectToAsset(toggleOn, fxLayerPath);
             AssetDatabase.AddObjectToAsset(transitionToOn, fxLayerPath);
             AssetDatabase.AddObjectToAsset(transitionToOff, fxLayerPath);
             AssetDatabase.AddObjectToAsset(layer.stateMachine, fxLayerPath);
-            AssetDatabase.SaveAssets();
 
             if (existingMenuControl == null)
             {
@@ -973,8 +970,9 @@ public class CreateAV3ToggleMenu : EditorWindow
                     type = VRCExpressionsMenu.Control.ControlType.Toggle
                 });
                 EditorUtility.SetDirty(TargetMenu);
-                AssetDatabase.SaveAssets();
             }
+
+            AssetDatabase.SaveAssets();
         }
         GUI.enabled = true;
 
