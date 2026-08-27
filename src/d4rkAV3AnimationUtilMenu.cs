@@ -1,11 +1,11 @@
 ﻿#if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using VRC.SDK3.Avatars.Components;
 using UnityEditor.Animations;
-using System;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
 
 using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
@@ -54,21 +54,18 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 return animationClips;
             if (AvatarDescriptor == null)
                 return null;
-            var clips = AvatarDescriptor.baseAnimationLayers.SelectMany(layer =>
+
+            AnimationClip[] GetControllerClips(VRCAvatarDescriptor.CustomAnimLayer layer)
             {
                 var controller = layer.animatorController as AnimatorController;
-                if (controller == null)
-                    return new AnimationClip[0];
-                return controller.animationClips;
-            }).Distinct().ToList();
-            clips.AddRange(AvatarDescriptor.specialAnimationLayers.SelectMany(layer =>
-            {
-                var controller = layer.animatorController as AnimatorController;
-                if (controller == null)
-                    return new AnimationClip[0];
-                return controller.animationClips;
-            }).Distinct().ToList());
-            return animationClips = clips.Distinct().ToList();
+                return controller?.animationClips ?? System.Array.Empty<AnimationClip>();
+            }
+
+            return animationClips = AvatarDescriptor.baseAnimationLayers
+                .Concat(AvatarDescriptor.specialAnimationLayers)
+                .SelectMany(GetControllerClips)
+                .Distinct()
+                .ToList();
         }
     }
 
@@ -143,15 +140,10 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         var root = AvatarDescriptor?.gameObject?.transform;
         GUILayout.Label(string.IsNullOrEmpty(path) ? "(root)" : path, options);
         var t = root != null && !string.IsNullOrEmpty(path) ? root.Find(path) : root;
-        if (t != null)
+        if (t != null && ClickableLastRect())
         {
-            EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
-            if (Event.current.type == EventType.MouseDown && GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition) && Event.current.button == 0)
-            {
-                Selection.activeGameObject = t.gameObject;
-                EditorGUIUtility.PingObject(t.gameObject);
-                Event.current.Use();
-            }
+            Selection.activeGameObject = t.gameObject;
+            EditorGUIUtility.PingObject(t.gameObject);
         }
     }
 
@@ -172,6 +164,9 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             : EditorCurveBinding.FloatCurve(path, type, propertyName);
     }
 
+    private static string GetBindingPropLabel(EditorCurveBinding b) =>
+        $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
+
     private void DrawBindingsList(AnimationClip clip)
     {
         var bindings = GetBindingsMatchingSearchFilters(clip);
@@ -181,7 +176,6 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 continue;
 
             var b = item.binding;
-            var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -202,7 +196,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                     GUI.contentColor = new Color(1f, 0.85f, 0.3f);
 
                 ClickablePathLabel(b.path, GUILayout.ExpandWidth(true));
-                GUILayout.Label(prop, GUILayout.ExpandWidth(true));
+                GUILayout.Label(GetBindingPropLabel(b), GUILayout.ExpandWidth(true));
                 GUILayout.FlexibleSpace();
 
                 GUI.contentColor = prevColor;
@@ -403,6 +397,18 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
 
         AvatarDescriptor = EditorGUILayout.ObjectField("Avatar Descriptor", AvatarDescriptor, typeof(VRCAvatarDescriptor), true) as VRCAvatarDescriptor;
 
+        void DrawBindingRow(EditorCurveBinding b, Action drawLeftButtons, params GUILayoutOption[] options)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(15 * EditorGUI.indentLevel);
+                drawLeftButtons();
+                ClickablePathLabel(b.path, GUILayout.ExpandWidth(true));
+                GUILayout.Label(GetBindingPropLabel(b), GUILayout.ExpandWidth(true));
+                GUILayout.FlexibleSpace();
+            }
+        }
+
         if (AvatarDescriptor == null)
         {
             EditorGUILayout.HelpBox("No VRC Avatar Descriptor found.", MessageType.Warning);
@@ -424,20 +430,12 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
             {
                 if (selectedSourceBinding != null)
                 {
-                    var path = selectedSourceBinding.Value.path;
-                    var prop = $"{(selectedSourceBinding.Value.type != null ? selectedSourceBinding.Value.type.Name : "Component")}.{selectedSourceBinding.Value.propertyName}";
-
-                    using (new EditorGUILayout.HorizontalScope())
+                    var b = selectedSourceBinding.Value;
+                    DrawBindingRow(b, () =>
                     {
-                        GUILayout.Space(15 * EditorGUI.indentLevel);
                         if (GUILayout.Button(new GUIContent("-", "Clear source binding"), GUILayout.Height(18), GUILayout.Width(18)))
-                        {
                             selectedSourceBinding = null;
-                        }
-                        ClickablePathLabel(path, GUILayout.ExpandWidth(true));
-                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                        GUILayout.FlexibleSpace();
-                    }
+                    });
                 }
                 else
                 {
@@ -455,21 +453,16 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 for (int i = 0; i < selectedTargetBindings.Count; i++)
                 {
                     var b = selectedTargetBindings[i];
-                    var prop = $"{(b.type != null ? b.type.Name : "Component")}.{b.propertyName}";
-
-                    using (new EditorGUILayout.HorizontalScope())
+                    var removed = false;
+                    DrawBindingRow(b, () =>
                     {
-                        GUILayout.Space(15 * EditorGUI.indentLevel);
                         if (GUILayout.Button(new GUIContent("-", "Remove target binding"), GUILayout.Height(18), GUILayout.Width(18)))
                         {
                             selectedTargetBindings.RemoveAt(i);
-                            i--;
-                            continue;
+                            removed = true;
                         }
-                        ClickablePathLabel(b.path, GUILayout.ExpandWidth(true));
-                        GUILayout.Label(prop, GUILayout.ExpandWidth(true));
-                        GUILayout.FlexibleSpace();
-                    }
+                    });
+                    if (removed) i--;
                 }
             }
         }
@@ -609,9 +602,10 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                             ParseSignature(sig, out var prop, out var isPPtr);
                             GUILayout.Space(15 * EditorGUI.indentLevel);
 
+                            var root = AvatarDescriptor.gameObject.transform;
+
                             using (new EditorGUI.DisabledScope(selectedGOs.Length != 1))
                             {
-                                var root = AvatarDescriptor.gameObject.transform;
                                 var singleBinding = selectedGOs.Length == 1
                                     ? BuildBindingForGameObject(root, selectedGOs[0], type, prop, isPPtr)
                                     : default;
@@ -623,9 +617,8 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                                     selectedSourceBinding = newSelected ? singleBinding : null;
                             }
 
-                            var rootT = AvatarDescriptor.gameObject.transform;
                             var bindingsForSelection = selectedGOs
-                                .Select(go => BuildBindingForGameObject(rootT, go, type, prop, isPPtr))
+                                .Select(go => BuildBindingForGameObject(root, go, type, prop, isPPtr))
                                 .ToList();
                             var allSelectedInTargets = bindingsForSelection.Count > 0 &&
                                 bindingsForSelection.All(IsTargetBinding);
