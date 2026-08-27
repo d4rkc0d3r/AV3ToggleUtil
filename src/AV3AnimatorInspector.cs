@@ -29,6 +29,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private AnimatorController selectedController;
         private int selectedLayerIndex = 0;
+        private bool sortLayers = false;
 
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
         private TextFilter layerFilter = new() { IsRegex = true, SmallButtons = true };
@@ -457,31 +458,31 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 // Section 2: Regex filter + layers of the selected controller (exclusive selection)
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
-                    var filteredLayers = new List<AnimatorControllerLayer>();
+                    var layerEntries = new List<(int index, string name)>(layers.Length);
                     for (int i = 0; i < layers.Length; i++)
                     {
                         var layerName = string.IsNullOrEmpty(layers[i].name) ? "(Unnamed Layer)" : layers[i].name;
                         if (layerFilter.Matches(layerName))
-                            filteredLayers.Add(layers[i]);
+                            layerEntries.Add((i, layerName));
                     }
+
+                    if (sortLayers)
+                        layerEntries.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.name, b.name));
 
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        GUILayout.Label($"Layers in '{selectedEntry.displayName}' ({filteredLayers.Count}/{layers.Length})", EditorStyles.boldLabel);
+                        GUILayout.Label($"Layers ({layerEntries.Count}/{layers.Length})", EditorStyles.boldLabel);
+                        sortLayers = GUILayout.Toggle(sortLayers, new GUIContent("A→Z", "Sort alphabetically"), GUI.skin.button, GUILayout.ExpandWidth(false));
                     }
                     layerFilter.DrawGUI();
 
-                    for (int i = 0; i < layers.Length; i++)
+                    foreach (var layerEntry in layerEntries)
                     {
-                        var layerName = string.IsNullOrEmpty(layers[i].name) ? "(Unnamed Layer)" : layers[i].name;
-                        if (!layerFilter.Matches(layerName))
-                            continue;
-
                         using var cc = new EditorGUI.ChangeCheckScope();
-                        var selected = GUILayout.Toggle(selectedLayerIndex == i, layerName, GUI.skin.button, GUILayout.ExpandWidth(true));
-                        if (cc.changed && selected && selectedLayerIndex != i)
+                        var selected = GUILayout.Toggle(selectedLayerIndex == layerEntry.index, layerEntry.name, GUI.skin.button, GUILayout.ExpandWidth(true));
+                        if (cc.changed && selected && selectedLayerIndex != layerEntry.index)
                         {
-                            selectedLayerIndex = i;
+                            selectedLayerIndex = layerEntry.index;
                             GUI.FocusControl(null);
                         }
                     }
