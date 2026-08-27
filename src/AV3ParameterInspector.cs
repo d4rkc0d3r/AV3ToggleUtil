@@ -690,20 +690,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             var changed = false;
 
-            var controllerParameters = controller.parameters;
+            using var controllerSerialized = new SerializedObject(controller);
+            var controllerParameters = controllerSerialized.FindProperty("m_AnimatorParameters");
             var parametersChanged = false;
-            for (int i = 0; i < controllerParameters.Length; i++)
+            for (int i = 0; i < controllerParameters.arraySize; i++)
             {
-                if (!IsSameParameter(controllerParameters[i].name, oldParameter))
+                var parameterName = controllerParameters.GetArrayElementAtIndex(i).FindPropertyRelative("m_Name");
+                if (!IsSameParameter(parameterName.stringValue, oldParameter))
                     continue;
 
-                controllerParameters[i].name = newParameter;
+                parameterName.stringValue = newParameter;
                 parametersChanged = true;
             }
 
             if (parametersChanged)
             {
-                controller.parameters = controllerParameters;
+                controllerSerialized.ApplyModifiedProperties();
                 changed = true;
             }
 
