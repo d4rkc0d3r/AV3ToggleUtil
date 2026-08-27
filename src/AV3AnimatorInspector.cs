@@ -105,7 +105,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         if (state == null)
                             continue;
 
-                        CollectClipsFromMotion(state.motion, clips);
+                        ForEachClipInMotion(state.motion, c => clips.Add(c));
                     }
 
                     var childStateMachines = stateMachine.stateMachines;

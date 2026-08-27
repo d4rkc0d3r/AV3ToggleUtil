@@ -975,33 +975,33 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 usage.transitionIn = HasIncomingTransitionUsingParameter(sm, state, parameterName);
 
                                 if (usage.transitionIn || usage.transitionOut)
-                                    CollectClipsFromMotion(state.motion, result.transitionClips);
+                                    ForEachClipInMotion(state.motion, c => result.transitionClips.Add(c));
 
                                 usage.blendTree = MotionUsesBlendParameter(state.motion, parameterName);
                                 if (usage.blendTree)
-                                    CollectClipsFromMotion(state.motion, result.blendTreeClips);
+                                    ForEachClipInMotion(state.motion, c => result.blendTreeClips.Add(c));
 
                                 usage.motionTime = StateUsesMotionTimeParameter(state, parameterName);
                                 if (usage.motionTime)
-                                    CollectClipsFromMotion(state.motion, result.motionTimeClips);
+                                    ForEachClipInMotion(state.motion, c => result.motionTimeClips.Add(c));
 
                                 usage.speed = StateUsesSpeedParameter(state, parameterName);
                                 if (usage.speed)
-                                    CollectClipsFromMotion(state.motion, result.speedClips);
+                                    ForEachClipInMotion(state.motion, c => result.speedClips.Add(c));
 
                                 usage.mirror = StateUsesMirrorParameter(state, parameterName);
                                 if (usage.mirror)
-                                    CollectClipsFromMotion(state.motion, result.mirrorClips);
+                                    ForEachClipInMotion(state.motion, c => result.mirrorClips.Add(c));
 
                                 usage.cycleOffset = StateUsesCycleOffsetParameter(state, parameterName);
                                 if (usage.cycleOffset)
-                                    CollectClipsFromMotion(state.motion, result.cycleOffsetClips);
+                                    ForEachClipInMotion(state.motion, c => result.cycleOffsetClips.Add(c));
 
                                 usage.parameterDriver = StateUsesParameterDriver(state, parameterName);
 
                                 usage.playAudio = StateUsesPlayAudioParameter(state, parameterName);
                                 if (usage.playAudio)
-                                    CollectClipsFromMotion(state.motion, result.playAudioClips);
+                                    ForEachClipInMotion(state.motion, c => result.playAudioClips.Add(c));
 
                                 if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriver || usage.playAudio)
                                     result.stateUsages.Add(usage);

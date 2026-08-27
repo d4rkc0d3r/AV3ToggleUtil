@@ -17,14 +17,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             EditorGUIUtility.PingObject(obj);
         }
 
-        public static void CollectClipsFromMotion(Motion motion, HashSet<AnimationClip> clips, HashSet<BlendTree> visitedTrees = null)
+        public static void ForEachClipInMotion(Motion motion, Action<AnimationClip> onClip, HashSet<BlendTree> visitedTrees = null)
         {
-            if (motion == null || clips == null)
-                return;
+            if (motion == null) return;
 
             if (motion is AnimationClip clip)
             {
-                clips.Add(clip);
+                onClip(clip);
                 return;
             }
 
@@ -36,9 +35,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 var children = tree.children;
                 for (int i = 0; i < children.Length; i++)
                 {
-                    CollectClipsFromMotion(children[i].motion, clips, visitedTrees);
+                    ForEachClipInMotion(children[i].motion, onClip, visitedTrees);
                 }
             }
+        }
+
+        public static AnimatorController GetFxAnimatorController(VRCAvatarDescriptor av)
+        {
+            return av?.baseAnimationLayers != null && av.baseAnimationLayers.Length > 4
+                ? av.baseAnimationLayers[4].animatorController as AnimatorController
+                : null;
         }
 
         public static void CollectComponentBindings(IEnumerable<AnimationClip> clips, VRCAvatarDescriptor av, Dictionary<Component, HashSet<string>> componentPropertyMap)

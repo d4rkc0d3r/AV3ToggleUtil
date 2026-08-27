@@ -156,8 +156,12 @@ public class CreateAV3ToggleMenu : EditorWindow
 
     private AnimatorControllerParameter GetExistingFxParameter(string parameterName)
     {
-        return (FindAvatarDescriptor(Target)?.baseAnimationLayers[4].animatorController as AnimatorController)
-            ?.parameters.FirstOrDefault(parameter => parameter.name == parameterName);
+        return GetFxController()?.parameters.FirstOrDefault(parameter => parameter.name == parameterName);
+    }
+
+    private AnimatorController GetFxController()
+    {
+        return GetFxAnimatorController(FindAvatarDescriptor(Target));
     }
 
     private string GetReusedParameterName()
@@ -197,7 +201,8 @@ public class CreateAV3ToggleMenu : EditorWindow
     {
         const string animationsFolderName = "Animations";
         var av = FindAvatarDescriptor(Target);
-        var path = $"{GetAssetFolder(av.baseAnimationLayers[4].animatorController)}/{animationsFolderName}";
+        var fxController = GetFxController();
+        var path = $"{GetAssetFolder(fxController)}/{animationsFolderName}";
         if (AssetDatabase.IsValidFolder(path) && path != $"/{animationsFolderName}")
             return path;
         path = $"{GetAssetFolder(av.expressionParameters)}/{animationsFolderName}";
@@ -206,7 +211,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         path = $"{GetAssetFolder(av.expressionsMenu)}/{animationsFolderName}";
         if (AssetDatabase.IsValidFolder(path))
             return path;
-        return $"{GetAssetFolder(av.baseAnimationLayers[4].animatorController)}/{animationsFolderName}";
+        return $"{GetAssetFolder(fxController)}/{animationsFolderName}";
     }
 
     private string CanCreateToggle()
@@ -226,7 +231,7 @@ public class CreateAV3ToggleMenu : EditorWindow
             return "Existing Menu Entry Is Not A Toggle";
         if (existingMenuControl != null && menuControlParameterName == null)
             return "Existing Menu Entry Has No Parameter";
-        var fxLayer = av.baseAnimationLayers[4].animatorController as AnimatorController;
+        var fxLayer = GetFxController();
         if (AssetDatabase.GetAssetPath(fxLayer) == "")
             return "No Custom FxLayer Found";
         var effectiveParameterName = menuControlParameterName ?? ParameterName;
@@ -492,28 +497,16 @@ public class CreateAV3ToggleMenu : EditorWindow
                     AddBinding(b, controller, clip, layerName, layerID);
             }
 
-            void CollectFromMotion(Motion motion, AnimatorController controller, string layerName, int layerID)
-            {
-                if (motion == null)
-                    return;
-                if (motion is AnimationClip clip)
-                {
-                    ProcessClip(clip, controller, layerName, layerID);
-                    return;
-                }
-                if (motion is BlendTree tree)
-                {
-                    foreach (var child in tree.children)
-                        CollectFromMotion(child.motion, controller, layerName, layerID);
-                }
-            }
-
             void CollectFromStateMachine(AnimatorStateMachine sm, AnimatorController controller, string layerName, int layerID)
             {
                 if (sm == null)
                     return;
                 foreach (var state in sm.states)
-                    CollectFromMotion(state.state.motion, controller, layerName, layerID);
+                {
+                    if (state.state == null)
+                        continue;
+                    ForEachClipInMotion(state.state.motion, clip => ProcessClip(clip, controller, layerName, layerID));
+                }
                 foreach (var child in sm.stateMachines)
                     CollectFromStateMachine(child.stateMachine, controller, layerName, layerID);
             }
@@ -564,6 +557,16 @@ public class CreateAV3ToggleMenu : EditorWindow
             component is Transform ? "m_IsActive" : "m_Enabled");
     }
 
+    static EditorCurveBinding GetVectorBinding(EditorCurveBinding binding, string suffix)
+    {
+        var name = binding.propertyName;
+        if (!name.EndsWith(".x") && !name.EndsWith(".r"))
+            return binding;
+        var result = binding;
+        result.propertyName = name[..^2] + suffix;
+        return result;
+    }
+
     string TextFieldWithDefault(string label, string text, string defaultText)
     {
         text = EditorGUILayout.TextField(label, text);
@@ -591,7 +594,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         if (AnimationUtility.GetFloatValue(avGO, binding, out var sceneValue))
         {
             currentValue = new Vector4(sceneValue, sceneValue, sceneValue, sceneValue);
-            var vectorBindings = GetRemainingVectorBindings(binding).ToArray();
+            var vectorBindings = GetRemainingVectorBindings(binding, avGO).ToArray();
             for (int i = 0; i < vectorBindings.Length; i++)
             {
                 if (AnimationUtility.GetFloatValue(avGO, vectorBindings[i], out var v))
@@ -613,18 +616,20 @@ public class CreateAV3ToggleMenu : EditorWindow
         return new ToggleBindingValue(Vector4.zero, Vector4.one);
     }
 
-    IEnumerable<EditorCurveBinding> GetRemainingVectorBindings(EditorCurveBinding binding)
+    IEnumerable<EditorCurveBinding> GetRemainingVectorBindings(EditorCurveBinding binding, GameObject avatarGameObject = null)
     {
         var name = binding.propertyName;
         if (!name.EndsWith(".x") && !name.EndsWith(".r"))
             yield break;
-        var prefix = name[..^2];
+        avatarGameObject ??= FindAvatarDescriptor(Target).gameObject;
+        var component = Target.GetComponent(binding.type);
+        var availableBindings = GetAnimatableBindings(component);
         var suffixes = name.EndsWith(".x") ? new[] { ".y", ".z", ".w" } : new[] { ".g", ".b", ".a" };
         foreach (var suffix in suffixes)
         {
-            binding.propertyName = prefix + suffix;
-            if (GetAnimatableBindings(Target.GetComponent(binding.type)).Contains(binding))
-                yield return binding;
+            var vectorBinding = GetVectorBinding(binding, suffix);
+            if (availableBindings.Contains(vectorBinding))
+                yield return vectorBinding;
         }
     }
 
@@ -650,6 +655,8 @@ public class CreateAV3ToggleMenu : EditorWindow
 
         if (Target == null)
             return;
+
+        var descriptor = FindAvatarDescriptor(Target);
 
         foreach (var component in Target.GetComponents<Component>())
         {
@@ -752,7 +759,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                 }
                 ShowWarningIfBindingExists(binding, GUILayout.Width(20));
                 GUILayout.Label($"{(binding.propertyName.EndsWith(".r") ? binding.propertyName[..^2] : binding.propertyName)}", GUILayout.ExpandWidth(true));
-                var avGO = FindAvatarDescriptor(Target).gameObject;
+                var avGO = descriptor.gameObject;
                 var width = GUILayout.Width(80);
                 if (IsMaterialSwapBinding(binding))
                 {
@@ -767,7 +774,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                     var isToggle = IsToggleBinding(binding);
                     if (binding.propertyName.EndsWith(".r"))
                     {
-                        var vectorBindings = GetRemainingVectorBindings(binding).ToArray();
+                        var vectorBindings = GetRemainingVectorBindings(binding, avGO).ToArray();
                         var vectorValues = new float[4];
                         for (int i = 0; i < 4; i++)
                         {
@@ -801,16 +808,15 @@ public class CreateAV3ToggleMenu : EditorWindow
         GUILayout.Space(8);
 
         toggleName = TextFieldWithDefault("Toggle Name", toggleName, GetDefaultToggleName());
-        var existingMenuControlParameterName = GetExistingMenuControlParameterName();
-        using (new EditorGUI.DisabledScope(existingMenuControlParameterName != null))
+        var existingMenuControlParam = GetExistingMenuControlParameterName();
+        using (new EditorGUI.DisabledScope(existingMenuControlParam != null))
         {
             parameterName = TextFieldWithDefault(
                 "Parameter Name",
-            existingMenuControlParameterName ?? parameterName,
-            existingMenuControlParameterName ?? GetDefaultParameterName());
+            existingMenuControlParam ?? parameterName,
+            existingMenuControlParam ?? GetDefaultParameterName());
         }
 
-        var descriptor = FindAvatarDescriptor(Target);
         TargetMenu = EditorGUILayout.ObjectField("Menu", TargetMenu, typeof(VRCExpressionsMenu), false) as VRCExpressionsMenu;
 
         defaultToggleState = EditorGUILayout.Toggle("Default Toggle State", defaultToggleState);
@@ -886,7 +892,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                 AssetDatabase.SaveAssets();
             }
 
-            var fxLayer = descriptor.baseAnimationLayers[4].animatorController as AnimatorController;
+            var fxLayer = GetFxController();
             if (!fxLayer.parameters.Any(p => p.name == effectiveParameterName))
             {
                 fxLayer.AddParameter(new AnimatorControllerParameter()
@@ -948,7 +954,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                 layer.stateMachine.AddState(toggleOn, new Vector3(300, 200, 0));
             }
 
-            var fxLayerPath = AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController);
+            var fxLayerPath = AssetDatabase.GetAssetPath(fxLayer);
             fxLayer.AddLayer(layer);
             AssetDatabase.SaveAssets();
             AssetDatabase.AddObjectToAsset(toggleOff, fxLayerPath);
@@ -1028,9 +1034,10 @@ public class CreateAV3ToggleMenu : EditorWindow
         EditorGUILayout.LabelField("MenuAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionsMenu));
         if (ClickableLastRect())
             EditorGUIUtility.PingObject(descriptor.expressionsMenu);
-        EditorGUILayout.LabelField("FxLayerAssetPath", AssetDatabase.GetAssetPath(descriptor.baseAnimationLayers[4].animatorController));
+        var fxLayerInfo = GetFxController();
+        EditorGUILayout.LabelField("FxLayerAssetPath", AssetDatabase.GetAssetPath(fxLayerInfo));
         if (ClickableLastRect())
-            EditorGUIUtility.PingObject(descriptor.baseAnimationLayers[4].animatorController);
+            EditorGUIUtility.PingObject(fxLayerInfo);
     }
 
     private static readonly HashSet<char> vectorChars = new() { 'x', 'y', 'z', 'w' };
