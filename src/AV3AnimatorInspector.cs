@@ -474,7 +474,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     foreach (var layerEntry in layerEntries)
                     {
                         using var cc = new EditorGUI.ChangeCheckScope();
-                        var selected = GUILayout.Toggle(selectedLayerIndex == layerEntry.index, layerEntry.name, GUI.skin.button, GUILayout.ExpandWidth(true));
+                        var selected = GUILayout.Toggle(selectedLayerIndex == layerEntry.index, $"{layerEntry.name} ({layerEntry.index})", GUI.skin.button, GUILayout.ExpandWidth(true));
                         if (cc.changed && selected && selectedLayerIndex != layerEntry.index)
                         {
                             selectedLayerIndex = layerEntry.index;
