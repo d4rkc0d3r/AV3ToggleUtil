@@ -262,114 +262,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             TraverseStateMachine(layer.stateMachine);
         }
 
-        private static void CollectClipsFromMotion(Motion motion, HashSet<AnimationClip> clips, HashSet<BlendTree> visitedTrees = null)
-        {
-            if (motion == null || clips == null)
-                return;
-
-            if (motion is AnimationClip clip)
-            {
-                clips.Add(clip);
-                return;
-            }
-
-            if (motion is BlendTree tree)
-            {
-                if (visitedTrees == null) visitedTrees = new HashSet<BlendTree>();
-                if (!visitedTrees.Add(tree)) return;
-
-                var children = tree.children;
-                for (int i = 0; i < children.Length; i++)
-                {
-                    CollectClipsFromMotion(children[i].motion, clips, visitedTrees);
-                }
-            }
-        }
-
-        private static void CollectComponentBindings(AnimationClip[] clips, VRCAvatarDescriptor av, Dictionary<Component, HashSet<string>> componentPropertyMap)
-        {
-            if (av == null || av.transform == null)
-                return;
-
-            foreach (var clip in clips)
-            {
-                if (clip == null) continue;
-                foreach (var binding in AnimationUtility.GetCurveBindings(clip).Concat(AnimationUtility.GetObjectReferenceCurveBindings(clip)))
-                {
-                    Transform t = FindTransformByAvatarPath(av.transform, binding.path);
-                    if (t == null) continue;
-                    Component comp = null;
-                    if (binding.type == typeof(Transform) || binding.type == typeof(GameObject))
-                        comp = t;
-                    else if (typeof(Component).IsAssignableFrom(binding.type))
-                        comp = t.GetComponent(binding.type);
-                    if (comp != null)
-                    {
-                        if (!componentPropertyMap.TryGetValue(comp, out var props))
-                        {
-                            props = new HashSet<string>();
-                            componentPropertyMap[comp] = props;
-                        }
-                        props.Add(binding.propertyName);
-                    }
-                }
-            }
-        }
-
-        private static HashSet<string> MergePropertyNames(HashSet<string> propertyNames)
-        {
-            var merged = new HashSet<string>();
-            var groups = propertyNames
-                .Where(p => !string.IsNullOrEmpty(p))
-                .GroupBy(p =>
-                {
-                    int lastDot = p.LastIndexOf('.');
-                    if (lastDot > 0 && lastDot < p.Length - 1)
-                    {
-                        string suffix = p[(lastDot + 1)..];
-                        if (suffix.Length == 1)
-                            return p[..lastDot];
-                    }
-                    return p;
-                })
-                .ToList();
-
-            foreach (var group in groups)
-            {
-                var first = group.First();
-                int lastDot = first.LastIndexOf('.');
-                if (lastDot > 0 && lastDot < first.Length - 1)
-                {
-                    string suffix = first[(lastDot + 1)..];
-                    if (suffix.Length == 1 && group.Count() > 1)
-                    {
-                        string prefix = first[..(lastDot + 1)];
-                        var componentLetters = group.Select(p => p[(lastDot + 1)..]).ToList();
-                        var letterSet = new HashSet<string>(componentLetters);
-                        string orderKey = null;
-                        if (letterSet.SetEquals(new[] { "r", "g", "b", "a" }))
-                            orderKey = "rgba";
-                        else if (letterSet.SetEquals(new[] { "x", "y", "z", "w" }))
-                            orderKey = "xyzw";
-                        var letters = orderKey != null
-                            ? componentLetters.OrderBy(s => orderKey.IndexOf(s[0])).ToList()
-                            : componentLetters.OrderBy(s => s).ToList();
-                        merged.Add(prefix + string.Concat(letters));
-                        continue;
-                    }
-                }
-                foreach (var name in group)
-                    merged.Add(name);
-            }
-            return merged;
-        }
-
-        private static void SelectAndPingObject(Object obj)
-        {
-            Selection.activeObject = obj;
-            EditorGUIUtility.PingObject(obj);
-        }
-
         private VRCAvatarDescriptor GetCurrentOrLastAvatarDescriptor()
         {
             var selectedAvatarDescriptor = FindAvatarDescriptor(Selection.activeGameObject);
@@ -494,7 +386,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 var rightPanelWidth = Mathf.Max(200f, position.width - splitter.leftPanelWidth - SplitterState.SplitterWidth - 30f);
                 columnGrid.Recalculate(rightPanelWidth);
-                const float innerIndent = ColumnGrid.InnerIndent;
                 var entryWidth = columnGrid.entryWidth;
 
                 bool DrawParameterSection(string title, IEnumerable<string> parameters)
@@ -545,55 +436,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 // Section 2: Components & bindings affected by the clips (same as Parameter Inspector)
                 var componentPropertyMap = new Dictionary<Component, HashSet<string>>();
-                CollectComponentBindings(layerClips.ToArray(), av, componentPropertyMap);
-
-                if (componentPropertyMap.Count > 0)
-                {
-                    EditorGUILayout.Space(8);
-                    using (new EditorGUILayout.VerticalScope("box"))
-                    {
-                        EditorGUILayout.LabelField($"Components Bound in Animation Clips ({componentPropertyMap.Count})", EditorStyles.boldLabel);
-                        using (new EditorGUILayout.HorizontalScope())
-                        {
-                            GUILayout.Space(innerIndent);
-                            showComponentProperties = GUILayout.Toggle(showComponentProperties, "Show Properties", GUILayout.Width(120f));
-                        }
-                        var components = componentPropertyMap.Keys.ToList();
-                        components.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
-                        if (showComponentProperties)
-                        {
-                            foreach (var comp in components)
-                            {
-                                using (new EditorGUILayout.HorizontalScope())
-                                {
-                                    GUILayout.Space(innerIndent);
-                                    EditorGUILayout.ObjectField("", comp, comp.GetType(), true, GUILayout.Width(entryWidth));
-                                }
-                                var props = componentPropertyMap[comp];
-                                var merged = MergePropertyNames(props);
-                                foreach (var prop in merged.OrderBy(p => p))
-                                {
-                                    using (new EditorGUILayout.HorizontalScope())
-                                    {
-                                        GUILayout.Space(innerIndent + 15);
-                                        EditorGUILayout.LabelField(prop, EditorStyles.label);
-                                    }
-                                }
-                            }
-                        }
-                        else
-                        {
-                            columnGrid.DrawEntries(components, comp =>
-                            {
-                                var props = componentPropertyMap[comp];
-                                var merged = MergePropertyNames(props);
-                                var tooltip = string.Join(", ", merged.OrderBy(p => p));
-                                EditorGUILayout.ObjectField("", comp, comp.GetType(), true, GUILayout.Width(entryWidth));
-                                EditorGUI.LabelField(GUILayoutUtility.GetLastRect(), new GUIContent("", tooltip));
-                            });
-                        }
-                    }
-                }
+                CollectComponentBindings(layerClips, av, componentPropertyMap);
+                DrawComponentBindingsSection(componentPropertyMap, ref showComponentProperties, columnGrid, entryWidth, componentPropertyMap.Count);
             }
         }
 
