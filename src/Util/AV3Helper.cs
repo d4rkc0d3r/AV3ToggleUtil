@@ -42,9 +42,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
         public static AnimatorController GetFxAnimatorController(VRCAvatarDescriptor av)
         {
-            return av?.baseAnimationLayers != null && av.baseAnimationLayers.Length > 4
-                ? av.baseAnimationLayers[4].animatorController as AnimatorController
-                : null;
+            if (av == null)
+                return null;
+            var baseLayerCount = GetBaseLayerCount(av);
+            if (av.baseAnimationLayers == null || av.baseAnimationLayers.Length != baseLayerCount)
+                return null;
+            return av.baseAnimationLayers[baseLayerCount - 1].animatorController as AnimatorController;
+        }
+
+        private static int GetBaseLayerCount(VRCAvatarDescriptor av)
+        {
+            if (!av.TryGetComponent<Animator>(out var animator) || animator == null)
+                return 5;
+            if (animator.avatar == null || !animator.avatar.isHuman)
+                return 3;
+            return 5;
         }
 
         public static void CollectComponentBindings(IEnumerable<AnimationClip> clips, VRCAvatarDescriptor av, Dictionary<Component, HashSet<string>> componentPropertyMap)
