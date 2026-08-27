@@ -20,14 +20,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 {
     public class AV3ParameterInspector : EditorWindow
     {
-        private const float MinLeftPanelWidth = 160f;
-        private const float MaxLeftPanelWidth = 520f;
-        private const float SplitterWidth = 4f;
-
         private Vector2 leftScrollPos;
         private Vector2 rightScrollPos;
-        private float leftPanelWidth = 220f;
-        private bool isDraggingSplitter;
+        private SplitterState splitter = new();
         private bool sortParameters = false;
         internal string selectedParameter = "";
 
@@ -1318,7 +1313,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             using var horizontal = new EditorGUILayout.HorizontalScope();
 
-            using (new EditorGUILayout.VerticalScope(GUILayout.Width(leftPanelWidth)))
+            using (new EditorGUILayout.VerticalScope(GUILayout.Width(splitter.leftPanelWidth)))
             {
                 var (includedParameters, excludedParameters) = GetFilterParameterSets(av, allParameters);
 
@@ -1356,38 +1351,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
 
-            var splitterRect = GUILayoutUtility.GetRect(SplitterWidth, 1f, GUILayout.Width(SplitterWidth), GUILayout.ExpandHeight(true));
-            EditorGUIUtility.AddCursorRect(splitterRect, MouseCursor.ResizeHorizontal);
-            EditorGUI.DrawRect(splitterRect, EditorGUIUtility.isProSkin ? new Color(0.2f, 0.2f, 0.2f, 1f) : new Color(0.65f, 0.65f, 0.65f, 1f));
-
-            var evt = Event.current;
-            if (evt.type == EventType.MouseDown && evt.button == 0 && splitterRect.Contains(evt.mousePosition))
-            {
-                isDraggingSplitter = true;
-                evt.Use();
-            }
-            else if (evt.type == EventType.MouseDrag && isDraggingSplitter)
-            {
-                leftPanelWidth = Mathf.Clamp(evt.mousePosition.x, MinLeftPanelWidth, Mathf.Min(MaxLeftPanelWidth, position.width - 220f));
-                Repaint();
-            }
-            else if (evt.type == EventType.MouseUp && isDraggingSplitter)
-            {
-                isDraggingSplitter = false;
-                evt.Use();
-            }
-            if (isDraggingSplitter)
-            {
-                var currentCursorRect = new Rect(evt.mousePosition.x - 11, evt.mousePosition.y - 11, 21f, 21f);
-                EditorGUIUtility.AddCursorRect(currentCursorRect, MouseCursor.ResizeHorizontal);
-            }
+            splitter.DrawSplitter(this, 160f, 520f);
 
             using (new EditorGUILayout.VerticalScope())
             {
                 using var rightScroll = new EditorGUILayout.ScrollViewScope(rightScrollPos);
                 rightScrollPos = rightScroll.scrollPosition;
 
-                var rightPanelWidth = Mathf.Max(200f, position.width - leftPanelWidth - SplitterWidth - 30f);
+                var rightPanelWidth = Mathf.Max(200f, position.width - splitter.leftPanelWidth - SplitterState.SplitterWidth - 30f);
                 var columns = Mathf.Clamp(Mathf.FloorToInt(rightPanelWidth / 260f), 1, 3);
                 const float innerIndent = 30f;
                 const float columnSpacing = 4f;
