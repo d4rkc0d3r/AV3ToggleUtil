@@ -709,11 +709,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 changed = true;
             }
 
-            if (controller.layers != null)
+            var controllerLayers = controller.layers;
+            if (controllerLayers != null)
             {
-                for (int i = 0; i < controller.layers.Length; i++)
+                for (int i = 0; i < controllerLayers.Length; i++)
                 {
-                    if (RenameInStateMachine(controller.layers[i].stateMachine, oldParameter, newParameter))
+                    if (RenameInStateMachine(controllerLayers[i].stateMachine, oldParameter, newParameter))
                         changed = true;
                 }
             }
@@ -938,11 +939,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 foreach (var controller in GetAllControllers(av).Distinct())
                 {
-                    if (controller == null || controller.layers == null) continue;
+                    if (controller == null) continue;
+                    var controllerLayers = controller.layers;
+                    if (controllerLayers == null) continue;
 
-                    for (int layerIndex = 0; layerIndex < controller.layers.Length; layerIndex++)
+                    for (int layerIndex = 0; layerIndex < controllerLayers.Length; layerIndex++)
                     {
-                        var layer = controller.layers[layerIndex];
+                        var layer = controllerLayers[layerIndex];
                         var layerStateMachine = layer.stateMachine;
                         if (layerStateMachine == null) continue;
 
