@@ -35,6 +35,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
         private TextFilter parameterFilter = new() { IsRegex = false, SmallButtons = true };
         private ParameterFilterMode filterMode = ParameterFilterMode.All;
+        private bool showBoolParameters = true;
+        private bool showIntParameters = true;
+        private bool showFloatParameters = true;
         private bool renameMode = false;
         private string renameDraft = "";
         private string renameDraftSource = "";
@@ -567,6 +570,33 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             return GetAnimatorControllerParameterInfos(av, parameterName)
                 .Any(info => info.parameterType == AnimatorControllerParameterType.Bool);
+        }
+
+        private static bool MatchesTypeToggles(VRCAvatarDescriptor av, string parameterName, bool showBool, bool showInt, bool showFloat)
+        {
+            // prefer the VRC declaration over the animator type
+            var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
+            if (vrcParameter != null)
+            {
+                switch (vrcParameter.valueType)
+                {
+                    case VRCExpressionParameters.ValueType.Bool:
+                        return showBool;
+                    case VRCExpressionParameters.ValueType.Int:
+                        return showInt;
+                    case VRCExpressionParameters.ValueType.Float:
+                        return showFloat;
+                }
+            }
+
+            var infos = GetAnimatorControllerParameterInfos(av, parameterName);
+            if (infos.Count == 0)
+                return true;
+
+            var hasInt = infos.Any(info => info.parameterType == AnimatorControllerParameterType.Int);
+            var hasBool = infos.Any(info => info.parameterType == AnimatorControllerParameterType.Bool
+                || info.parameterType == AnimatorControllerParameterType.Trigger);
+            return (showInt && hasInt) || (showBool && hasBool) || (showFloat && !hasInt && !hasBool);
         }
 
         // for transition conditions the type actually used in the animator controller decides, not the VRC declaration:
@@ -1516,6 +1546,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     .Where(p => parameterFilter.Matches(p))
                     .Where(p => (includedParameters == null || includedParameters.Contains(p))
                               && (excludedParameters == null || !excludedParameters.Contains(p)))
+                    .Where(p => MatchesTypeToggles(av, p, showBoolParameters, showIntParameters, showFloatParameters))
                     .ToList();
                 using (new EditorGUILayout.HorizontalScope())
                 {
@@ -1527,6 +1558,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     GUILayout.Label("Filter");
                     GUILayout.FlexibleSpace();
                     filterMode = (ParameterFilterMode)EditorGUILayout.Popup((int)filterMode, FilterModeLabels, GUILayout.Width(80));
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label("Types");
+                    GUILayout.FlexibleSpace();
+                    showBoolParameters = GUILayout.Toggle(showBoolParameters, "Bool", EditorStyles.miniButton, GUILayout.ExpandWidth(false));
+                    showIntParameters = GUILayout.Toggle(showIntParameters, "Int", EditorStyles.miniButton, GUILayout.ExpandWidth(false));
+                    showFloatParameters = GUILayout.Toggle(showFloatParameters, "Float", EditorStyles.miniButton, GUILayout.ExpandWidth(false));
                 }
                 parameterFilter.DrawGUI();
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
