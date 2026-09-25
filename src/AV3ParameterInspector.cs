@@ -151,6 +151,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             public List<float> conditionValues = new List<float>();
             public List<float> blendTreeValues = new List<float>();
+            public List<float> parameterDriverValues = new List<float>();
         }
 
         private readonly struct ComponentParameterWriter
@@ -228,10 +229,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static bool TransitionUsesParameter(AnimatorTransitionBase transition, string parameterName)
         {
-            if (transition == null || transition.conditions == null) return false;
-            for (int i = 0; i < transition.conditions.Length; i++)
+            if (transition == null) return false;
+            var conditions = transition.conditions;
+            if (conditions == null) return false;
+            for (int i = 0; i < conditions.Length; i++)
             {
-                var condition = transition.conditions[i];
+                var condition = conditions[i];
                 if (IsSameParameter(condition.parameter, parameterName))
                     return true;
             }
@@ -271,10 +274,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static void CollectTransitionConditionValues(AnimatorTransitionBase transition, string parameterName, bool isInt, List<float> values)
         {
-            if (transition == null || transition.conditions == null) return;
-            for (int i = 0; i < transition.conditions.Length; i++)
+            if (transition == null) return;
+            var conditions = transition.conditions;
+            if (conditions == null) return;
+            for (int i = 0; i < conditions.Length; i++)
             {
-                var condition = transition.conditions[i];
+                var condition = conditions[i];
                 if (!IsSameParameter(condition.parameter, parameterName)) continue;
 
                 values.Add(condition.threshold);
@@ -318,6 +323,52 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 CollectBlendTreeValues(children[i].motion, parameterName, values, visitedTrees);
         }
 
+        private static void CollectParameterDriverValues(StateMachineBehaviour behaviour, string parameterName, List<float> values)
+        {
+            if (behaviour == null || !(behaviour is VRCAvatarParameterDriver driver) || driver.parameters == null) return;
+
+            for (int i = 0; i < driver.parameters.Count; i++)
+            {
+                var parameter = driver.parameters[i];
+                if (parameter == null) continue;
+
+                switch (parameter.type)
+                {
+                    case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set:
+                        if (IsSameParameter(parameter.name, parameterName))
+                            values.Add(parameter.value);
+                        break;
+                    case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Add:
+                        if (IsSameParameter(parameter.name, parameterName))
+                        {
+                            values.Add(0f);
+                            values.Add(255f);
+                        }
+                        break;
+                    case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Random:
+                        if (IsSameParameter(parameter.name, parameterName))
+                        {
+                            values.Add(parameter.valueMin);
+                            values.Add(parameter.valueMax);
+                        }
+                        break;
+                    case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy:
+                        if (!parameter.convertRange) break;
+                        if (IsSameParameter(parameter.name, parameterName))
+                        {
+                            values.Add(parameter.destMin);
+                            values.Add(parameter.destMax);
+                        }
+                        if (IsSameParameter(parameter.source, parameterName))
+                        {
+                            values.Add(parameter.sourceMin);
+                            values.Add(parameter.sourceMax);
+                        }
+                        break;
+                }
+            }
+        }
+
         private static bool StateUsesMotionTimeParameter(AnimatorState state, string parameterName)
         {
             if (state == null) return false;
@@ -344,11 +395,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static bool StateUsesParameterDriver(AnimatorState state, string parameterName)
         {
-            if (state == null || state.behaviours == null) return false;
+            if (state == null) return false;
+            var behaviours = state.behaviours;
+            if (behaviours == null) return false;
 
-            for (int i = 0; i < state.behaviours.Length; i++)
+            for (int i = 0; i < behaviours.Length; i++)
             {
-                var behaviour = state.behaviours[i];
+                var behaviour = behaviours[i];
                 if (behaviour == null) continue;
 
                 if (behaviour is VRCAvatarParameterDriver typedDriver)
@@ -375,11 +428,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static bool StateUsesPlayAudioParameter(AnimatorState state, string parameterName)
         {
-            if (state == null || state.behaviours == null) return false;
+            if (state == null) return false;
+            var behaviours = state.behaviours;
+            if (behaviours == null) return false;
 
-            for (int i = 0; i < state.behaviours.Length; i++)
+            for (int i = 0; i < behaviours.Length; i++)
             {
-                if (state.behaviours[i] is VRCAnimatorPlayAudio playAudio
+                if (behaviours[i] is VRCAnimatorPlayAudio playAudio
                     && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
                     && IsSameParameter(playAudio.ParameterName, parameterName))
                     return true;
@@ -408,11 +463,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             for (int i = 0; i < ownerStates.Length; i++)
             {
                 var sourceState = ownerStates[i].state;
-                if (sourceState == null || sourceState.transitions == null) continue;
+                if (sourceState == null) continue;
+                var sourceTransitions = sourceState.transitions;
+                if (sourceTransitions == null) continue;
 
-                for (int t = 0; t < sourceState.transitions.Length; t++)
+                for (int t = 0; t < sourceTransitions.Length; t++)
                 {
-                    var transition = sourceState.transitions[t];
+                    var transition = sourceTransitions[t];
                     if (transition == null) continue;
                     if (transition.destinationState != state) continue;
                     if (TransitionUsesParameter(transition, parameterName)) return true;
@@ -429,11 +486,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (control.parameter != null && IsSameParameter(control.parameter.name, parameterName))
                 return true;
 
-            if (control.subParameters != null)
+            var subParameters = control.subParameters;
+            if (subParameters != null)
             {
-                for (int i = 0; i < control.subParameters.Length; i++)
+                for (int i = 0; i < subParameters.Length; i++)
                 {
-                    var subParameter = control.subParameters[i];
+                    var subParameter = subParameters[i];
                     if (subParameter == null) continue;
                     if (IsSameParameter(subParameter.name, parameterName))
                         return true;
@@ -1068,13 +1126,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     subStateMachinePath = smPath,
                                 };
 
-                                usage.transitionOut = state.transitions != null && state.transitions.Any(t => TransitionUsesParameter(t, parameterName));
+                                var stateTransitions = state.transitions;
+                                usage.transitionOut = stateTransitions != null && stateTransitions.Any(t => TransitionUsesParameter(t, parameterName));
                                 usage.transitionIn = HasIncomingTransitionUsingParameter(sm, state, parameterName);
 
-                                if (state.transitions != null)
+                                if (stateTransitions != null)
                                 {
-                                    for (int t = 0; t < state.transitions.Length; t++)
-                                        CollectTransitionConditionValues(state.transitions[t], parameterName, isInt, result.conditionValues);
+                                    for (int t = 0; t < stateTransitions.Length; t++)
+                                        CollectTransitionConditionValues(stateTransitions[t], parameterName, isInt, result.conditionValues);
                                 }
 
                                 if (usage.transitionIn || usage.transitionOut)
@@ -1104,6 +1163,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     ForEachClipInMotion(state.motion, c => result.cycleOffsetClips.Add(c));
 
                                 usage.parameterDriver = StateUsesParameterDriver(state, parameterName);
+                                if (usage.parameterDriver)
+                                {
+                                    var driverBehaviours = state.behaviours;
+                                    for (int b = 0; b < driverBehaviours.Length; b++)
+                                        CollectParameterDriverValues(driverBehaviours[b], parameterName, result.parameterDriverValues);
+                                }
 
                                 usage.playAudio = StateUsesPlayAudioParameter(state, parameterName);
                                 if (usage.playAudio)
@@ -1525,6 +1590,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                     var usedValues = new List<float>(cachedScanResult.conditionValues);
                     usedValues.AddRange(cachedScanResult.blendTreeValues);
+                    usedValues.AddRange(cachedScanResult.parameterDriverValues);
                     if (usedValues.Count > 0 && !IsParameterBool(av, selectedParameter))
                     {
                         var parameterIsInt = IsParameterInt(av, selectedParameter);
