@@ -476,6 +476,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
 
+            var entryTransitions = ownerStateMachine.entryTransitions;
+            if (entryTransitions != null)
+            {
+                for (int i = 0; i < entryTransitions.Length; i++)
+                {
+                    var transition = entryTransitions[i];
+                    if (transition == null) continue;
+                    if (transition.destinationState != state) continue;
+                    if (TransitionUsesParameter(transition, parameterName)) return true;
+                }
+            }
+
             return false;
         }
 
@@ -1101,6 +1113,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             {
                                 for (int i = 0; i < anyStateTransitions.Length; i++)
                                     CollectTransitionConditionValues(anyStateTransitions[i], parameterName, isInt, result.conditionValues);
+                            }
+
+                            var entryTransitions = sm.entryTransitions;
+                            if (entryTransitions != null)
+                            {
+                                for (int i = 0; i < entryTransitions.Length; i++)
+                                    CollectTransitionConditionValues(entryTransitions[i], parameterName, isInt, result.conditionValues);
                             }
 
                             var states = sm.states;
