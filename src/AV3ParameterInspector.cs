@@ -569,11 +569,44 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .Any(info => info.parameterType == AnimatorControllerParameterType.Bool);
         }
 
+        // for transition conditions the type actually used in the animator controller decides, not the VRC declaration:
+        // a parameter declared int in VRC can be cast to float in the animator (very common workflow)
+        private static bool IsParameterIntInAnimator(VRCAvatarDescriptor av, string parameterName)
+        {
+            return GetAnimatorControllerParameterInfos(av, parameterName)
+                .Any(info => info.parameterType == AnimatorControllerParameterType.Int);
+        }
+
         private static string FormatParameterValue(float value, bool isInt)
         {
             if (isInt || Math.Abs(value - Math.Round(value)) < 1e-4f)
                 return ((int)Math.Round(value)).ToString();
             return value.ToString("0.###");
+        }
+
+        private static string FormatUsedRangeBitCount(float minUsedValue, float maxUsedValue)
+        {
+            // same outward rounding as the displayed range
+            var minValue = (long)Math.Floor(minUsedValue);
+            var maxValue = (long)Math.Ceiling(maxUsedValue);
+
+            int bits;
+            if (minValue >= 0)
+            {
+                // unsigned: minimum n such that maxValue <= 2^n - 1
+                bits = 0;
+                while (maxValue >= (1L << bits))
+                    bits++;
+            }
+            else
+            {
+                // two's complement: minimum n such that minValue >= -2^(n-1) and maxValue <= 2^(n-1) - 1
+                bits = 1;
+                while (minValue < -(1L << (bits - 1)) || maxValue > (1L << (bits - 1)) - 1)
+                    bits++;
+            }
+
+            return $"{bits}-bit";
         }
 
         private static bool IsParameterWrittenByPhysBone(string selectedParameter, string configuredParameter)
@@ -1047,7 +1080,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (av == null || string.IsNullOrEmpty(parameterName))
                 return result;
 
-            bool isInt = IsParameterInt(av, parameterName);
+            bool isInt = IsParameterIntInAnimator(av, parameterName);
 
             void ScanMenus()
             {
@@ -1613,12 +1646,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (usedValues.Count > 0 && !IsParameterBool(av, selectedParameter))
                     {
                         var parameterIsInt = IsParameterInt(av, selectedParameter);
-                        var minUsedValue = usedValues.Min();
-                        var maxUsedValue = usedValues.Max();
+                        // round outward: displayed range covers every used value
+                        var minUsedValue = (long)Math.Floor(usedValues.Min());
+                        var maxUsedValue = (long)Math.Ceiling(usedValues.Max());
                         using var usedRangeRow = new EditorGUILayout.HorizontalScope();
                         GUILayout.Space(innerIndent);
                         GUILayout.Label("Used Range", GUILayout.Width(width));
-                        GUILayout.Label($"[ {FormatParameterValue(minUsedValue, parameterIsInt)}, {FormatParameterValue(maxUsedValue, parameterIsInt)} ]");
+                        GUILayout.Label($"[ {FormatParameterValue(minUsedValue, parameterIsInt)}, {FormatParameterValue(maxUsedValue, parameterIsInt)} ]  {FormatUsedRangeBitCount(minUsedValue, maxUsedValue)}");
                     }
 
                     if (componentWriters.Count > 1)
