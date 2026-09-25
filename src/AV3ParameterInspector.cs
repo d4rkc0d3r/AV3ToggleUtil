@@ -148,6 +148,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public HashSet<AnimationClip> mirrorClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> cycleOffsetClips = new HashSet<AnimationClip>();
             public HashSet<AnimationClip> playAudioClips = new HashSet<AnimationClip>();
+
+            public List<float> conditionValues = new List<float>();
+            public List<float> blendTreeValues = new List<float>();
         }
 
         private readonly struct ComponentParameterWriter
@@ -264,6 +267,55 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
 
             return false;
+        }
+
+        private static void CollectTransitionConditionValues(AnimatorTransitionBase transition, string parameterName, bool isInt, List<float> values)
+        {
+            if (transition == null || transition.conditions == null) return;
+            for (int i = 0; i < transition.conditions.Length; i++)
+            {
+                var condition = transition.conditions[i];
+                if (!IsSameParameter(condition.parameter, parameterName)) continue;
+
+                values.Add(condition.threshold);
+                if (!isInt) continue;
+
+                if (condition.mode == AnimatorConditionMode.Greater)
+                    values.Add(condition.threshold + 1f);
+                else if (condition.mode == AnimatorConditionMode.Less)
+                    values.Add(condition.threshold - 1f);
+            }
+        }
+
+        private static void CollectBlendTreeValues(Motion motion, string parameterName, List<float> values, HashSet<BlendTree> visitedTrees = null)
+        {
+            if (motion == null) return;
+            if (!(motion is BlendTree tree)) return;
+
+            if (visitedTrees == null) visitedTrees = new HashSet<BlendTree>();
+            if (!visitedTrees.Add(tree)) return;
+
+            var isSecondParameterUsed = tree.blendType != BlendTreeType.Simple1D && tree.blendType != BlendTreeType.Direct;
+            var isBlendValue = IsSameParameter(tree.blendParameter, parameterName)
+                || (isSecondParameterUsed && IsSameParameter(tree.blendParameterY, parameterName));
+
+            var children = tree.children;
+            if (tree.blendType == BlendTreeType.Direct)
+            {
+                for (int i = 0; i < children.Length; i++)
+                {
+                    if (IsSameParameter(children[i].directBlendParameter, parameterName))
+                        values.Add(children[i].threshold);
+                }
+            }
+            else if (isBlendValue)
+            {
+                for (int i = 0; i < children.Length; i++)
+                    values.Add(children[i].threshold);
+            }
+
+            for (int i = 0; i < children.Length; i++)
+                CollectBlendTreeValues(children[i].motion, parameterName, values, visitedTrees);
         }
 
         private static bool StateUsesMotionTimeParameter(AnimatorState state, string parameterName)
@@ -421,6 +473,37 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return results
                 .OrderBy(x => x.controllerName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static bool IsParameterInt(VRCAvatarDescriptor av, string parameterName)
+        {
+            if (av == null || string.IsNullOrEmpty(parameterName)) return false;
+
+            var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
+            if (vrcParameter != null)
+                return vrcParameter.valueType == VRCExpressionParameters.ValueType.Int;
+
+            return GetAnimatorControllerParameterInfos(av, parameterName)
+                .Any(info => info.parameterType == AnimatorControllerParameterType.Int);
+        }
+
+        private static bool IsParameterBool(VRCAvatarDescriptor av, string parameterName)
+        {
+            if (av == null || string.IsNullOrEmpty(parameterName)) return false;
+
+            var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
+            if (vrcParameter != null)
+                return vrcParameter.valueType == VRCExpressionParameters.ValueType.Bool;
+
+            return GetAnimatorControllerParameterInfos(av, parameterName)
+                .Any(info => info.parameterType == AnimatorControllerParameterType.Bool);
+        }
+
+        private static string FormatParameterValue(float value, bool isInt)
+        {
+            if (isInt || Math.Abs(value - Math.Round(value)) < 1e-4f)
+                return ((int)Math.Round(value)).ToString();
+            return value.ToString("0.###");
         }
 
         private static bool IsParameterWrittenByPhysBone(string selectedParameter, string configuredParameter)
@@ -894,6 +977,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (av == null || string.IsNullOrEmpty(parameterName))
                 return result;
 
+            bool isInt = IsParameterInt(av, parameterName);
+
             void ScanMenus()
             {
                 var rootMenu = av.expressionsMenu;
@@ -953,6 +1038,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             if (sm == null) return;
 
+                            var anyStateTransitions = sm.anyStateTransitions;
+                            if (anyStateTransitions != null)
+                            {
+                                for (int i = 0; i < anyStateTransitions.Length; i++)
+                                    CollectTransitionConditionValues(anyStateTransitions[i], parameterName, isInt, result.conditionValues);
+                            }
+
                             var states = sm.states;
                             for (int i = 0; i < states.Length; i++)
                             {
@@ -979,12 +1071,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 usage.transitionOut = state.transitions != null && state.transitions.Any(t => TransitionUsesParameter(t, parameterName));
                                 usage.transitionIn = HasIncomingTransitionUsingParameter(sm, state, parameterName);
 
+                                if (state.transitions != null)
+                                {
+                                    for (int t = 0; t < state.transitions.Length; t++)
+                                        CollectTransitionConditionValues(state.transitions[t], parameterName, isInt, result.conditionValues);
+                                }
+
                                 if (usage.transitionIn || usage.transitionOut)
                                     ForEachClipInMotion(state.motion, c => result.transitionClips.Add(c));
 
                                 usage.blendTree = MotionUsesBlendParameter(state.motion, parameterName);
                                 if (usage.blendTree)
+                                {
                                     ForEachClipInMotion(state.motion, c => result.blendTreeClips.Add(c));
+                                    CollectBlendTreeValues(state.motion, parameterName, result.blendTreeValues);
+                                }
 
                                 usage.motionTime = StateUsesMotionTimeParameter(state, parameterName);
                                 if (usage.motionTime)
@@ -1420,6 +1521,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         GUILayout.Space(innerIndent);
                         GUILayout.Label($"{info.controllerName}", GUILayout.Width(width));
                         GUILayout.Label($"{info.parameterType}");
+                    }
+
+                    var usedValues = new List<float>(cachedScanResult.conditionValues);
+                    usedValues.AddRange(cachedScanResult.blendTreeValues);
+                    if (usedValues.Count > 0 && !IsParameterBool(av, selectedParameter))
+                    {
+                        var parameterIsInt = IsParameterInt(av, selectedParameter);
+                        var minUsedValue = usedValues.Min();
+                        var maxUsedValue = usedValues.Max();
+                        using var usedRangeRow = new EditorGUILayout.HorizontalScope();
+                        GUILayout.Space(innerIndent);
+                        GUILayout.Label("Used Range", GUILayout.Width(width));
+                        GUILayout.Label($"[ {FormatParameterValue(minUsedValue, parameterIsInt)}, {FormatParameterValue(maxUsedValue, parameterIsInt)} ]");
                     }
 
                     if (componentWriters.Count > 1)
