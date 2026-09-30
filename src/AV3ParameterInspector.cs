@@ -549,70 +549,53 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ToList();
         }
 
-        private static bool IsParameterInt(VRCAvatarDescriptor av, string parameterName)
+        // prefers the VRC declaration over the animator type; null if the parameter is unknown to both
+        private static AnimatorControllerParameterType? GetParameterType(VRCAvatarDescriptor av, string parameterName)
         {
-            if (av == null || string.IsNullOrEmpty(parameterName)) return false;
+            if (av == null || string.IsNullOrEmpty(parameterName)) return null;
 
-            var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
-            if (vrcParameter != null)
-                return vrcParameter.valueType == VRCExpressionParameters.ValueType.Int;
-
-            return GetAnimatorControllerParameterInfos(av, parameterName)
-                .Any(info => info.parameterType == AnimatorControllerParameterType.Int);
-        }
-
-        private static bool IsParameterBool(VRCAvatarDescriptor av, string parameterName)
-        {
-            if (av == null || string.IsNullOrEmpty(parameterName)) return false;
-
-            var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
-            if (vrcParameter != null)
-                return vrcParameter.valueType == VRCExpressionParameters.ValueType.Bool;
-
-            return GetAnimatorControllerParameterInfos(av, parameterName)
-                .Any(info => info.parameterType == AnimatorControllerParameterType.Bool);
-        }
-
-        private static bool MatchesTypeToggles(VRCAvatarDescriptor av, string parameterName, bool showBool, bool showInt, bool showFloat)
-        {
-            // prefer the VRC declaration over the animator type
             var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
             if (vrcParameter != null)
             {
                 switch (vrcParameter.valueType)
                 {
                     case VRCExpressionParameters.ValueType.Bool:
-                        return showBool;
+                        return AnimatorControllerParameterType.Bool;
                     case VRCExpressionParameters.ValueType.Int:
-                        return showInt;
+                        return AnimatorControllerParameterType.Int;
                     case VRCExpressionParameters.ValueType.Float:
-                        return showFloat;
+                        return AnimatorControllerParameterType.Float;
                 }
             }
 
             var infos = GetAnimatorControllerParameterInfos(av, parameterName);
             if (infos.Count == 0)
+                return null;
+
+            if (infos.Any(info => info.parameterType == AnimatorControllerParameterType.Int))
+                return AnimatorControllerParameterType.Int;
+            if (infos.Any(info => info.parameterType == AnimatorControllerParameterType.Bool
+                || info.parameterType == AnimatorControllerParameterType.Trigger))
+                return AnimatorControllerParameterType.Bool;
+            return AnimatorControllerParameterType.Float;
+        }
+
+        private static bool MatchesTypeToggles(VRCAvatarDescriptor av, string parameterName, bool showBool, bool showInt, bool showFloat)
+        {
+            var parameterType = GetParameterType(av, parameterName);
+            if (parameterType == null)
                 return true;
 
-            var hasInt = infos.Any(info => info.parameterType == AnimatorControllerParameterType.Int);
-            var hasBool = infos.Any(info => info.parameterType == AnimatorControllerParameterType.Bool
-                || info.parameterType == AnimatorControllerParameterType.Trigger);
-            return (showInt && hasInt) || (showBool && hasBool) || (showFloat && !hasInt && !hasBool);
+            return parameterType.Value switch
+            {
+                AnimatorControllerParameterType.Bool => showBool,
+                AnimatorControllerParameterType.Int => showInt,
+                _ => showFloat,
+            };
         }
 
-        private static string FormatParameterValue(float value, bool isInt)
+        private static string FormatUsedRangeBitCount(long minValue, long maxValue)
         {
-            if (isInt || Math.Abs(value - Math.Round(value)) < 1e-4f)
-                return ((int)Math.Round(value)).ToString();
-            return value.ToString("0.###");
-        }
-
-        private static string FormatUsedRangeBitCount(float minUsedValue, float maxUsedValue)
-        {
-            // same outward rounding as the displayed range
-            var minValue = (long)Math.Floor(minUsedValue);
-            var maxValue = (long)Math.Ceiling(maxUsedValue);
-
             int bits;
             if (minValue >= 0)
             {
@@ -840,6 +823,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 for (int b = 0; b < stateBehaviours.Length; b++)
                 {
                     var behaviour = stateBehaviours[b];
+
+                    if (behaviour is VRCAnimatorPlayAudio playAudio
+                        && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                        && IsSameParameter(playAudio.ParameterName, oldParameter))
+                    {
+                        playAudio.ParameterName = newParameter;
+                        EditorUtility.SetDirty(playAudio);
+                        changed = true;
+                        continue;
+                    }
+
                     if (!(behaviour is VRCAvatarParameterDriver driver) || driver.parameters == null)
                         continue;
 
@@ -865,18 +859,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (driverChanged)
                     {
                         EditorUtility.SetDirty(driver);
-                        changed = true;
-                    }
-                }
-
-                for (int b = 0; b < stateBehaviours.Length; b++)
-                {
-                    if (stateBehaviours[b] is VRCAnimatorPlayAudio playAudio
-                        && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
-                        && IsSameParameter(playAudio.ParameterName, oldParameter))
-                    {
-                        playAudio.ParameterName = newParameter;
-                        EditorUtility.SetDirty(playAudio);
                         changed = true;
                     }
                 }
@@ -1282,7 +1264,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             result.stateUsages = result.stateUsages
                 .OrderBy(x => x.statePath, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.stateName, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(x => x.statePath, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             return result;
@@ -1673,16 +1654,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     var usedValues = new List<float>(cachedScanResult.conditionValues);
                     usedValues.AddRange(cachedScanResult.blendTreeValues);
                     usedValues.AddRange(cachedScanResult.parameterDriverValues);
-                    if (usedValues.Count > 0 && !IsParameterBool(av, selectedParameter))
+                    var selectedParameterType = GetParameterType(av, selectedParameter);
+                    if (usedValues.Count > 0 && selectedParameterType == AnimatorControllerParameterType.Int)
                     {
-                        var parameterIsInt = IsParameterInt(av, selectedParameter);
                         // round outward: displayed range covers every used value
                         var minUsedValue = (long)Math.Floor(usedValues.Min());
                         var maxUsedValue = (long)Math.Ceiling(usedValues.Max());
                         using var usedRangeRow = new EditorGUILayout.HorizontalScope();
                         GUILayout.Space(innerIndent);
                         GUILayout.Label("Used Range", GUILayout.Width(width));
-                        GUILayout.Label($"[ {FormatParameterValue(minUsedValue, parameterIsInt)}, {FormatParameterValue(maxUsedValue, parameterIsInt)} ]  {FormatUsedRangeBitCount(minUsedValue, maxUsedValue)}");
+                        GUILayout.Label($"[ {minUsedValue}, {maxUsedValue} ]  {FormatUsedRangeBitCount(minUsedValue, maxUsedValue)}");
                     }
 
                     if (componentWriters.Count > 1)
