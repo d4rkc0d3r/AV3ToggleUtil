@@ -275,7 +275,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return false;
         }
 
-        private static void CollectTransitionConditionValues(AnimatorTransitionBase transition, string parameterName, bool isInt, List<float> values)
+        private static void CollectTransitionConditionValues(AnimatorTransitionBase transition, string parameterName, List<float> values)
         {
             if (transition == null) return;
             var conditions = transition.conditions;
@@ -286,7 +286,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!IsSameParameter(condition.parameter, parameterName)) continue;
 
                 values.Add(condition.threshold);
-                if (!isInt) continue;
+                // only apply the +-1 expansion for integer thresholds
+                if (condition.threshold != Math.Round(condition.threshold)) continue;
 
                 if (condition.mode == AnimatorConditionMode.Greater)
                     values.Add(condition.threshold + 1f);
@@ -597,14 +598,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var hasBool = infos.Any(info => info.parameterType == AnimatorControllerParameterType.Bool
                 || info.parameterType == AnimatorControllerParameterType.Trigger);
             return (showInt && hasInt) || (showBool && hasBool) || (showFloat && !hasInt && !hasBool);
-        }
-
-        // for transition conditions the type actually used in the animator controller decides, not the VRC declaration:
-        // a parameter declared int in VRC can be cast to float in the animator (very common workflow)
-        private static bool IsParameterIntInAnimator(VRCAvatarDescriptor av, string parameterName)
-        {
-            return GetAnimatorControllerParameterInfos(av, parameterName)
-                .Any(info => info.parameterType == AnimatorControllerParameterType.Int);
         }
 
         private static string FormatParameterValue(float value, bool isInt)
@@ -1110,8 +1103,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (av == null || string.IsNullOrEmpty(parameterName))
                 return result;
 
-            bool isInt = IsParameterIntInAnimator(av, parameterName);
-
             void ScanMenus()
             {
                 var rootMenu = av.expressionsMenu;
@@ -1175,14 +1166,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             if (anyStateTransitions != null)
                             {
                                 for (int i = 0; i < anyStateTransitions.Length; i++)
-                                    CollectTransitionConditionValues(anyStateTransitions[i], parameterName, isInt, result.conditionValues);
+                                    CollectTransitionConditionValues(anyStateTransitions[i], parameterName, result.conditionValues);
                             }
 
                             var entryTransitions = sm.entryTransitions;
                             if (entryTransitions != null)
                             {
                                 for (int i = 0; i < entryTransitions.Length; i++)
-                                    CollectTransitionConditionValues(entryTransitions[i], parameterName, isInt, result.conditionValues);
+                                    CollectTransitionConditionValues(entryTransitions[i], parameterName, result.conditionValues);
                             }
 
                             var states = sm.states;
@@ -1215,7 +1206,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (stateTransitions != null)
                                 {
                                     for (int t = 0; t < stateTransitions.Length; t++)
-                                        CollectTransitionConditionValues(stateTransitions[t], parameterName, isInt, result.conditionValues);
+                                        CollectTransitionConditionValues(stateTransitions[t], parameterName, result.conditionValues);
                                 }
 
                                 if (usage.transitionIn || usage.transitionOut)
