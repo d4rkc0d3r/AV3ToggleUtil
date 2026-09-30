@@ -39,6 +39,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private bool showIntParameters = true;
         private bool showFloatParameters = true;
         private bool renameMode = false;
+        private bool removeMode = false;
         private string renameDraft = "";
         private string renameDraftSource = "";
         private bool showComponentProperties = true;
@@ -1079,6 +1080,134 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return true;
         }
 
+        private static bool IsParameterUsedInControllers(ScanResult scanResult)
+        {
+            return scanResult != null && scanResult.stateUsages.Count > 0;
+        }
+
+        private static bool RemoveFromExpressionParameters(VRCAvatarDescriptor av, string parameterName)
+        {
+            var expressionParameters = av != null ? av.expressionParameters : null;
+            if (expressionParameters == null || expressionParameters.parameters == null)
+                return false;
+
+            var changed = false;
+            var remainingParameters = new List<VRCExpressionParameters.Parameter>(expressionParameters.parameters);
+            for (int i = remainingParameters.Count - 1; i >= 0; i--)
+            {
+                var parameter = remainingParameters[i];
+                if (parameter == null || !IsSameParameter(parameter.name, parameterName))
+                    continue;
+
+                remainingParameters.RemoveAt(i);
+                changed = true;
+            }
+
+            if (changed)
+            {
+                expressionParameters.parameters = remainingParameters.ToArray();
+                EditorUtility.SetDirty(expressionParameters);
+            }
+
+            return changed;
+        }
+
+        private static bool RemoveFromExpressionMenus(VRCAvatarDescriptor av, string parameterName)
+        {
+            var rootMenu = av != null ? av.expressionsMenu : null;
+            if (rootMenu == null)
+                return false;
+
+            var changed = false;
+            var visitedMenus = new HashSet<VRCExpressionsMenu>();
+
+            void Traverse(VRCExpressionsMenu menu)
+            {
+                if (menu == null || !visitedMenus.Add(menu))
+                    return;
+
+                var controls = menu.controls;
+                if (controls == null)
+                    return;
+
+                var menuChanged = false;
+                for (int i = controls.Count - 1; i >= 0; i--)
+                {
+                    var control = controls[i];
+                    if (control == null)
+                        continue;
+
+                    if (control.type == VRCExpressionsMenu.Control.ControlType.SubMenu && control.subMenu != null)
+                        Traverse(control.subMenu);
+
+                    if (!ControlReferencesParameter(control, parameterName))
+                        continue;
+
+                    controls.RemoveAt(i);
+                    menuChanged = true;
+                }
+
+                if (menuChanged)
+                {
+                    EditorUtility.SetDirty(menu);
+                    changed = true;
+                }
+            }
+
+            Traverse(rootMenu);
+            return changed;
+        }
+
+        private static bool RemoveFromAnimatorController(AnimatorController controller, string parameterName)
+        {
+            if (controller == null)
+                return false;
+
+            using var controllerSerialized = new SerializedObject(controller);
+            var controllerParameters = controllerSerialized.FindProperty("m_AnimatorParameters");
+            var parametersChanged = false;
+            for (int i = controllerParameters.arraySize - 1; i >= 0; i--)
+            {
+                var parameterNameProperty = controllerParameters.GetArrayElementAtIndex(i).FindPropertyRelative("m_Name");
+                if (!IsSameParameter(parameterNameProperty.stringValue, parameterName))
+                    continue;
+
+                controllerParameters.DeleteArrayElementAtIndex(i);
+                parametersChanged = true;
+            }
+
+            if (parametersChanged)
+            {
+                controllerSerialized.ApplyModifiedProperties();
+                EditorUtility.SetDirty(controller);
+            }
+
+            return parametersChanged;
+        }
+
+        private bool ApplyParameterRemove(VRCAvatarDescriptor av, string parameterName)
+        {
+            if (av == null || string.IsNullOrEmpty(parameterName))
+                return false;
+
+            var changed = false;
+            changed |= RemoveFromExpressionParameters(av, parameterName);
+            changed |= RemoveFromExpressionMenus(av, parameterName);
+
+            foreach (var controller in GetAllControllers(av).Distinct())
+            {
+                if (RemoveFromAnimatorController(controller, parameterName))
+                    changed = true;
+            }
+
+            if (!changed)
+                return false;
+
+            EditorUtility.SetDirty(av);
+            ResetCaches();
+            return true;
+        }
+
         private ScanResult BuildScanResult(VRCAvatarDescriptor av, string parameterName)
         {
             var result = new ScanResult();
@@ -1552,6 +1681,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         selectedParameter = parameter;
                         renameMode = false;
+                        removeMode = false;
                         GUI.FocusControl(null);
                     }
                 }
@@ -1571,7 +1701,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 var isBuiltInParameter = VRChatBuiltInParameters.Contains(selectedParameter);
                 if (isBuiltInParameter)
+                {
                     renameMode = false;
+                    removeMode = false;
+                }
+
+                var parameterIsUsedInControllers = IsParameterUsedInControllers(cachedScanResult);
 
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
@@ -1586,6 +1721,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 renameDraftSource = selectedParameter;
                                 renameDraft = selectedParameter;
                                 GUI.FocusControl(null);
+                            }
+
+                            using (new EditorGUI.DisabledScope(parameterIsUsedInControllers))
+                            {
+                                using var removeCc = new EditorGUI.ChangeCheckScope();
+                                removeMode = GUILayout.Toggle(removeMode, "Remove", GUI.skin.button, GUILayout.Width(100f));
+                                if (removeCc.changed && removeMode)
+                                    GUI.FocusControl(null);
                             }
                         }
                     }
@@ -1605,6 +1748,26 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     renameDraftSource = selectedParameter;
                                     renameDraft = selectedParameter;
                                     renameMode = false;
+                                    GUI.FocusControl(null);
+                                    Repaint();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    if (removeMode)
+                    {
+                        using var removeHorizontal = new EditorGUILayout.HorizontalScope();
+                        GUILayout.Space(innerIndent);
+                        GUILayout.Label($"Remove '{selectedParameter}' from the expression parameters, menus & controllers?");
+                        using (new EditorGUI.DisabledScope(parameterIsUsedInControllers))
+                        {
+                            if (GUILayout.Button("Remove", GUILayout.Width(100f)))
+                            {
+                                if (ApplyParameterRemove(av, selectedParameter))
+                                {
+                                    removeMode = false;
                                     GUI.FocusControl(null);
                                     Repaint();
                                     return;
