@@ -89,6 +89,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     private TextFilter searchBindingPropertyFilter = new();
     private TextFilter searchBindingTypeFilter = new();
     private Dictionary<(int id, bool showSelected), bool> clipShowFilteredBindings = new();
+    private bool pendingShowBindings = false;
 
     private bool GetClipShowBindings(AnimationClip clip)
     {
@@ -504,6 +505,13 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
                 .Where(c => GetBindingsMatchingSearchFilters(c).Any(x => x.matched))
                 .ToList();
 
+            if (pendingShowBindings)
+            {
+                pendingShowBindings = false;
+                foreach (var c in filteredClips)
+                    SetClipShowBindings(c, true);
+            }
+
             bool allOn = filteredClips.Count > 0 && filteredClips.All(GetClipShowBindings);
             bool allOff = filteredClips.Count == 0 || filteredClips.All(c => !GetClipShowBindings(c));
             bool mixed = !(allOn || allOff);
@@ -755,6 +763,20 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
     {
         var window = GetWindow<d4rkAV3AnimationUtilMenu>();
         window.titleContent = new GUIContent("d4rk AV3 Animation Util");
+    }
+
+    public static d4rkAV3AnimationUtilMenu OpenWithFilters(string path, string propertyName, string typeName)
+    {
+        var window = GetWindow<d4rkAV3AnimationUtilMenu>();
+        window.titleContent = new GUIContent("d4rk AV3 Animation Util");
+        window.selectionMode = SelectionMode.Search;
+        window.filterBySelection = false;
+        window.searchBindingPathFilter.Text = path ?? "";
+        window.searchBindingPropertyFilter.Text = propertyName ?? "";
+        window.searchBindingTypeFilter.Text = typeName ?? "";
+        window.pendingShowBindings = true;
+        window.Show();
+        return window;
     }
 
     private void OnSelectionChange()

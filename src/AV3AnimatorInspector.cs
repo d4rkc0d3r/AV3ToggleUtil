@@ -437,7 +437,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 // Section 2: Components & bindings affected by the clips (same as Parameter Inspector)
                 var componentPropertyMap = new Dictionary<Component, HashSet<string>>();
                 CollectComponentBindings(layerClips, av, componentPropertyMap);
-                DrawComponentBindingsSection(componentPropertyMap, ref showComponentProperties, columnGrid, entryWidth, componentPropertyMap.Count);
+                DrawComponentBindingsSection(componentPropertyMap, ref showComponentProperties, columnGrid, entryWidth, av.transform, componentPropertyMap.Count);
             }
         }
 

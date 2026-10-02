@@ -142,6 +142,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             ref bool showComponentProperties,
             ColumnGrid columnGrid,
             float entryWidth,
+            Transform avatarRoot,
             int componentCountLabel = -1)
         {
             if (componentPropertyMap == null || componentPropertyMap.Count == 0)
@@ -171,12 +172,29 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                         }
                         var props = componentPropertyMap[comp];
                         var merged = MergePropertyNames(props);
+                        var path = avatarRoot != null && comp.transform != avatarRoot
+                            ? AnimationUtility.CalculateTransformPath(comp.transform, avatarRoot)
+                            : string.Empty;
+                        var compTypeName = comp.GetType().Name;
                         foreach (var prop in merged.OrderBy(p => p))
                         {
+                            var typeName = compTypeName;
+                            if (typeName == nameof(Transform) && prop == "m_IsActive")
+                                typeName = nameof(GameObject);
+                            var filterProp = prop;
+                            var lastDot = prop.LastIndexOf('.');
+                            if (lastDot > 0)
+                            {
+                                var suffix = prop[(lastDot + 1)..];
+                                if (suffix.Length > 1 && suffix.All(c => "xyzwrgba".Contains(c)))
+                                    filterProp = prop[..lastDot];
+                            }
                             using (new EditorGUILayout.HorizontalScope())
                             {
                                 GUILayout.Space(ColumnGrid.InnerIndent + 15);
-                                EditorGUILayout.LabelField(prop, EditorStyles.label);
+                                EditorGUILayout.LabelField(new GUIContent(prop, "Click to open in Animation Utility"), EditorStyles.label);
+                                if (ClickableLastRect())
+                                    d4rkAV3AnimationUtilMenu.OpenWithFilters(path, filterProp, typeName);
                             }
                         }
                     }

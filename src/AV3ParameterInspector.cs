@@ -1980,7 +1980,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 var componentPropertyMap = new Dictionary<Component, HashSet<string>>();
                 CollectComponentBindings(allAffected, av, componentPropertyMap);
-                DrawComponentBindingsSection(componentPropertyMap, ref showComponentProperties, columnGrid, entryWidth);
+                DrawComponentBindingsSection(componentPropertyMap, ref showComponentProperties, columnGrid, entryWidth, av.transform);
             }
         }
 
