@@ -11,20 +11,31 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 {
     public class AV3ClipInspector : EditorWindow
     {
-        private const string ShowAllPath = "<all>";
-
         private Vector2 leftScrollPos;
         private Vector2 rightScrollPos;
         private SplitterState splitter = new();
 
         private bool showUnusedClips = true;
-        private string selectedControllerPath = ShowAllPath;
+        private HashSet<string> selectedControllerPaths = new(StringComparer.Ordinal);
         private TextFilter controllerFilter = new() { IsRegex = false, SmallButtons = true };
         private TextFilter clipFilter = new() { IsRegex = false, SmallButtons = true };
 
         private List<AnimationClip> cachedClips = new();
         private List<AnimatorController> cachedControllers = new();
+        private Dictionary<AnimationClip, string> clipPaths = new();
+        private Dictionary<AnimatorController, string> controllerPaths = new();
+        private FolderNode clipTree = new() { name = "", path = "" };
+        private ControllerNode controllerTree = new() { name = "", path = "" };
         private HashSet<string> expandedFolders = new(StringComparer.Ordinal);
+        private HashSet<string> expandedControllerFolders = new(StringComparer.Ordinal);
+        private bool splitterInitialized = false;
+
+        private HashSet<AnimationClip> usedClipsCache;
+        private int usedClipsCacheSelectionCount = -1;
+
+        private static Texture FolderIcon;
+        private static Texture FolderOpenedIcon;
+        private static Texture ClipIcon;
 
         private class FolderNode
         {
@@ -32,6 +43,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public string path;
             public readonly List<AnimationClip> clips = new();
             public readonly Dictionary<string, FolderNode> children = new(StringComparer.Ordinal);
+            public int count;
+        }
+
+        private class ControllerNode
+        {
+            public string name;
+            public string path;
+            public readonly List<AnimatorController> controllers = new();
+            public readonly Dictionary<string, ControllerNode> children = new(StringComparer.Ordinal);
             public int count;
         }
 
@@ -45,6 +65,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private void OnEnable()
         {
+            if (FolderIcon == null)
+            {
+                FolderIcon = EditorGUIUtility.IconContent("d_Folder Icon").image;
+                FolderOpenedIcon = EditorGUIUtility.IconContent("d_FolderOpened Icon").image;
+                ClipIcon = EditorGUIUtility.IconContent("d_AnimationClip Icon").image;
+            }
+
             ScanProject();
         }
 
@@ -58,95 +85,223 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     ScanProject();
             }
 
+            if (!splitterInitialized)
+            {
+                splitter.leftPanelWidth = Mathf.Clamp(position.width / 2f, 160f, Mathf.Max(160f, position.width - 200f));
+                splitterInitialized = true;
+            }
+
             using var horizontal = new EditorGUILayout.HorizontalScope();
 
             using (new EditorGUILayout.VerticalScope(GUILayout.Width(splitter.leftPanelWidth)))
             {
-                var filteredControllers = cachedControllers
-                    .Where(c => controllerFilter.Matches(c.name))
-                    .OrderBy(c => c.name, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                var filteredControllerCount = 0;
+                for (int i = 0; i < cachedControllers.Count; i++)
+                {
+                    if (controllerFilter.Matches(cachedControllers[i].name))
+                        filteredControllerCount++;
+                }
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    GUILayout.Label($"Controllers ({filteredControllers.Count}/{cachedControllers.Count})", EditorStyles.boldLabel);
+                    GUILayout.Label($"Controllers ({filteredControllerCount}/{cachedControllers.Count})", EditorStyles.boldLabel);
                 }
                 controllerFilter.DrawGUI();
 
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
                 leftScrollPos = leftScroll.scrollPosition;
 
-                DrawControllerEntry(ShowAllPath, "All Controllers", cachedControllers.Count);
+                DrawAllControllersEntry();
 
-                for (int i = 0; i < filteredControllers.Count; i++)
-                {
-                    var controller = filteredControllers[i];
-                    DrawControllerEntry(AssetDatabase.GetAssetPath(controller), controller.name, 1);
-                }
+                DrawControllerTree(controllerTree, 0);
             }
 
-            splitter.DrawSplitter(this, 160f, 520f);
+            splitter.DrawSplitter(this, 160f, Mathf.Max(160f, position.width - 200f));
 
             using (new EditorGUILayout.VerticalScope())
             {
                 var usedClips = GetUsedClips();
-                var visibleClips = showUnusedClips
-                    ? cachedClips.Where(c => !usedClips.Contains(c)).ToList()
-                    : cachedClips.Where(c => usedClips.Contains(c)).ToList();
+
+                var visibleClipCount = 0;
+                for (int i = 0; i < cachedClips.Count; i++)
+                {
+                    var clip = cachedClips[i];
+                    var isUsed = usedClips.Contains(clip);
+                    if (showUnusedClips ? !isUsed : isUsed)
+                        visibleClipCount++;
+                }
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Label(
                         showUnusedClips
-                            ? $"Unused Clips ({visibleClips.Count}/{cachedClips.Count})"
-                            : $"Used Clips ({visibleClips.Count}/{cachedClips.Count})",
+                            ? $"Unused Clips ({visibleClipCount}/{cachedClips.Count})"
+                            : $"Used Clips ({visibleClipCount}/{cachedClips.Count})",
                         EditorStyles.boldLabel);
                     showUnusedClips = GUILayout.Toggle(showUnusedClips, "Unused", GUI.skin.button, GUILayout.ExpandWidth(false));
                 }
+
                 clipFilter.DrawGUI();
 
                 using var rightScroll = new EditorGUILayout.ScrollViewScope(rightScrollPos);
                 rightScrollPos = rightScroll.scrollPosition;
 
-                var tree = BuildFolderTree(visibleClips);
-                if (tree.children.Count == 0 && tree.clips.Count == 0)
+                if (clipTree.children.Count == 0 && clipTree.clips.Count == 0)
                 {
                     EditorGUILayout.HelpBox("No clips found.", MessageType.Info);
                 }
                 else
                 {
-                    DrawFolderTree(tree, 0);
+                    DrawFolderTree(clipTree, 0, usedClips);
                 }
             }
         }
 
-        private void DrawControllerEntry(string path, string label, int count)
+        private void DrawAllControllersEntry()
+        {
+            var allSelected = cachedControllers.Count > 0 && selectedControllerPaths.Count == cachedControllers.Count;
+            using var cc = new EditorGUI.ChangeCheckScope();
+            var selected = GUILayout.Toggle(allSelected, $"All Controllers ({cachedControllers.Count})", GUI.skin.button, GUILayout.ExpandWidth(true));
+            if (cc.changed)
+            {
+                selectedControllerPaths.Clear();
+                if (selected)
+                {
+                    foreach (var controller in cachedControllers)
+                        selectedControllerPaths.Add(controllerPaths[controller]);
+                }
+                InvalidateUsedClipsCache();
+            }
+        }
+
+        private void DrawControllerEntry(string path, string label)
         {
             using var cc = new EditorGUI.ChangeCheckScope();
-            var selected = GUILayout.Toggle(string.Equals(selectedControllerPath, path, StringComparison.Ordinal),
-                $"{label} ({count})", GUI.skin.button, GUILayout.ExpandWidth(true));
-            if (cc.changed && selected)
-                selectedControllerPath = path;
+            var selected = GUILayout.Toggle(selectedControllerPaths.Contains(path), label, GUI.skin.button, GUILayout.ExpandWidth(true));
+            if (cc.changed)
+            {
+                if (selected)
+                    selectedControllerPaths.Add(path);
+                else
+                    selectedControllerPaths.Remove(path);
+                InvalidateUsedClipsCache();
+            }
+        }
+
+        private void BuildControllerTree()
+        {
+            controllerTree = new ControllerNode { name = "", path = "" };
+
+            foreach (var controller in cachedControllers)
+            {
+                var path = controllerPaths[controller];
+                var folder = System.IO.Path.GetDirectoryName(path)?.Replace('\\', '/');
+
+                var current = controllerTree;
+                if (!string.IsNullOrEmpty(folder))
+                {
+                    foreach (var part in folder.Split('/'))
+                    {
+                        if (string.IsNullOrEmpty(part))
+                            continue;
+                        if (!current.children.TryGetValue(part, out var child))
+                        {
+                            child = new ControllerNode { name = part, path = string.IsNullOrEmpty(current.path) ? part : current.path + "/" + part };
+                            current.children[part] = child;
+                        }
+                        current = child;
+                    }
+                }
+
+                current.controllers.Add(controller);
+            }
+
+            PruneControllerTree(controllerTree);
+        }
+
+        private static void PruneControllerTree(ControllerNode node)
+        {
+            foreach (var child in node.children.Values.ToList())
+            {
+                PruneControllerTree(child);
+                if (child.controllers.Count == 0 && child.children.Count == 0)
+                    node.children.Remove(child.name);
+            }
+
+            node.count = node.controllers.Count + node.children.Values.Sum(c => c.count);
+        }
+
+        private void DrawControllerTree(ControllerNode node, int depth)
+        {
+            foreach (var child in node.children.Values)
+            {
+                if (!controllerFilter.Matches(child.name))
+                    continue;
+
+                var wasExpanded = expandedControllerFolders.Contains(child.path);
+                bool expanded;
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Space(depth * 15f);
+                    expanded = EditorGUILayout.Foldout(wasExpanded,
+                        new GUIContent($"{child.name} ({CountVisibleControllers(child)})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
+                }
+                if (expanded != wasExpanded)
+                {
+                    if (expanded)
+                    {
+                        expandedControllerFolders.Add(child.path);
+                        ExpandSingleChildChain(child);
+                    }
+                    else
+                        expandedControllerFolders.Remove(child.path);
+                }
+
+                if (expanded)
+                    DrawControllerTree(child, depth + 1);
+            }
+
+            foreach (var controller in node.controllers)
+            {
+                if (!controllerFilter.Matches(controller.name))
+                    continue;
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Space(depth * 15f);
+                    DrawControllerEntry(controllerPaths[controller], controller.name);
+                }
+            }
+        }
+
+        private int CountVisibleControllers(ControllerNode node)
+        {
+            var count = 0;
+            foreach (var controller in node.controllers)
+            {
+                if (controllerFilter.Matches(controller.name))
+                    count++;
+            }
+            foreach (var child in node.children.Values)
+            {
+                if (controllerFilter.Matches(child.name))
+                    count += CountVisibleControllers(child);
+            }
+            return count;
         }
 
         private HashSet<AnimationClip> GetUsedClips()
         {
+            if (usedClipsCache != null && usedClipsCacheSelectionCount == selectedControllerPaths.Count)
+                return usedClipsCache;
+
             var usedClips = new HashSet<AnimationClip>();
 
-            IEnumerable<AnimatorController> controllers;
-            if (string.Equals(selectedControllerPath, ShowAllPath, StringComparison.Ordinal))
+            foreach (var controller in cachedControllers)
             {
-                controllers = cachedControllers;
-            }
-            else
-            {
-                var controller = cachedControllers.FirstOrDefault(c =>
-                    string.Equals(AssetDatabase.GetAssetPath(c), selectedControllerPath, StringComparison.Ordinal));
-                controllers = controller != null ? new[] { controller } : Array.Empty<AnimatorController>();
-            }
+                if (!selectedControllerPaths.Contains(controllerPaths[controller]))
+                    continue;
 
-            foreach (var controller in controllers)
-            {
                 foreach (var clip in controller.animationClips)
                 {
                     if (clip != null)
@@ -154,7 +309,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
 
+            usedClipsCache = usedClips;
+            usedClipsCacheSelectionCount = selectedControllerPaths.Count;
             return usedClips;
+        }
+
+        private void InvalidateUsedClipsCache()
+        {
+            usedClipsCache = null;
+            usedClipsCacheSelectionCount = -1;
         }
 
         private void ScanProject()
@@ -189,35 +352,41 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 EditorUtility.ClearProgressBar();
             }
 
+            clipPaths.Clear();
+            foreach (var clip in cachedClips)
+                clipPaths[clip] = AssetDatabase.GetAssetPath(clip);
             cachedClips = cachedClips
-                .OrderBy(c => AssetDatabase.GetAssetPath(c), StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            cachedControllers = cachedControllers
-                .OrderBy(c => AssetDatabase.GetAssetPath(c), StringComparer.OrdinalIgnoreCase)
+                .OrderBy(c => clipPaths[c], StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            if (!string.Equals(selectedControllerPath, ShowAllPath, StringComparison.Ordinal)
-                && !cachedControllers.Any(c => string.Equals(AssetDatabase.GetAssetPath(c), selectedControllerPath, StringComparison.Ordinal)))
-            {
-                selectedControllerPath = ShowAllPath;
-            }
+            controllerPaths.Clear();
+            foreach (var controller in cachedControllers)
+                controllerPaths[controller] = AssetDatabase.GetAssetPath(controller);
+            cachedControllers = cachedControllers
+                .OrderBy(c => controllerPaths[c], StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            selectedControllerPaths.Clear();
+            foreach (var controller in cachedControllers)
+                selectedControllerPaths.Add(controllerPaths[controller]);
+
+            BuildControllerTree();
+            RebuildClipTree();
+            InvalidateUsedClipsCache();
 
             Repaint();
         }
 
-        private FolderNode BuildFolderTree(List<AnimationClip> clips)
+        private void RebuildClipTree()
         {
-            var root = new FolderNode { name = "", path = "" };
+            clipTree = new FolderNode { name = "", path = "" };
 
-            foreach (var clip in clips)
+            foreach (var clip in cachedClips)
             {
-                if (!clipFilter.Matches(clip.name))
-                    continue;
-
-                var path = AssetDatabase.GetAssetPath(clip);
+                var path = clipPaths[clip];
                 var folder = System.IO.Path.GetDirectoryName(path)?.Replace('\\', '/');
 
-                var current = root;
+                var current = clipTree;
                 if (!string.IsNullOrEmpty(folder))
                 {
                     foreach (var part in folder.Split('/'))
@@ -236,8 +405,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 current.clips.Add(clip);
             }
 
-            PruneFolderTree(root);
-            return root;
+            PruneFolderTree(clipTree);
         }
 
         private static void PruneFolderTree(FolderNode node)
@@ -262,18 +430,30 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             ExpandSingleChildChain(child);
         }
 
-        private void DrawFolderTree(FolderNode node, int depth)
+        private void ExpandSingleChildChain(ControllerNode node)
         {
-            foreach (var child in node.children.Values.OrderBy(c => c.name, StringComparer.OrdinalIgnoreCase))
+            if (node.children.Count != 1)
+                return;
+
+            var child = node.children.Values.First();
+            expandedControllerFolders.Add(child.path);
+            ExpandSingleChildChain(child);
+        }
+
+        private void DrawFolderTree(FolderNode node, int depth, HashSet<AnimationClip> usedClips)
+        {
+            foreach (var child in node.children.Values)
             {
+                if (!clipFilter.Matches(child.name))
+                    continue;
+
                 var wasExpanded = expandedFolders.Contains(child.path);
                 bool expanded;
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(depth * 15f);
-                    var folderIcon = wasExpanded ? "d_FolderOpened Icon" : "d_Folder Icon";
                     expanded = EditorGUILayout.Foldout(wasExpanded,
-                        new GUIContent($"{child.name} ({child.count})", EditorGUIUtility.IconContent(folderIcon).image), true);
+                        new GUIContent($"{child.name} ({CountVisibleClips(child, usedClips)})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
                 }
                 if (expanded != wasExpanded)
                 {
@@ -287,18 +467,51 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
 
                 if (expanded)
-                    DrawFolderTree(child, depth + 1);
+                    DrawFolderTree(child, depth + 1, usedClips);
             }
 
             foreach (var clip in node.clips)
             {
+                if (!clipFilter.Matches(clip.name))
+                    continue;
+
+                var isUsed = usedClips.Contains(clip);
+                if (showUnusedClips && isUsed)
+                    continue;
+                if (!showUnusedClips && !isUsed)
+                    continue;
+
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space((1 + depth) * 15f);
-                    GUILayout.Label(new GUIContent(clip.name, EditorGUIUtility.IconContent("d_AnimationClip Icon").image),
+                    GUILayout.Label(new GUIContent(clip.name, ClipIcon, isUsed ? "Used by selected controllers" : "Not used by any selected controller"),
                         GUILayout.Height(20), GUILayout.ExpandWidth(true));
                 }
             }
+        }
+
+        private int CountVisibleClips(FolderNode node, HashSet<AnimationClip> usedClips)
+        {
+            var count = 0;
+            foreach (var child in node.children.Values)
+            {
+                if (clipFilter.Matches(child.name))
+                    count += CountVisibleClips(child, usedClips);
+            }
+
+            foreach (var clip in node.clips)
+            {
+                if (!clipFilter.Matches(clip.name))
+                    continue;
+                var isUsed = usedClips.Contains(clip);
+                if (showUnusedClips && isUsed)
+                    continue;
+                if (!showUnusedClips && !isUsed)
+                    continue;
+                count++;
+            }
+
+            return count;
         }
     }
 }
