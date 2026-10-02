@@ -242,13 +242,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (visibleCount == 0)
                     continue;
 
+                var selectedCount = CountSelectedControllers(child);
+                var countLabel = selectedControllerPaths.Count == cachedControllers.Count
+                    ? $"{visibleCount}"
+                    : $"{selectedCount}/{visibleCount}";
+
                 var wasExpanded = expandedControllerFolders.Contains(child.path);
                 bool expanded;
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(depth * 15f);
                     expanded = EditorGUILayout.Foldout(wasExpanded,
-                        new GUIContent($"{child.name} ({visibleCount})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
+                        new GUIContent($"{child.name} ({countLabel})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
                     var foldoutRect = GUILayoutUtility.GetLastRect();
                     if (Event.current.type == EventType.MouseDown && Event.current.button == 1 &&
                         foldoutRect.Contains(Event.current.mousePosition))
@@ -294,6 +299,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 if (controllerFilter.Matches(child.name))
                     count += CountVisibleControllers(child);
+            }
+            return count;
+        }
+
+        private int CountSelectedControllers(ControllerNode node)
+        {
+            var count = 0;
+            foreach (var controller in node.controllers)
+            {
+                if (!controllerFilter.Matches(controller.name))
+                    continue;
+                if (selectedControllerPaths.Contains(controllerPaths[controller]))
+                    count++;
+            }
+            foreach (var child in node.children.Values)
+            {
+                if (controllerFilter.Matches(child.name))
+                    count += CountSelectedControllers(child);
             }
             return count;
         }
@@ -455,7 +478,39 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var menu = new GenericMenu();
             menu.AddItem(new GUIContent("Open All"), false, () => SetClipFolderExpanded(node, true));
             menu.AddItem(new GUIContent("Collapse All"), false, () => SetClipFolderExpanded(node, false));
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Select All"), false, () => SelectClips(node));
             menu.ShowAsContext();
+        }
+
+        private void SelectClips(FolderNode node)
+        {
+            var usedClips = GetUsedClips();
+            var selection = new List<UnityEngine.Object>();
+
+            void Collect(FolderNode n)
+            {
+                foreach (var clip in n.clips)
+                {
+                    if (!clipFilter.Matches(clip.name))
+                        continue;
+                    var isUsed = usedClips.Contains(clip);
+                    if (showUnusedClips && isUsed)
+                        continue;
+                    if (!showUnusedClips && !isUsed)
+                        continue;
+                    selection.Add(clip);
+                }
+                foreach (var child in n.children.Values)
+                {
+                    if (clipFilter.Matches(child.name))
+                        Collect(child);
+                }
+            }
+
+            Collect(node);
+
+            Selection.objects = selection.ToArray();
         }
 
         private void ShowFolderContextMenu(ControllerNode node)
