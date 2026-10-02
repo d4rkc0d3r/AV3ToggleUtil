@@ -238,13 +238,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!controllerFilter.Matches(child.name))
                     continue;
 
+                var visibleCount = CountVisibleControllers(child);
+                if (visibleCount == 0)
+                    continue;
+
                 var wasExpanded = expandedControllerFolders.Contains(child.path);
                 bool expanded;
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(depth * 15f);
                     expanded = EditorGUILayout.Foldout(wasExpanded,
-                        new GUIContent($"{child.name} ({CountVisibleControllers(child)})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
+                        new GUIContent($"{child.name} ({visibleCount})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
+                    var foldoutRect = GUILayoutUtility.GetLastRect();
+                    if (Event.current.type == EventType.MouseDown && Event.current.button == 1 &&
+                        foldoutRect.Contains(Event.current.mousePosition))
+                        ShowFolderContextMenu(child);
                 }
                 if (expanded != wasExpanded)
                 {
@@ -420,6 +428,44 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             node.count = node.clips.Count + node.children.Values.Sum(c => c.count);
         }
 
+        private void SetClipFolderExpanded(FolderNode node, bool expanded)
+        {
+            if (expanded)
+                expandedFolders.Add(node.path);
+            else
+                expandedFolders.Remove(node.path);
+
+            foreach (var child in node.children.Values)
+                SetClipFolderExpanded(child, expanded);
+        }
+
+        private void SetControllerFolderExpanded(ControllerNode node, bool expanded)
+        {
+            if (expanded)
+                expandedControllerFolders.Add(node.path);
+            else
+                expandedControllerFolders.Remove(node.path);
+
+            foreach (var child in node.children.Values)
+                SetControllerFolderExpanded(child, expanded);
+        }
+
+        private void ShowFolderContextMenu(FolderNode node)
+        {
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Open All"), false, () => SetClipFolderExpanded(node, true));
+            menu.AddItem(new GUIContent("Collapse All"), false, () => SetClipFolderExpanded(node, false));
+            menu.ShowAsContext();
+        }
+
+        private void ShowFolderContextMenu(ControllerNode node)
+        {
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Open All"), false, () => SetControllerFolderExpanded(node, true));
+            menu.AddItem(new GUIContent("Collapse All"), false, () => SetControllerFolderExpanded(node, false));
+            menu.ShowAsContext();
+        }
+
         private void ExpandSingleChildChain(FolderNode node)
         {
             if (node.children.Count != 1)
@@ -447,13 +493,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!clipFilter.Matches(child.name))
                     continue;
 
+                var visibleCount = CountVisibleClips(child, usedClips);
+                if (visibleCount == 0)
+                    continue;
+
                 var wasExpanded = expandedFolders.Contains(child.path);
                 bool expanded;
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(depth * 15f);
                     expanded = EditorGUILayout.Foldout(wasExpanded,
-                        new GUIContent($"{child.name} ({CountVisibleClips(child, usedClips)})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
+                        new GUIContent($"{child.name} ({visibleCount})", wasExpanded ? FolderOpenedIcon : FolderIcon), true);
+                    var foldoutRect = GUILayoutUtility.GetLastRect();
+                    if (Event.current.type == EventType.MouseDown && Event.current.button == 1 &&
+                        foldoutRect.Contains(Event.current.mousePosition))
+                        ShowFolderContextMenu(child);
                 }
                 if (expanded != wasExpanded)
                 {
