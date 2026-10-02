@@ -256,6 +256,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             node.count = node.clips.Count + node.children.Values.Sum(c => c.count);
         }
 
+        private void ExpandSingleChildChain(FolderNode node)
+        {
+            if (node.children.Count != 1)
+                return;
+
+            var child = node.children.Values.First();
+            expandedFolders.Add(child.path);
+            ExpandSingleChildChain(child);
+        }
+
         private void DrawFolderTree(FolderNode node, int depth)
         {
             foreach (var child in node.children.Values.OrderBy(c => c.name, StringComparer.OrdinalIgnoreCase))
@@ -270,7 +280,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (expanded != wasExpanded)
                 {
                     if (expanded)
+                    {
                         expandedFolders.Add(child.path);
+                        ExpandSingleChildChain(child);
+                    }
                     else
                         expandedFolders.Remove(child.path);
                 }
