@@ -101,11 +101,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             ? $"Unused Clips ({visibleClips.Count}/{cachedClips.Count})"
                             : $"Used Clips ({visibleClips.Count}/{cachedClips.Count})",
                         EditorStyles.boldLabel);
-                    using var cc = new EditorGUI.ChangeCheckScope();
-                    showUnusedClips = GUILayout.Toggle(showUnusedClips,
-                        showUnusedClips ? "Unused" : "Used", GUI.skin.button, GUILayout.ExpandWidth(false));
-                    if (cc.changed)
-                        showUnusedClips = !showUnusedClips;
+                    showUnusedClips = GUILayout.Toggle(showUnusedClips, "Unused", GUI.skin.button, GUILayout.ExpandWidth(false));
                 }
                 clipFilter.DrawGUI();
 
