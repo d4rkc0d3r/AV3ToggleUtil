@@ -285,6 +285,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             }
             return descriptor;
         }
+
+        public static VRCAvatarDescriptor GetCurrentOrLastAvatarDescriptor(ref VRCAvatarDescriptor lastFound)
+        {
+            var selected = FindAvatarDescriptor(Selection.activeGameObject);
+            if (selected != null)
+                lastFound = selected;
+            return lastFound;
+        }
     }
 }
 #endif

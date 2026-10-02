@@ -262,17 +262,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             TraverseStateMachine(layer.stateMachine);
         }
 
-        private VRCAvatarDescriptor GetCurrentOrLastAvatarDescriptor()
-        {
-            var selectedAvatarDescriptor = FindAvatarDescriptor(Selection.activeGameObject);
-            if (selectedAvatarDescriptor != null)
-                lastFoundAvatarDescriptor = selectedAvatarDescriptor;
-            return lastFoundAvatarDescriptor;
-        }
-
         private void OnGUI()
         {
-            var av = GetCurrentOrLastAvatarDescriptor();
+            var av = GetCurrentOrLastAvatarDescriptor(ref lastFoundAvatarDescriptor);
 
             using (new EditorGUILayout.HorizontalScope())
             {

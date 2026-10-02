@@ -1549,14 +1549,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private VRCAvatarDescriptor GetCurrentOrLastAvatarDescriptor()
-        {
-            var selectedAvatarDescriptor = FindAvatarDescriptor(Selection.activeGameObject);
-            if (selectedAvatarDescriptor != null)
-                lastFoundAvatarDescriptor = selectedAvatarDescriptor;
-            return lastFoundAvatarDescriptor;
-        }
-
         private static void FocusAnimatorState(StateUsage usage)
         {
             if (usage == null || usage.controller == null || usage.state == null)
@@ -1588,7 +1580,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private void OnGUI()
         {
-            var av = GetCurrentOrLastAvatarDescriptor();
+            var av = GetCurrentOrLastAvatarDescriptor(ref lastFoundAvatarDescriptor);
 
             using (new EditorGUILayout.HorizontalScope())
             {
