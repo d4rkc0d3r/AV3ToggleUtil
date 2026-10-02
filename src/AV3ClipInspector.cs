@@ -463,7 +463,35 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var menu = new GenericMenu();
             menu.AddItem(new GUIContent("Open All"), false, () => SetControllerFolderExpanded(node, true));
             menu.AddItem(new GUIContent("Collapse All"), false, () => SetControllerFolderExpanded(node, false));
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Select All"), false, () => SetControllersSelected(node, true));
+            menu.AddItem(new GUIContent("Deselect All"), false, () => SetControllersSelected(node, false));
             menu.ShowAsContext();
+        }
+
+        private void SetControllersSelected(ControllerNode node, bool selected)
+        {
+            foreach (var controller in node.controllers)
+            {
+                if (!controllerFilter.Matches(controller.name))
+                    continue;
+
+                var path = controllerPaths[controller];
+                if (selected)
+                    selectedControllerPaths.Add(path);
+                else
+                    selectedControllerPaths.Remove(path);
+            }
+
+            foreach (var child in node.children.Values)
+            {
+                if (!controllerFilter.Matches(child.name))
+                    continue;
+
+                SetControllersSelected(child, selected);
+            }
+
+            InvalidateUsedClipsCache();
         }
 
         private void ExpandSingleChildChain(FolderNode node)
