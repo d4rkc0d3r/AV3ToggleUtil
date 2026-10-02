@@ -18,25 +18,32 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         SelectionBindings
     }
 
-    private VRCAvatarDescriptor avatarDescriptor = null;
+    private GameObject cachedSelectionGameObject = null;
+    private VRCAvatarDescriptor cachedAvatarDescriptor = null;
     private VRCAvatarDescriptor AvatarDescriptor
     {
         get
         {
-            if (Selection.activeGameObject != null)
+            var active = Selection.activeGameObject;
+            if (active != null && active != cachedSelectionGameObject)
             {
-                var d = FindAvatarDescriptor(Selection.activeGameObject);
-                if (d != avatarDescriptor)
+                cachedSelectionGameObject = active;
+                var d = FindAvatarDescriptor(active);
+                if (d != cachedAvatarDescriptor)
                 {
                     ClearCaches();
                 }
-                avatarDescriptor = d;
+                cachedAvatarDescriptor = d;
             }
-            if (avatarDescriptor != null)
-                return avatarDescriptor;
+            if (cachedAvatarDescriptor != null)
+                return cachedAvatarDescriptor;
             return null;
         }
-        set { avatarDescriptor = value; }
+        set
+        {
+            cachedAvatarDescriptor = value;
+            cachedSelectionGameObject = null;
+        }
     }
 
     private void ClearCaches()
