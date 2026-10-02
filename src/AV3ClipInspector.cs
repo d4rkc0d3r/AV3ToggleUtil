@@ -275,7 +275,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(depth * 15f);
-                    expanded = EditorGUILayout.Foldout(wasExpanded, $"{child.name} ({child.count})", true);
+                    var folderIcon = wasExpanded ? "d_FolderOpened Icon" : "d_Folder Icon";
+                    expanded = EditorGUILayout.Foldout(wasExpanded,
+                        new GUIContent($"{child.name} ({child.count})", EditorGUIUtility.IconContent(folderIcon).image), true);
                 }
                 if (expanded != wasExpanded)
                 {
@@ -296,13 +298,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    GUILayout.Space(depth * 15f);
-                    GUILayout.Label(clip.name, GUILayout.ExpandWidth(true));
-                    if (GUILayout.Button("Ping", EditorStyles.miniButton, GUILayout.Width(40f)))
-                    {
-                        EditorGUIUtility.PingObject(clip);
-                        Selection.activeObject = clip;
-                    }
+                    GUILayout.Space((1 + depth) * 15f);
+                    GUILayout.Label(new GUIContent(clip.name, EditorGUIUtility.IconContent("d_AnimationClip Icon").image),
+                        GUILayout.Height(20), GUILayout.ExpandWidth(true));
                 }
             }
         }
