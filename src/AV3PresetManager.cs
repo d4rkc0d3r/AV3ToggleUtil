@@ -357,8 +357,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static readonly List<DriverColumn> EmptyDriverColumns = new List<DriverColumn>();
 
         // Fixed widths of the preset states table columns (kept in consts for easy tweaking)
-        private const float ColumnWidth = 80f;
-        private const float IdColumnWidth = 80f;
+        private const float ColumnWidth = 70f;
+        private const float IdColumnWidth = 70f;
         private const float NameColumnWidth = 120f;
         private const float RowPadding = 2f; // vertical padding between rows
         private const float ColumnPadding = 4f; // horizontal padding between columns
@@ -404,9 +404,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             foreach (var column in columns)
             {
                 var vrcInfo = GetVRCExpressionParameterInfo(column.name);
-                string headerTooltip = (vrcInfo != null ? vrcInfo.valueType.ToString() : "no VRC parameter")
-                    + Environment.NewLine + "set by the state's parameter drivers";
-                var headerContent = new GUIContent(column.name) { tooltip = headerTooltip };
+                string headerTooltip = column.name
+                    + Environment.NewLine + (vrcInfo != null ? vrcInfo.valueType.ToString() : "no VRC parameter");
+                var headerContent = new GUIContent(GetParameterDisplayName(column.name)) { tooltip = headerTooltip };
                 DrawLabel(new Rect(headerX, headerCell.y, ColumnWidth, headerCell.height), headerContent, EditorStyles.boldLabel);
                 headerX += ColumnWidth + ColumnPadding;
             }
@@ -415,14 +415,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 var rowRect = GetTableRowRect(rowWidth);
                 DrawPresetStateRow(entry, columns, rowRect);
-
-                EditorGUIUtility.AddCursorRect(rowRect, MouseCursor.Link);
-                if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition) && Event.current.button == 0)
-                {
-                    Event.current.Use();
-                    Selection.activeObject = entry.state;
-                    EditorGUIUtility.PingObject(entry.state);
-                }
             }
         }
 
@@ -432,10 +424,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return GUILayoutUtility.GetRect(0f, RowHeight + RowPadding, GUILayout.Width(width));
         }
 
-        /// <summary>Shrink a row rect so cells don't fill the row padding (keep the height of the content, centered on the padding).</summary>
+        /// <summary>Shrink a row rect so cells don't fill the row padding (keep the height of the content, centered on the padding) and don't start at x=0 (offset by the indent).</summary>
         private static Rect GetTableCellRect(Rect rowRect)
         {
-            return new Rect(rowRect.x, rowRect.y + RowPadding * 0.5f, rowRect.width, rowRect.height - RowPadding);
+            return new Rect(rowRect.x + ColumnGrid.InnerIndent, rowRect.y + RowPadding * 0.5f, rowRect.width - ColumnGrid.InnerIndent, rowRect.height - RowPadding);
+        }
+
+        /// <summary>Get a table header's display name for a driver parameter: strips a leading "Toggle" prefix from toggle-style parameter names.</summary>
+        private static string GetParameterDisplayName(string parameterName)
+        {
+            return parameterName.StartsWith("Toggle", System.StringComparison.Ordinal)
+                ? parameterName.Substring("Toggle".Length)
+                : parameterName;
         }
 
         /// <summary>Draw a non-layout label at an exact rect.</summary>
@@ -462,7 +462,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 : "");
             DrawLabel(new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height), idContent);
             float x = cellRect.x + IdColumnWidth + ColumnPadding;
-            DrawLabel(new Rect(x, cellRect.y, NameColumnWidth, cellRect.height), entry.state.name);
+            var nameRect = new Rect(x, cellRect.y, NameColumnWidth, cellRect.height);
+            DrawLabel(nameRect, entry.state.name);
+
+            // clicking the state name selects & pings the state
+            EditorGUIUtility.AddCursorRect(nameRect, MouseCursor.Link);
+            if (Event.current.type == EventType.MouseDown && nameRect.Contains(Event.current.mousePosition) && Event.current.button == 0)
+            {
+                Event.current.Use();
+                Selection.activeObject = entry.state;
+                EditorGUIUtility.PingObject(entry.state);
+            }
+
             x += NameColumnWidth + ColumnPadding;
             for (int i = 0; i < columns.Count; i++)
             {
