@@ -35,6 +35,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private readonly List<PendingChange> pendingChanges = new List<PendingChange>();
         private int pendingChangesControllerId = -1; // controller the pending changes belong to (-1 if none), used to clear stale entries
 
+        // a pending "add a whole new preset row" (a brand new state), triggered by the + in the table's bottom row
+        private bool addRowPending = false;
+        private string pendingAddRowName = "";
+        private int pendingAddRowId = -1;
+
+        // the preset currently displayed (set in OnGUI, used by Apply to target the right machine / preset parameter)
+        private AnimatorController currentController;
+        private AnimatorStateMachine currentStateMachine;
+        private PresetInfo currentPreset;
+
         private readonly struct PresetStateEntry
         {
             public readonly AnimatorState state;
@@ -319,6 +329,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
             }
+
+            // the preset parameter's column comes first (e.g. before Belt/Skirt/... that the states also set)
+            if (!string.IsNullOrEmpty(preset.presetParameter))
+            {
+                for (int c = columns.Count - 1; c >= 0; c--)
+                {
+                    if (string.Equals(columns[c].name, preset.presetParameter, StringComparison.Ordinal))
+                    {
+                        var presetColumn = columns[c];
+                        columns.RemoveAt(c);
+                        columns.Insert(0, presetColumn);
+                        break;
+                    }
+                }
+            }
+
             preset.driverColumns = columns;
 
             return preset;
@@ -444,6 +470,252 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var rowRect = GetTableRowRect(rowWidth);
                 DrawPresetStateRow(entry, preset, columnWidths, rowRect);
             }
+
+            // a bottom row to add a whole new preset state (id +, name input; parameter columns stay empty)
+            DrawAddPresetRow(preset, rowWidth);
+        }
+
+        /// <summary>Draw the table's bottom "add row": a + button (disabled until a name is entered) and the new state's name input. Parameter columns stay empty.</summary>
+        private void DrawAddPresetRow(PresetInfo preset, float rowWidth)
+        {
+            var rowRect = GetTableRowRect(rowWidth);
+            var cellRect = GetTableCellRect(rowRect);
+
+            var idRect = new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height);
+            var nameRect = new Rect(cellRect.x + IdColumnWidth + ColumnPadding, cellRect.y, NameColumnWidth, cellRect.height);
+
+            int nextId = ComputeNextPresetId(preset);
+            bool hasName = !string.IsNullOrEmpty(pendingAddRowName);
+            var idLabel = addRowPending ? $"id = {pendingAddRowId}" : "+";
+            var idContent = new GUIContent(idLabel, "add a new preset state (row) with this id");
+
+            using (new EditorGUI.DisabledScope(!hasName))
+            {
+                if (GUI.Button(idRect, idContent))
+                {
+                    pendingAddRowId = nextId;
+                    addRowPending = true;
+                }
+            }
+
+            var newName = EditorGUI.TextField(nameRect, new GUIContent("", "new preset state name"), pendingAddRowName ?? "");
+            if (GUI.changed && newName != pendingAddRowName)
+            {
+                pendingAddRowName = newName;
+                if (string.IsNullOrEmpty(pendingAddRowName))
+                    addRowPending = false; // clearing the name cancels the pending add
+            }
+
+            // the parameter columns are left empty for a pending "add row" (nothing is set up beforehand)
+        }
+
+        /// <summary>
+        /// The preset id a new row should use: the first empty integer counting up from the smallest currently
+        /// used id. 0 is reserved for the default state and is never assigned to a new row.
+        /// </summary>
+        private static int ComputeNextPresetId(PresetInfo presets)
+        {
+            var used = new HashSet<int>();
+            foreach (var entry in presets.states)
+            {
+                if (entry.hasEntryTransition)
+                    used.Add(entry.presetId);
+            }
+
+            int candidate = used.Count > 0 ? used.Min() : 1;
+            if (candidate < 1)
+                candidate = 1;
+            while (used.Contains(candidate))
+                candidate++;
+            return candidate;
+        }
+
+        /// <summary>
+        /// Create a new preset state (a new row in the machine): builds the AnimatorState, an entry transition
+        /// pointing at it with an int == presetId condition, re-lays out every state of the machine based on the
+        /// first state's position & the machine's existing spacing, and (while the preset menu has room) adds a
+        /// matching menu entry.
+        /// </summary>
+        private void ApplyAddRow(VRCAvatarDescriptor avatar, AnimatorController controller, AnimatorStateMachine sm, PresetInfo presets, string stateName, int presetId)
+        {
+            if (sm == null || controller == null || presets == null || string.IsNullOrEmpty(stateName))
+                return;
+
+            string presetParameter = presets.presetParameter;
+
+            // read the machine's current child states to base the new layout on (first state's position + existing step)
+            var children = sm.states ?? Array.Empty<ChildAnimatorState>();
+            Vector3 firstPos = children.Length > 0 ? children[0].position : new Vector3(400f, 0f, 0f);
+            float spacing = 70f; // the FXLayerVP Presets machine lays out its states 70px apart
+            if (children.Length >= 2)
+            {
+                float step = (children[children.Length - 1].position.y - children[0].position.y) / (children.Length - 1);
+                if (step > 0f)
+                    spacing = step;
+            }
+
+            // the controller & state machine pre-exist - record them only (the controller's serialization covers its
+            // child states/transitions/drivers, so the undo replay removes anything this action created).
+            // Registering the controller as *created* would make Unity delete the whole asset on Undo.
+            const string undoName = "Add Preset State";
+            Undo.RecordObject(controller, undoName);
+            Undo.RecordObject(sm, undoName);
+
+            // the new state (appended at the end of the machine's state list), starting at the last row's spot
+            var newState = sm.AddState(stateName, new Vector3(firstPos.x, firstPos.y + (children.Length - 1) * spacing, 0f));
+            newState.writeDefaultValues = false;
+
+            // an empty-motion state can't do anything - use the default state's motion (same as the existing Presets states)
+            if (sm.defaultState != null && sm.defaultState.motion != null)
+                newState.motion = sm.defaultState.motion;
+
+            AnimatorTransition entry = sm.AddEntryTransition(newState);
+            entry.AddCondition(AnimatorConditionMode.Equals, presetId, presetParameter);
+
+            // unconditioned exit transition (matches the FXLayerVP Presets states: 0 duration, exit-time based)
+            AnimatorStateTransition exit = newState.AddExitTransition();
+            exit.duration = 0f;
+            exit.exitTime = 0f;
+            exit.hasExitTime = true;
+            exit.canTransitionToSelf = false;
+
+            // start the state with a driver that sets the preset parameter to 0 (like the existing Presets states do, e.g. FXLayerMedium)
+            VRC.SDKBase.VRC_AvatarParameterDriver presetDriver = null;
+            var stateBehaviours = newState.behaviours ?? Array.Empty<StateMachineBehaviour>();
+            for (int i = 0; i < stateBehaviours.Length; i++)
+            {
+                if (stateBehaviours[i] is VRC.SDKBase.VRC_AvatarParameterDriver d)
+                {
+                    presetDriver = d;
+                    break;
+                }
+            }
+
+            if (presetDriver == null)
+            {
+                presetDriver = (VRC.SDKBase.VRC_AvatarParameterDriver)newState.AddStateMachineBehaviour(typeof(VRCAvatarParameterDriver));
+                EditorUtility.SetDirty(presetDriver);
+            }
+
+            bool alreadySetsPreset = false;
+            var driverParameters = presetDriver.parameters;
+            if (driverParameters != null)
+            {
+                for (int i = 0; i < driverParameters.Count; i++)
+                {
+                    if (driverParameters[i] != null && string.Equals(driverParameters[i].name, presetParameter, StringComparison.Ordinal))
+                    {
+                        alreadySetsPreset = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!alreadySetsPreset)
+            {
+                driverParameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
+                {
+                    name = presetParameter,
+                    type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
+                    value = 0f,
+                });
+                EditorUtility.SetDirty(presetDriver);
+            }
+
+            // re-lay out every state based on the first state's position & the machine's spacing
+            var laidOut = sm.states ?? Array.Empty<ChildAnimatorState>();
+            var newChildren = new ChildAnimatorState[laidOut.Length];
+            for (int i = 0; i < laidOut.Length; i++)
+            {
+                var child = laidOut[i];
+                child.position = new Vector3(firstPos.x, firstPos.y + i * spacing, 0f);
+                newChildren[i] = child;
+            }
+            sm.states = newChildren;
+
+            EditorUtility.SetDirty(controller);
+            EditorUtility.SetDirty(sm);
+
+            // add a matching entry to the preset (sub-)menu while it has room (8 entries max)
+            var presetMenuFound = FindPresetMenu(avatar?.expressionsMenu, presetParameter);
+            bool menuEntryAdded = false;
+            bool menuIsFull = false;
+            if (presetMenuFound != null)
+            {
+                var menuControls = presetMenuFound.controls;
+                if (menuControls.Count < 8)
+                {
+                    // copy the control type from an existing preset entry in this same menu
+                    VRCExpressionsMenu.Control template = default;
+                    bool hasTemplate = false;
+                    foreach (var c in menuControls)
+                    {
+                        if (c.parameter != null && string.Equals(c.parameter.name, presetParameter, StringComparison.Ordinal))
+                        {
+                            template = c;
+                            hasTemplate = true;
+                            break;
+                        }
+                    }
+
+                    var newControl = new VRCExpressionsMenu.Control
+                    {
+                        name = stateName,
+                        type = hasTemplate ? template.type : VRCExpressionsMenu.Control.ControlType.Toggle,
+                        parameter = new VRCExpressionsMenu.Control.Parameter { name = presetParameter },
+                        value = presetId,
+                    };
+
+                    Undo.RecordObject(presetMenuFound, undoName);
+                    menuControls.Add(newControl);
+                    EditorUtility.SetDirty(presetMenuFound);
+                    menuEntryAdded = true;
+                }
+                else
+                {
+                    menuIsFull = true;
+                }
+            }
+
+            if (!menuEntryAdded)
+            {
+                string reason = menuIsFull
+                    ? " The preset menu is already full (8 entries)."
+                    : " No menu containing a control for the preset parameter was found.";
+                EditorUtility.DisplayDialog("d4rk Preset Manager",
+                    $"No menu entry was created for the new preset '{stateName}'.{reason}", "OK");
+            }
+        }
+
+        /// <summary>Find the (sub-)menu whose controls set the given preset parameter (the int preset menu).</summary>
+        private static VRCExpressionsMenu FindPresetMenu(VRCExpressionsMenu menu, string presetParameter)
+        {
+            if (menu == null)
+                return null;
+
+            var controls = menu.controls;
+            bool hasPresetControl = false;
+            foreach (var c in controls)
+            {
+                if (c.parameter != null && string.Equals(c.parameter.name, presetParameter, StringComparison.Ordinal))
+                {
+                    hasPresetControl = true;
+                    break;
+                }
+            }
+            if (hasPresetControl)
+                return menu;
+
+            foreach (var c in controls)
+            {
+                if (c.type == VRCExpressionsMenu.Control.ControlType.SubMenu && c.subMenu != null)
+                {
+                    var sub = FindPresetMenu(c.subMenu, presetParameter);
+                    if (sub != null)
+                        return sub;
+                }
+            }
+            return null;
         }
 
         /// <summary>Compute the width of each driver parameter column based on the length of its display name, clamped to &lt;see cref="ColumnWidthMin"&gt;/&lt;see cref="ColumnWidthMax"&gt;.</summary>
@@ -758,6 +1030,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// <summary>Write the pending changes back to the states' parameter drivers (with undo support), then clear them.</summary>
         private void ApplyPendingChanges()
         {
+            // a pending "add row" is applied first (it needs the machine & preset, not a state's drivers)
+            if (addRowPending && !string.IsNullOrEmpty(pendingAddRowName)
+                && currentController != null && currentStateMachine != null && currentPreset != null)
+            {
+                ApplyAddRow(lastFoundAvatarDescriptor, currentController, currentStateMachine, currentPreset, pendingAddRowName, pendingAddRowId);
+                addRowPending = false;
+                pendingAddRowName = "";
+            }
+
             if (pendingChanges.Count == 0)
                 return;
 
@@ -772,6 +1053,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             foreach (var state in statesWithChanges)
             {
                 var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
+                // driver to append new-cell parameters to for this state: an existing driver if any,
+                // otherwise the single driver created on the first new-cell change (shared by all of them)
+                VRC.SDKBase.VRC_AvatarParameterDriver newCellDriver = null;
+                foreach (var behaviour in behaviours)
+                {
+                    if (behaviour is VRC.SDKBase.VRC_AvatarParameterDriver existing)
+                    {
+                        newCellDriver = existing;
+                        break;
+                    }
+                }
+
                 foreach (var change in pendingChanges)
                 {
                     if (change.state != state)
@@ -782,36 +1075,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (change.driverBehaviour == null)
                     {
                         // new cell: add a set operation to the state's driver (creating the driver behaviour if the state has none)
-                        VRC.SDKBase.VRC_AvatarParameterDriver newDriver = null;
-                        foreach (var behaviour in behaviours)
+                        if (newCellDriver == null)
                         {
-                            if (behaviour is VRC.SDKBase.VRC_AvatarParameterDriver existing)
-                            {
-                                newDriver = existing;
-                                break;
-                            }
-                        }
-
-                        if (newDriver == null)
-                        {
-                            // add the newly created driver as an extra behaviour on the state (behaviours returns a copy, so assign it back)
-                            newDriver = ScriptableObject.CreateInstance<VRC.SDKBase.VRC_AvatarParameterDriver>();
-                            Undo.RegisterCreatedObjectUndo(newDriver, "Apply Preset Driver Values");
-                            var newBehaviours = new StateMachineBehaviour[behaviours.Length + 1];
-                            System.Array.Copy(behaviours, newBehaviours, behaviours.Length);
-                            newBehaviours[behaviours.Length] = newDriver;
+                            // VRC_AvatarParameterDriver is abstract; AddStateMachineBehaviour creates the concrete
+                            // VRCAvatarParameterDriver and attaches it to the state (undo via the state itself)
                             Undo.RecordObject(state, "Apply Preset Driver Values");
-                            state.behaviours = newBehaviours;
+                            newCellDriver = (VRC.SDKBase.VRC_AvatarParameterDriver)state.AddStateMachineBehaviour(typeof(VRCAvatarParameterDriver));
                         }
 
-                        Undo.RecordObject(newDriver, "Apply Preset Driver Values");
-                        newDriver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
+                        Undo.RecordObject(newCellDriver, "Apply Preset Driver Values");
+                        newCellDriver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
                         {
                             name = change.parameterName,
                             type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
                             value = change.newValue,
                         });
-                        EditorUtility.SetDirty(newDriver);
+                        EditorUtility.SetDirty(newCellDriver);
                         continue;
                     }
 
@@ -888,6 +1167,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     pendingChanges.Clear();
                     pendingChangesControllerId = controllerId;
+                    addRowPending = false;
+                    pendingAddRowName = "";
                 }
 
                 if (presets.Count == 0)
@@ -910,6 +1191,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
 
                 var (_, _, preset) = presets[selectedPresetIndex];
+                currentController = controller;
+                currentStateMachine = presets[selectedPresetIndex].stateMachine;
+                currentPreset = preset;
 
                 EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
@@ -922,7 +1206,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
-                    EditorGUILayout.LabelField($"Pending Changes  ({pendingChanges.Count})", EditorStyles.boldLabel);
+                    int totalPending = pendingChanges.Count + (addRowPending ? 1 : 0);
+                    EditorGUILayout.LabelField($"Pending Changes  ({totalPending})", EditorStyles.boldLabel);
 
                     // same 30px content indent the table uses
                     void IndentedRow(float indent, Action drawContent)
@@ -934,13 +1219,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         }
                     }
 
-                    if (pendingChanges.Count == 0)
+                    if (totalPending == 0)
                     {
                         IndentedRow(ColumnGrid.InnerIndent, () =>
                             EditorGUILayout.HelpBox("No pending changes. Edit a set-mode value in the table above.", MessageType.None));
                     }
                     else
                     {
+                        if (addRowPending)
+                        {
+                            IndentedRow(ColumnGrid.InnerIndent, () =>
+                                EditorGUILayout.LabelField($"new preset '{pendingAddRowName}'  (id = {pendingAddRowId})", EditorStyles.miniLabel));
+                        }
+
                         // group the pending changes per state (keeping the original order of first edit)
                         var statesWithChanges = new List<AnimatorState>();
                         foreach (var change in pendingChanges)
@@ -970,10 +1261,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
-                                if (GUILayout.Button("Apply", GUILayout.Width(110)))
+                                if (GUILayout.Button("Apply", GUILayout.Width(80)))
                                     ApplyPendingChanges();
                                 if (GUILayout.Button("Discard", GUILayout.Width(80)))
+                                {
                                     pendingChanges.Clear();
+                                    addRowPending = false;
+                                    pendingAddRowName = "";
+                                }
                             }
                         });
                     }
