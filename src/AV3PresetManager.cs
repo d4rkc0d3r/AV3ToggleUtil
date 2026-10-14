@@ -464,12 +464,39 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return new Rect(rowRect.x + ColumnGrid.InnerIndent, rowRect.y + RowPadding * 0.5f, rowRect.width - ColumnGrid.InnerIndent, rowRect.height - RowPadding);
         }
 
-        /// <summary>Get a table header's display name for a driver parameter: strips a leading "Toggle" prefix from toggle-style parameter names.</summary>
+        /// <summary>
+        /// Get a table header's display name for a driver parameter:
+        /// strips a leading "Toggle" prefix and trailing "Int"/"Float"/"Left"/"Right" suffixes,
+        /// then splits camel humps with spaces ("FirstSecond" -> "First Second", "VRCParameter" -> "VRC Parameter").
+        /// </summary>
         private static string GetParameterDisplayName(string parameterName)
         {
-            return parameterName.StartsWith("Toggle", System.StringComparison.Ordinal)
-                ? parameterName.Substring("Toggle".Length)
-                : parameterName;
+            string name = parameterName;
+            if (name.StartsWith("Toggle", System.StringComparison.Ordinal))
+                name = name.Substring("Toggle".Length);
+            if (name.EndsWith("Int", System.StringComparison.Ordinal) && name.Length > "Int".Length)
+                name = name.Substring(0, name.Length - "Int".Length);
+            else if (name.EndsWith("Float", System.StringComparison.Ordinal) && name.Length > "Float".Length)
+                name = name.Substring(0, name.Length - "Float".Length);
+            else if (name.EndsWith("Left", System.StringComparison.Ordinal) && name.Length > "Left".Length)
+                name = name.Substring(0, name.Length - "Left".Length) + "L";
+            else if (name.EndsWith("Right", System.StringComparison.Ordinal) && name.Length > "Right".Length)
+                name = name.Substring(0, name.Length - "Right".Length) + "R";
+
+            // split camel humps into words: an uppercase letter starts a new word after a lowercase letter,
+            // and runs of capitals end when the next letter is lowercase (so "VRCParameter" -> "VRC Parameter")
+            var words = new List<string>();
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (i > 0 && char.IsUpper(c) && ((char.IsLower(name[i - 1]) && !char.IsLower(c)) || (i + 1 < name.Length && char.IsLower(name[i + 1]) && char.IsUpper(name[i - 1]))))
+                    words.Add(string.Concat(c));
+                else if (i > 0 && words.Count > 0)
+                    words[words.Count - 1] = words[words.Count - 1] + c;
+                else
+                    words.Add(string.Concat(c));
+            }
+            return string.Join(" ", words);
         }
 
         /// <summary>Draw a non-layout label at an exact rect.</summary>
