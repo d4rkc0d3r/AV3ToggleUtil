@@ -30,7 +30,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private SplitterState splitter = new();
 
         private AnimatorController selectedController;
-        private string stateMachinePath = "";
+        private int selectedPresetIndex = -1;
 
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
 
@@ -84,89 +84,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
 
             return controllers;
-        }
-
-        /// <summary>
-        /// Resolve "layerName/subSMName/subSMName2/..." to a state machine inside a controller.
-        /// The first segment must be a layer name; further segments are nested sub state machines.
-        /// </summary>
-        private static bool TryResolveStateMachinePath(AnimatorController controller, string path, out AnimatorStateMachine stateMachine, out string errorMessage)
-        {
-            stateMachine = null;
-            errorMessage = null;
-
-            if (controller == null)
-            {
-                errorMessage = "No controller selected.";
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                errorMessage = "Enter a state machine path like 'layerName/subStateMachineName'.";
-                return false;
-            }
-
-            var segments = path.Trim().Split('/');
-            for (int i = 0; i < segments.Length; i++)
-            {
-                if (string.IsNullOrWhiteSpace(segments[i]))
-                {
-                    errorMessage = $"Path segment {i + 1} is empty ('{path}').";
-                    return false;
-                }
-            }
-
-            var layers = controller.layers ?? Array.Empty<AnimatorControllerLayer>();
-            var matchingLayer = layers.FirstOrDefault(l => string.Equals(l.name, segments[0], StringComparison.Ordinal));
-            if (matchingLayer == null)
-            {
-                var available = layers.Length == 0 ? "none" : string.Join(", ", layers.Select(l => $"'{l.name}'"));
-                errorMessage = $"Layer '{segments[0]}' not found in controller '{controller.name}'. Available layers: {available}.";
-                return false;
-            }
-
-            if (segments.Length == 1)
-            {
-                stateMachine = matchingLayer.stateMachine;
-                return true;
-            }
-
-            var currentStateMachine = matchingLayer.stateMachine;
-            for (int i = 1; i < segments.Length; i++)
-            {
-                if (currentStateMachine == null)
-                {
-                    errorMessage = $"Cannot descend into '{segments[i]}': parent state machine not found.";
-                    return false;
-                }
-
-                var childBindings = currentStateMachine.stateMachines ?? Array.Empty<ChildAnimatorStateMachine>();
-                AnimatorStateMachine child = null;
-                for (int c = 0; c < childBindings.Length; c++)
-                {
-                    var childMachine = childBindings[c].stateMachine;
-                    if (childMachine != null && string.Equals(childMachine.name, segments[i], StringComparison.Ordinal))
-                    {
-                        child = childMachine;
-                        break;
-                    }
-                }
-
-                if (child == null)
-                {
-                    var available = childBindings.Length == 0
-                        ? "none"
-                        : string.Join(", ", childBindings.Where(c => c.stateMachine != null).Select(c => $"'{c.stateMachine.name}'"));
-                    errorMessage = $"Sub state machine '{segments[i]}' not found under '{segments[i - 1]}'. Available: {available}.";
-                    return false;
-                }
-
-                currentStateMachine = child;
-            }
-
-            stateMachine = currentStateMachine;
-            return true;
         }
 
         /// <summary>
@@ -295,6 +212,44 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return preset;
         }
 
+        /// <summary>
+        /// Scan all state machines in the controller (layers and nested sub state machines) and
+        /// return the path + analysis of every machine that is a preset state machine.
+        /// </summary>
+        private static List<(string path, AnimatorStateMachine stateMachine, PresetInfo info)> FindPresetStateMachines(AnimatorController controller)
+        {
+            var results = new List<(string, AnimatorStateMachine, PresetInfo)>();
+            if (controller == null)
+                return results;
+
+            void Scan(AnimatorStateMachine stateMachine, string path)
+            {
+                if (stateMachine == null)
+                    return;
+
+                var presetInfo = AnalyzePresetStateMachine(controller, stateMachine);
+                if (presetInfo != null)
+                    results.Add((path, stateMachine, presetInfo));
+
+                var childBindings = stateMachine.stateMachines ?? Array.Empty<ChildAnimatorStateMachine>();
+                for (int i = 0; i < childBindings.Length; i++)
+                {
+                    var child = childBindings[i].stateMachine;
+                    if (child == null)
+                        continue;
+                    Scan(child, string.IsNullOrEmpty(path) ? child.name : $"{path}/{child.name}");
+                }
+            }
+
+            var layers = controller.layers ?? Array.Empty<AnimatorControllerLayer>();
+            for (int i = 0; i < layers.Length; i++)
+            {
+                Scan(layers[i].stateMachine, layers[i].name);
+            }
+
+            return results;
+        }
+
         private void OnGUI()
         {
             var av = GetCurrentOrLastAvatarDescriptor(ref lastFoundAvatarDescriptor);
@@ -362,35 +317,34 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using var rightScroll = new EditorGUILayout.ScrollViewScope(rightScrollPos);
                 rightScrollPos = rightScroll.scrollPosition;
 
-                using (new EditorGUILayout.VerticalScope("box"))
-                {
-                    EditorGUILayout.LabelField("State Machine", EditorStyles.boldLabel);
-                    stateMachinePath = EditorGUILayout.TextField("Path", stateMachinePath);
-                    EditorGUILayout.HelpBox("Path format: 'layerName/subStateMachineName'. Slashes descend into (nested) sub state machines; the first segment is the layer name in the selected controller.", MessageType.None);
-                }
+                var presets = FindPresetStateMachines(selectedController);
 
-                if (!TryResolveStateMachinePath(selectedController, stateMachinePath, out var stateMachine, out var errorMessage))
+                if (presets.Count == 0)
                 {
-                    EditorGUILayout.Space(8);
-                    EditorGUILayout.HelpBox($"State machine not found:\n{errorMessage}", MessageType.Info);
+                    EditorGUILayout.HelpBox($"No preset state machines found in controller '{selectedController.name}'.\n" +
+                        "A preset state machine needs an entry transition (a transition from the entry node with an int parameter == condition) " +
+                        "pointing to each of its states, all using the same int parameter. " +
+                        "The default state may omit the entry transition.", MessageType.Info);
                     return;
                 }
+
+                if (selectedPresetIndex < 0 || selectedPresetIndex >= presets.Count)
+                    selectedPresetIndex = 0;
+
+                using (new EditorGUILayout.VerticalScope("box"))
+                {
+                    EditorGUILayout.LabelField("Preset State Machine", EditorStyles.boldLabel);
+                    var options = presets.Select(p => $"{p.path}  [param: {p.info.presetParameter}, {p.info.states.Count} states]").ToArray();
+                    selectedPresetIndex = EditorGUILayout.Popup("State Machine", selectedPresetIndex, options);
+                }
+
+                var (path, stateMachine, preset) = presets[selectedPresetIndex];
 
                 EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
                     GUILayout.Label(new GUIContent(stateMachine.name ?? "(unnamed)"), EditorStyles.boldLabel);
-                }
-
-                var preset = AnalyzePresetStateMachine(selectedController, stateMachine);
-                if (preset == null)
-                {
-                    EditorGUILayout.Space(8);
-                    EditorGUILayout.HelpBox($"The state machine '{stateMachine.name}' is not a preset state machine.\n" +
-                        "A preset state machine needs an entry transition (a transition from the entry node with an int parameter == condition) " +
-                        "pointing to each of its states, all using the same int parameter. " +
-                        "The default state may omit the entry transition.", MessageType.Info);
-                    return;
+                    GUILayout.Label($"Path: {path}");
                 }
 
                 EditorGUILayout.Space(8);
