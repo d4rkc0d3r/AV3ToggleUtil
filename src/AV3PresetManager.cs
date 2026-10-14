@@ -278,6 +278,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private void OnGUI()
         {
             var av = GetCurrentOrLastAvatarDescriptor(ref lastFoundAvatarDescriptor);
+            var controller = av == null ? null : GetLastBaseController(av);
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -285,6 +286,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using (new EditorGUI.DisabledScope(true))
                 {
                     EditorGUILayout.ObjectField(av, typeof(VRCAvatarDescriptor), true);
+                }
+                GUILayout.Space(8);
+                EditorGUILayout.LabelField("Controller", GUILayout.Width(66));
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    EditorGUILayout.ObjectField(controller, typeof(AnimatorController), true);
                 }
             }
 
@@ -294,20 +301,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return;
             }
 
-            var controller = GetLastBaseController(av);
             if (controller == null)
             {
                 EditorGUILayout.HelpBox("No Animator Controllers found in the base animation layers.", MessageType.Info);
                 return;
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField("Controller", GUILayout.Width(66));
-                using (new EditorGUI.DisabledScope(true))
-                {
-                    EditorGUILayout.ObjectField(controller, typeof(AnimatorController), true);
-                }
             }
 
             using (new EditorGUILayout.VerticalScope())
