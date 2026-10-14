@@ -336,14 +336,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     selectedPresetIndex = EditorGUILayout.Popup("State Machine", selectedPresetIndex, options);
                 }
 
-                var (path, stateMachine, preset) = presets[selectedPresetIndex];
-
-                EditorGUILayout.Space(8);
-                using (new EditorGUILayout.VerticalScope("box"))
-                {
-                    GUILayout.Label(new GUIContent(stateMachine.name ?? "(unnamed)"), EditorStyles.boldLabel);
-                    GUILayout.Label($"Path: {path}");
-                }
+                var (_, _, preset) = presets[selectedPresetIndex];
 
                 EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
