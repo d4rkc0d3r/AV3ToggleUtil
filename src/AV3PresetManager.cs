@@ -79,6 +79,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public float sourceMax;
             public float destMin;
             public float destMax;
+            public StateMachineBehaviour driverBehaviour; // the VRCAvatarParameterDriver this operation lives in
+            public int operationIndex; // index of the operation within that driver's own parameter list
         }
 
         /// <summary>An edit of a set-mode driver value, kept in memory until it gets applied to the driver (or discarded).</summary>
@@ -86,7 +88,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             public AnimatorState state;
             public string parameterName;
-            public int cellIndex; // index of the set-mode driver in the state's cells for this parameter
+            public StateMachineBehaviour driverBehaviour; // the VRCAvatarParameterDriver the set operation is in (null if a new cell is pending)
+            public int operationIndex; // index of the set operation within that driver's own parameter list (-1 if a new cell)
             public float originalValue;
             public float newValue;
         }
@@ -309,6 +312,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             sourceMax = prm.sourceMax,
                             destMin = prm.destMin,
                             destMax = prm.destMax,
+                            // identity of this operation within its own driver (stable across edits, unlike an index across all of the state's cells)
+                            driverBehaviour = behaviours[b],
+                            operationIndex = p,
                         });
                     }
                 }
@@ -547,10 +553,33 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private void DrawDriverCell(AnimatorState state, DriverColumn column, Rect cellRect)
         {
-            if (!column.perState.TryGetValue(state.GetInstanceID(), out var cells) || cells.Count == 0)
-                return; // no drivers for this parameter on this state (also the default state's empty cells)
-
             bool isBool = IsBoolParameter(column.name);
+            bool hasCells = column.perState.TryGetValue(state.GetInstanceID(), out var cells) && cells.Count > 0;
+
+            if (!hasCells)
+            {
+                // no driver for this parameter on this state (also all of the default state's cells):
+                // a pending "add" shows an editable cell, otherwise a "+" button starts a new set operation
+                var newCell = default(DriverSetInfo); // null driverBehaviour marks a pending "add"
+                if (HasPendingChange(newCell, column.name, state))
+                {
+                    float addedValue = GetPendingValue(newCell, column.name, state);
+                    var addedLine = FormatDriverCell(new DriverSetInfo
+                    {
+                        operation = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
+                        value = addedValue,
+                    }, isBool);
+                    string tooltip = "new set operation (pending)" + Environment.NewLine + addedLine;
+                    DrawSetCell(cellRect, isBool, addedValue, tooltip, newCell, column.name, state);
+                    return;
+                }
+
+                var addTooltip = $"add a set operation for '{column.name}' on '{state.name}'";
+                var addContent = new GUIContent("+", addTooltip);
+                if (GUI.Button(cellRect, addContent))
+                    SetPendingValue(newCell, column.name, state, 0f);
+                return;
+            }
 
             // set-mode cells are the only editable ones; other modes (add / random / copy) stay display only
             int editableCellIndex = -1;
@@ -567,12 +596,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // build the display lines with the effective (pending-overridden) value applied
             var lines = new List<string>();
             bool hasChange = false;
+            var editableCell = cells[editableCellIndex];
+            bool hasPending = HasPendingChange(editableCell, column.name, state);
             for (int i = 0; i < cells.Count; i++)
             {
                 var cell = cells[i];
-                if (i == editableCellIndex && HasPendingChange(column.name, state, editableCellIndex))
+                if (i == editableCellIndex && hasPending)
                 {
-                    cell.value = GetPendingValue(column.name, state, editableCellIndex);
+                    cell.value = GetPendingValue(editableCell, column.name, state);
                     hasChange = true;
                 }
                 lines.Add(FormatDriverCell(cell, isBool));
@@ -588,19 +619,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
 
             // editable cell: the field/checkbox shows the effective value of the first set-mode driver
-            var editableCell = cells[editableCellIndex];
-            float effectiveValue = HasPendingChange(column.name, state, editableCellIndex)
-                ? GetPendingValue(column.name, state, editableCellIndex)
+            float effectiveValue = hasPending
+                ? GetPendingValue(editableCell, column.name, state)
                 : editableCell.value;
             string cellTooltip = "only the set-mode value is editable" + Environment.NewLine
                 + (hasChange ? "value changed (pending)" + Environment.NewLine : "")
                 + string.Join(Environment.NewLine, lines);
 
+            DrawSetCell(cellRect, isBool, effectiveValue, cellTooltip, editableCell, column.name, state);
+        }
+
+        /// <summary>Draw a set-mode driver value as an editable checkbox (bool) or delayed text field (numeric); edits are recorded as pending changes.</summary>
+        private void DrawSetCell(Rect cellRect, bool isBool, float effectiveValue, string tooltip, DriverSetInfo originalCell, string parameterName, AnimatorState state)
+        {
             if (isBool)
             {
-                bool newValue = EditorGUI.Toggle(cellRect, new GUIContent("", cellTooltip), effectiveValue != 0f);
+                bool newValue = EditorGUI.Toggle(cellRect, new GUIContent("", tooltip), effectiveValue != 0f);
                 if (GUI.changed)
-                    SetPendingValue(editableCell, column.name, state, editableCellIndex, newValue ? 1f : 0f);
+                    SetPendingValue(originalCell, parameterName, state, newValue ? 1f : 0f);
                 return;
             }
 
@@ -609,7 +645,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (GUI.changed)
             {
                 if (float.TryParse(committed, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed))
-                    SetPendingValue(editableCell, column.name, state, editableCellIndex, parsed);
+                    SetPendingValue(originalCell, parameterName, state, parsed);
                 else
                     GUI.FocusControl(null); // invalid input, cancel the edit so the field resets
             }
@@ -624,35 +660,44 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private bool HasPendingChange(string parameterName, AnimatorState state, int cellIndex)
+        /// <summary>True if the given cell (or a matching pending "add") has a pending change; a cell with a null driverBehaviour identifies a pending add.</summary>
+        private bool HasPendingChange(DriverSetInfo cell, string parameterName, AnimatorState state)
         {
-            return pendingChanges.Exists(c => c.state == state
-                && c.parameterName == parameterName
-                && c.cellIndex == cellIndex);
+            return pendingChanges.Exists(c => IsSameCell(c, cell, parameterName, state));
         }
 
-        private float GetPendingValue(string parameterName, AnimatorState state, int cellIndex)
+        private float GetPendingValue(DriverSetInfo cell, string parameterName, AnimatorState state)
         {
             foreach (var change in pendingChanges)
             {
-                if (change.state == state && change.parameterName == parameterName && change.cellIndex == cellIndex)
+                if (IsSameCell(change, cell, parameterName, state))
                     return change.newValue;
             }
             return 0f; // unreachable: only called when HasPendingChange is true
         }
 
-        /// <summary>Record (or clear, when the value matches the driver's original value) a pending edit of a set-mode driver value.</summary>
-        private void SetPendingValue(DriverSetInfo cell, string parameterName, AnimatorState state, int cellIndex, float value)
+        private static bool IsSameCell(PendingChange change, DriverSetInfo cell, string parameterName, AnimatorState state)
         {
+            // pending adds keep a null driverBehaviour, existing cells reference their driver
+            return change.state == state
+                && change.parameterName == parameterName
+                && change.driverBehaviour == cell.driverBehaviour
+                && (cell.driverBehaviour == null || change.operationIndex == cell.operationIndex);
+        }
+
+        /// <summary>Record (or clear, when the value matches the driver's original value) a pending edit of a set-mode driver value.</summary>
+        private void SetPendingValue(DriverSetInfo cell, string parameterName, AnimatorState state, float value)
+        {
+            bool isNewCell = cell.driverBehaviour == null;
             bool found = false;
             for (int i = 0; i < pendingChanges.Count; i++)
             {
                 var existing = pendingChanges[i];
-                if (existing.state == state && existing.parameterName == parameterName && existing.cellIndex == cellIndex)
+                if (IsSameCell(existing, cell, parameterName, state))
                 {
                     found = true;
-                    if (value == existing.originalValue)
-                        pendingChanges.RemoveAt(i); // back to the original value -> nothing left to apply
+                    if (value == existing.originalValue && !isNewCell)
+                        pendingChanges.RemoveAt(i); // back to the original value -> nothing left to apply (new cells stay, the user still has to edit them)
                     else
                     {
                         existing.newValue = value;
@@ -662,13 +707,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
 
-            if (!found && value != cell.value)
+            if (!found && (isNewCell || value != cell.value))
             {
                 pendingChanges.Add(new PendingChange
                 {
                     state = state,
                     parameterName = parameterName,
-                    cellIndex = cellIndex,
+                    driverBehaviour = cell.driverBehaviour,
+                    operationIndex = isNewCell ? -1 : cell.operationIndex,
                     originalValue = cell.value,
                     newValue = value,
                 });
@@ -699,11 +745,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return (float)Mathf.RoundToInt(value) == value ? Mathf.RoundToInt(value).ToString() : value.ToString("0.###");
         }
 
-        /// <summary>Format a pending change row (without the state name, the changes are grouped per state), e.g. 'param  0 -> 1' (bools shown as true/false).</summary>
+        /// <summary>Format a pending change row (without the state name, the changes are grouped per state), e.g. 'param  0 -> 1' (bools shown as true/false). New cells are prefixed with 'add'.</summary>
         private string FormatPendingChangeDisplay(PendingChange change)
         {
             bool isBool = IsBoolParameter(change.parameterName);
             string Format(float v) => isBool ? (v != 0f ? "true" : "false") : FormatDriverValue(v);
+            if (change.driverBehaviour == null)
+                return $"add  {change.parameterName}  {Format(change.newValue)}";
             return $"{change.parameterName}  {Format(change.originalValue)} -> {Format(change.newValue)}";
         }
 
@@ -731,34 +779,58 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                     // cellIndex points at the target parameter in the exact scan order the table cells were collected
                     // (behaviours in order, each driver's parameters in order)
-                    int index = -1;
-                    VRC.SDKBase.VRC_AvatarParameterDriver driver = null;
-                    VRC.SDKBase.VRC_AvatarParameterDriver.Parameter target = null;
-                    foreach (var behaviour in behaviours)
+                    if (change.driverBehaviour == null)
                     {
-                        if (!(behaviour is VRC.SDKBase.VRC_AvatarParameterDriver drv) || drv.parameters == null)
-                            continue;
-
-                        for (int p = 0; p < drv.parameters.Count; p++)
+                        // new cell: add a set operation to the state's driver (creating the driver behaviour if the state has none)
+                        VRC.SDKBase.VRC_AvatarParameterDriver newDriver = null;
+                        foreach (var behaviour in behaviours)
                         {
-                            var prm = drv.parameters[p];
-                            if (prm == null || !string.Equals(prm.name, change.parameterName, StringComparison.Ordinal))
-                                continue;
-
-                            index++;
-                            if (index == change.cellIndex)
+                            if (behaviour is VRC.SDKBase.VRC_AvatarParameterDriver existing)
                             {
-                                driver = drv;
-                                target = prm;
+                                newDriver = existing;
                                 break;
                             }
                         }
 
-                        if (target != null)
-                            break;
+                        if (newDriver == null)
+                        {
+                            // add the newly created driver as an extra behaviour on the state (behaviours returns a copy, so assign it back)
+                            newDriver = ScriptableObject.CreateInstance<VRC.SDKBase.VRC_AvatarParameterDriver>();
+                            Undo.RegisterCreatedObjectUndo(newDriver, "Apply Preset Driver Values");
+                            var newBehaviours = new StateMachineBehaviour[behaviours.Length + 1];
+                            System.Array.Copy(behaviours, newBehaviours, behaviours.Length);
+                            newBehaviours[behaviours.Length] = newDriver;
+                            Undo.RecordObject(state, "Apply Preset Driver Values");
+                            state.behaviours = newBehaviours;
+                        }
+
+                        Undo.RecordObject(newDriver, "Apply Preset Driver Values");
+                        newDriver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
+                        {
+                            name = change.parameterName,
+                            type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
+                            value = change.newValue,
+                        });
+                        EditorUtility.SetDirty(newDriver);
+                        continue;
                     }
 
-                    if (target == null)
+                    // the pending change remembers the exact driver behaviour & index within its own parameter list
+                    VRC.SDKBase.VRC_AvatarParameterDriver driver = null;
+                    foreach (var behaviour in behaviours)
+                    {
+                        if (behaviour == change.driverBehaviour)
+                            driver = behaviour as VRC.SDKBase.VRC_AvatarParameterDriver;
+                    }
+
+                    VRC.SDKBase.VRC_AvatarParameterDriver.Parameter target = null;
+                    if (driver != null && driver.parameters != null
+                        && change.operationIndex >= 0 && change.operationIndex < driver.parameters.Count)
+                    {
+                        target = driver.parameters[change.operationIndex];
+                    }
+
+                    if (target == null || !string.Equals(target.name, change.parameterName, StringComparison.Ordinal))
                         continue; // the driver changed since the table was scanned; the stale change is dropped
 
                     Undo.RecordObject(driver, "Apply Preset Driver Values");
