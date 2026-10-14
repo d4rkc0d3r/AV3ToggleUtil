@@ -36,13 +36,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public readonly int presetId;
             public readonly bool isDefault;
             public readonly bool hasEntryTransition;
+            public readonly string extraConditions; // null if none; "\n"-separated condition descriptions otherwise
 
-            public PresetStateEntry(AnimatorState state, int presetId, bool isDefault, bool hasEntryTransition)
+            public PresetStateEntry(AnimatorState state, int presetId, bool isDefault, bool hasEntryTransition, string extraConditions)
             {
                 this.state = state;
                 this.presetId = presetId;
                 this.isDefault = isDefault;
                 this.hasEntryTransition = hasEntryTransition;
+                this.extraConditions = extraConditions;
             }
         }
 
@@ -106,6 +108,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             // Collect int == conditions from the entry transitions and group them per destination state
             var entryInfo = new Dictionary<int, (int presetId, string parameter)>(); // destination instance id -> info
+            var extraConditionList = new Dictionary<int, List<string>>(); // destination instance id -> extra conditions
             foreach (var transition in entryTransitions)
             {
                 var destination = transition.destinationState;
@@ -116,23 +119,43 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (conditions == null)
                     continue;
 
+                var destId = destination.GetInstanceID();
+                List<string> extras = null;
+                bool found = false;
                 for (int c = 0; c < conditions.Length; c++)
                 {
                     var cond = conditions[c];
-                    if (cond.mode != AnimatorConditionMode.Equals)
-                        continue;
-                    if (string.IsNullOrEmpty(cond.parameter) || !intParameters.Contains(cond.parameter))
-                        continue;
-
-                    var presetId = Mathf.RoundToInt(cond.threshold);
-                    var destId = destination.GetInstanceID();
-                    if (entryInfo.TryGetValue(destId, out var existing) && !string.Equals(existing.parameter, cond.parameter, StringComparison.Ordinal))
+                    if (cond.mode == AnimatorConditionMode.Equals && !string.IsNullOrEmpty(cond.parameter) && intParameters.Contains(cond.parameter))
                     {
-                        // The same state is targeted by entry transitions using different int parameters -> not a preset
-                        return null;
+                        if (!found)
+                        {
+                            var presetId = Mathf.RoundToInt(cond.threshold);
+                            if (entryInfo.TryGetValue(destId, out var existing) && !string.Equals(existing.parameter, cond.parameter, StringComparison.Ordinal))
+                            {
+                                // The same state is targeted by entry transitions using different int parameters -> not a preset
+                                return null;
+                            }
+                            entryInfo[destId] = (presetId, cond.parameter);
+                            found = true;
+                        }
                     }
-                    entryInfo[destId] = (presetId, cond.parameter);
-                    break;
+                    else
+                    {
+                        (extras ??= new List<string>()).Add(FormatCondition(cond));
+                    }
+                }
+
+                if (!found)
+                    continue;
+
+                if (extras != null)
+                {
+                    if (!extraConditionList.TryGetValue(destId, out var list))
+                    {
+                        list = new List<string>();
+                        extraConditionList[destId] = list;
+                    }
+                    list.AddRange(extras);
                 }
             }
 
@@ -180,19 +203,38 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 presetParameter = commonParameter,
             };
 
-            // Sort preset states by their preset id, then append the default state (without an id) if it exists
+            // Put the default state first, then sort preset states by their preset id
             var defaultState = stateMachine.defaultState;
-            foreach (var state in presetStates.OrderBy(s => entryInfo[s.GetInstanceID()].presetId))
-            {
-                preset.states.Add(new PresetStateEntry(state, entryInfo[state.GetInstanceID()].presetId, false, true));
-            }
-
             if (defaultState != null)
             {
-                preset.states.Add(new PresetStateEntry(defaultState, int.MinValue, true, false));
+                preset.states.Add(new PresetStateEntry(defaultState, int.MinValue, true, false, null));
+            }
+
+            foreach (var state in presetStates.OrderBy(s => entryInfo[s.GetInstanceID()].presetId))
+            {
+                extraConditionList.TryGetValue(state.GetInstanceID(), out var extras);
+                preset.states.Add(new PresetStateEntry(
+                    state,
+                    entryInfo[state.GetInstanceID()].presetId,
+                    false,
+                    true,
+                    extras != null ? string.Join("\n", extras) : null));
             }
 
             return preset;
+        }
+
+        /// <summary>Format an <see cref="AnimatorCondition"/> as a human readable string, e.g. 'Preset &gt; 1'. </summary>
+        private static string FormatCondition(AnimatorCondition cond)
+        {
+            string op = cond.mode switch
+            {
+                AnimatorConditionMode.Greater => ">",
+                AnimatorConditionMode.Less => "<",
+                AnimatorConditionMode.Equals => "==",
+                _ => "?",
+            };
+            return $"{cond.parameter} {op} {cond.threshold}";
         }
 
         /// <summary>
@@ -201,7 +243,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// </summary>
         private static List<(string path, AnimatorStateMachine stateMachine, PresetInfo info)> FindPresetStateMachines(AnimatorController controller)
         {
-            var results = new List<(string, AnimatorStateMachine, PresetInfo)>();
+            var results = new List<(string path, AnimatorStateMachine stateMachine, PresetInfo info)>();
             if (controller == null)
                 return results;
 
@@ -312,11 +354,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         using var row = new EditorGUILayout.HorizontalScope();
                         GUILayout.Space(ColumnGrid.InnerIndent);
-                        GUILayout.Label($"{entry.state.name}", GUILayout.Width(240f));
-                        if (entry.hasEntryTransition)
-                            GUILayout.Label($"id = {entry.presetId}");
-                        else if (entry.isDefault)
-                            GUILayout.Label("default state (no entry condition)");
+                        string idText = entry.hasEntryTransition
+                            ? (entry.extraConditions != null ? $"id = {entry.presetId} *" : $"id = {entry.presetId}")
+                            : "default";
+                        var idContent = entry.extraConditions != null
+                            ? new GUIContent(idText, $"Additional conditions:\n{entry.extraConditions}")
+                            : new GUIContent(idText);
+                        GUILayout.Label(idContent, GUILayout.Width(80f));
+                        GUILayout.Label($"{entry.state.name}");
                         if (ClickableLastRect())
                         {
                             Selection.activeObject = entry.state;
