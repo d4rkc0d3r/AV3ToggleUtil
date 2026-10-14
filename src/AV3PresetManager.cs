@@ -25,11 +25,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
     /// </summary>
     public class PresetManager : EditorWindow
     {
-        private Vector2 leftScrollPos;
-        private Vector2 rightScrollPos;
-        private SplitterState splitter = new();
-
-        private AnimatorController selectedController;
+        private Vector2 scrollPos;
         private int selectedPresetIndex = -1;
 
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
@@ -57,33 +53,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public readonly List<PresetStateEntry> states = new List<PresetStateEntry>();
         }
 
-        private static bool IsSameController(AnimatorController a, AnimatorController b)
+        /// <summary>Get the controller of the last base animation layer of the avatar.</summary>
+        private static AnimatorController GetLastBaseController(VRCAvatarDescriptor av)
         {
-            if (a == null || b == null)
-                return ReferenceEquals(a, b);
-            return a.GetInstanceID() == b.GetInstanceID();
-        }
-
-        /// <summary>Collect the unique Animator Controllers of the base animation layers.</summary>
-        private static List<AnimatorController> GetBaseControllers(VRCAvatarDescriptor av)
-        {
-            var controllers = new List<AnimatorController>();
             if (av == null || av.baseAnimationLayers == null)
-                return controllers;
+                return null;
 
-            var known = new HashSet<int>();
+            AnimatorController controller = null;
             foreach (var layer in av.baseAnimationLayers)
             {
-                var controller = layer.animatorController as AnimatorController;
-                if (controller == null)
-                    continue;
-                var id = controller.GetInstanceID();
-                if (!known.Add(id))
-                    continue;
-                controllers.Add(controller);
+                if (layer.animatorController is AnimatorController c)
+                    controller = c;
             }
 
-            return controllers;
+            return controller;
         }
 
         /// <summary>
@@ -269,59 +252,32 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return;
             }
 
-            var controllers = GetBaseControllers(av);
-            if (controllers.Count == 0)
+            var controller = GetLastBaseController(av);
+            if (controller == null)
             {
                 EditorGUILayout.HelpBox("No Animator Controllers found in the base animation layers.", MessageType.Info);
                 return;
             }
 
-            // Default to the last controller of the base animation layers
-            var selectedEntry = controllers.FirstOrDefault(c => IsSameController(c, selectedController));
-            if (selectedEntry == null)
-                selectedController = controllers[controllers.Count - 1];
-
-            using var horizontal = new EditorGUILayout.HorizontalScope();
-
-            using (new EditorGUILayout.VerticalScope(GUILayout.Width(splitter.leftPanelWidth)))
+            using (new EditorGUILayout.HorizontalScope())
             {
-                using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
-                leftScrollPos = leftScroll.scrollPosition;
-
-                using (new EditorGUILayout.VerticalScope("box"))
+                EditorGUILayout.LabelField("Controller", GUILayout.Width(66));
+                using (new EditorGUI.DisabledScope(true))
                 {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        GUILayout.Label($"Controllers ({controllers.Count})", EditorStyles.boldLabel);
-                    }
-
-                    for (int i = 0; i < controllers.Count; i++)
-                    {
-                        var controller = controllers[i];
-                        using var cc = new EditorGUI.ChangeCheckScope();
-                        var selected = GUILayout.Toggle(IsSameController(controller, selectedController),
-                            $"{controller.name} ({i})", GUI.skin.button, GUILayout.ExpandWidth(true));
-                        if (cc.changed && selected && !IsSameController(controller, selectedController))
-                        {
-                            selectedController = controller;
-                            GUI.FocusControl(null);
-                        }
-                    }
+                    EditorGUILayout.ObjectField(controller, typeof(AnimatorController), true);
                 }
             }
 
-            splitter.DrawSplitter(this, 160f, 520f);
-
             using (new EditorGUILayout.VerticalScope())
             {
-                using var rightScroll = new EditorGUILayout.ScrollViewScope(rightScrollPos);
-                rightScrollPos = rightScroll.scrollPosition;
+                using var scroll = new EditorGUILayout.ScrollViewScope(scrollPos);
+                scrollPos = scroll.scrollPosition;
 
-                var presets = FindPresetStateMachines(selectedController);
+                var presets = FindPresetStateMachines(controller);
 
                 if (presets.Count == 0)
                 {
-                    EditorGUILayout.HelpBox($"No preset state machines found in controller '{selectedController.name}'.\n" +
+                    EditorGUILayout.HelpBox($"No preset state machines found in controller '{controller.name}'.\n" +
                         "A preset state machine needs an entry transition (a transition from the entry node with an int parameter == condition) " +
                         "pointing to each of its states, all using the same int parameter. " +
                         "The default state may omit the entry transition.", MessageType.Info);
