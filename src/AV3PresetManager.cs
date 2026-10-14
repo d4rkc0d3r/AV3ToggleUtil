@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
 using UnityEditor;
@@ -29,6 +30,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private int selectedPresetIndex = -1;
 
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
+
+        // Not-yet-applied edits of the states' parameter driver set values (kept in memory until applied or discarded)
+        private readonly List<PendingChange> pendingChanges = new List<PendingChange>();
+        private int pendingChangesControllerId = -1; // controller the pending changes belong to (-1 if none), used to clear stale entries
 
         private readonly struct PresetStateEntry
         {
@@ -74,6 +79,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public float sourceMax;
             public float destMin;
             public float destMax;
+        }
+
+        /// <summary>An edit of a set-mode driver value, kept in memory until it gets applied to the driver (or discarded).</summary>
+        private struct PendingChange
+        {
+            public AnimatorState state;
+            public string parameterName;
+            public int cellIndex; // index of the set-mode driver in the state's cells for this parameter
+            public float originalValue;
+            public float newValue;
         }
 
         private class PresetInfo
@@ -509,26 +524,127 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return; // no drivers for this parameter on this state (also the default state's empty cells)
 
             bool isBool = IsBoolParameter(column.name);
-            var lines = new List<string>();
-            foreach (var cell in cells)
-                lines.Add(FormatDriverCell(cell, isBool));
 
-            string joined = string.Join(", ", lines);
-            string cellTooltip = "display only" + Environment.NewLine + string.Join(Environment.NewLine, lines);
-
-            // bool columns render as a checkbox (display only, not wired to anything)
-            if (isBool)
+            // set-mode cells are the only editable ones; other modes (add / random / copy) stay display only
+            int editableCellIndex = -1;
+            for (int i = 0; i < cells.Count; i++)
             {
-                var first = cells[0];
-                bool checkedValue = first.operation == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set && Mathf.Abs(first.value) > 0f;
-                EditorGUI.Toggle(cellRect, new GUIContent("", cellTooltip), checkedValue);
+                if (cells[i].operation == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set)
+                {
+                    editableCellIndex = i;
+                    break;
+                }
+            }
+            bool editable = editableCellIndex >= 0;
+
+            // build the display lines with the effective (pending-overridden) value applied
+            var lines = new List<string>();
+            bool hasChange = false;
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var cell = cells[i];
+                if (i == editableCellIndex && HasPendingChange(column.name, state, editableCellIndex))
+                {
+                    cell.value = GetPendingValue(column.name, state, editableCellIndex);
+                    hasChange = true;
+                }
+                lines.Add(FormatDriverCell(cell, isBool));
+            }
+
+            if (!editable)
+            {
+                // no set-mode value: the whole cell is display only
+                string joined = string.Join(", ", lines);
+                string readOnlyTooltip = "display only" + Environment.NewLine + string.Join(Environment.NewLine, lines);
+                DrawReadOnlyCell(cellRect, joined, readOnlyTooltip);
                 return;
             }
 
-            // values render as a (disabled, display-only) input field
+            // editable cell: the field/checkbox shows the effective value of the first set-mode driver
+            var editableCell = cells[editableCellIndex];
+            float effectiveValue = HasPendingChange(column.name, state, editableCellIndex)
+                ? GetPendingValue(column.name, state, editableCellIndex)
+                : editableCell.value;
+            string cellTooltip = "only the set-mode value is editable" + Environment.NewLine
+                + (hasChange ? "value changed (pending)" + Environment.NewLine : "")
+                + string.Join(Environment.NewLine, lines);
+
+            if (isBool)
+            {
+                bool newValue = EditorGUI.Toggle(cellRect, new GUIContent("", cellTooltip), effectiveValue != 0f);
+                if (GUI.changed)
+                    SetPendingValue(editableCell, column.name, state, editableCellIndex, newValue ? 1f : 0f);
+                return;
+            }
+
+            string displayed = FormatDriverValue(effectiveValue);
+            string committed = EditorGUI.DelayedTextField(cellRect, displayed);
+            if (GUI.changed)
+            {
+                if (float.TryParse(committed, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed))
+                    SetPendingValue(editableCell, column.name, state, editableCellIndex, parsed);
+                else
+                    GUI.FocusControl(null); // invalid input, cancel the edit so the field resets
+            }
+        }
+
+        /// <summary>Draw a display-only (disabled) input field cell.</summary>
+        private static void DrawReadOnlyCell(Rect cellRect, string text, string tooltip)
+        {
             using (new EditorGUI.DisabledScope(true))
             {
-                EditorGUI.TextField(cellRect, new GUIContent("", cellTooltip), joined);
+                EditorGUI.TextField(cellRect, new GUIContent("", tooltip), text);
+            }
+        }
+
+        private bool HasPendingChange(string parameterName, AnimatorState state, int cellIndex)
+        {
+            return pendingChanges.Exists(c => c.state == state
+                && c.parameterName == parameterName
+                && c.cellIndex == cellIndex);
+        }
+
+        private float GetPendingValue(string parameterName, AnimatorState state, int cellIndex)
+        {
+            foreach (var change in pendingChanges)
+            {
+                if (change.state == state && change.parameterName == parameterName && change.cellIndex == cellIndex)
+                    return change.newValue;
+            }
+            return 0f; // unreachable: only called when HasPendingChange is true
+        }
+
+        /// <summary>Record (or clear, when the value matches the driver's original value) a pending edit of a set-mode driver value.</summary>
+        private void SetPendingValue(DriverSetInfo cell, string parameterName, AnimatorState state, int cellIndex, float value)
+        {
+            bool found = false;
+            for (int i = 0; i < pendingChanges.Count; i++)
+            {
+                var existing = pendingChanges[i];
+                if (existing.state == state && existing.parameterName == parameterName && existing.cellIndex == cellIndex)
+                {
+                    found = true;
+                    if (value == existing.originalValue)
+                        pendingChanges.RemoveAt(i); // back to the original value -> nothing left to apply
+                    else
+                    {
+                        existing.newValue = value;
+                        pendingChanges[i] = existing; // the List indexer returns a copy, so write the struct back
+                    }
+                    break;
+                }
+            }
+
+            if (!found && value != cell.value)
+            {
+                pendingChanges.Add(new PendingChange
+                {
+                    state = state,
+                    parameterName = parameterName,
+                    cellIndex = cellIndex,
+                    originalValue = cell.value,
+                    newValue = value,
+                });
             }
         }
 
@@ -554,6 +670,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static string FormatDriverValue(float value)
         {
             return (float)Mathf.RoundToInt(value) == value ? Mathf.RoundToInt(value).ToString() : value.ToString("0.###");
+        }
+
+        /// <summary>Format a pending change row (without the state name, the changes are grouped per state), e.g. 'param  0 -> 1' (bools shown as true/false).</summary>
+        private string FormatPendingChangeDisplay(PendingChange change)
+        {
+            bool isBool = IsBoolParameter(change.parameterName);
+            string Format(float v) => isBool ? (v != 0f ? "true" : "false") : FormatDriverValue(v);
+            return $"{change.parameterName}  {Format(change.originalValue)} -> {Format(change.newValue)}";
+        }
+
+        /// <summary>Apply the pending changes to the actual parameter drivers (stub, not implemented yet).</summary>
+        private void ApplyPendingChanges()
+        {
+            // Stub: writing the pending changes back to the VRCAvatarParameterDriver values is not implemented yet.
         }
 
         private void OnGUI()
@@ -595,6 +725,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 var presets = FindPresetStateMachines(controller);
 
+                // clear stale pending changes when the controller changed
+                int controllerId = controller.GetInstanceID();
+                if (pendingChangesControllerId != controllerId)
+                {
+                    pendingChanges.Clear();
+                    pendingChangesControllerId = controllerId;
+                }
+
                 if (presets.Count == 0)
                 {
                     EditorGUILayout.HelpBox($"No preset state machines found in controller '{controller.name}'.\n" +
@@ -622,6 +760,69 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     EditorGUILayout.LabelField($"Preset States  (parameter: {preset.presetParameter}, {preset.states.Count} states)", EditorStyles.boldLabel);
 
                     DrawPresetStates(preset);
+                }
+
+                EditorGUILayout.Space(8);
+                using (new EditorGUILayout.VerticalScope("box"))
+                {
+                    EditorGUILayout.LabelField($"Pending Changes  ({pendingChanges.Count})", EditorStyles.boldLabel);
+
+                    // same 30px content indent the table uses
+                    void IndentedRow(float indent, Action drawContent)
+                    {
+                        using (new EditorGUILayout.HorizontalScope())
+                        {
+                            GUILayout.Space(indent);
+                            drawContent();
+                        }
+                    }
+
+                    if (pendingChanges.Count == 0)
+                    {
+                        IndentedRow(ColumnGrid.InnerIndent, () =>
+                            EditorGUILayout.HelpBox("No pending changes. Edit a set-mode value in the table above.", MessageType.None));
+                    }
+                    else
+                    {
+                        // group the pending changes per state (keeping the original order of first edit)
+                        var statesWithChanges = new List<AnimatorState>();
+                        foreach (var change in pendingChanges)
+                        {
+                            if (!statesWithChanges.Contains(change.state))
+                                statesWithChanges.Add(change.state);
+                        }
+
+                        for (int i = 0; i < statesWithChanges.Count; i++)
+                        {
+                            var state = statesWithChanges[i];
+                            IndentedRow(ColumnGrid.InnerIndent, () =>
+                                EditorGUILayout.LabelField(state.name, EditorStyles.boldLabel));
+
+                            foreach (var change in pendingChanges)
+                            {
+                                if (change.state != state)
+                                    continue;
+
+                                IndentedRow(ColumnGrid.InnerIndent + ColumnGrid.InnerIndent / 3f, () =>
+                                    EditorGUILayout.LabelField(FormatPendingChangeDisplay(change), EditorStyles.miniLabel));
+                            }
+                        }
+
+                        EditorGUILayout.Space(2);
+                        IndentedRow(ColumnGrid.InnerIndent, () =>
+                        {
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                using (new EditorGUI.DisabledScope(true))
+                                {
+                                    if (GUILayout.Button("Apply (coming soon)", GUILayout.Width(110)))
+                                        ApplyPendingChanges(); // stub
+                                }
+                                if (GUILayout.Button("Discard", GUILayout.Width(80)))
+                                    pendingChanges.Clear();
+                            }
+                        });
+                    }
                 }
             }
         }
