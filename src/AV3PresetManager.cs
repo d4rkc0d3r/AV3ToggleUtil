@@ -680,10 +680,68 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return $"{change.parameterName}  {Format(change.originalValue)} -> {Format(change.newValue)}";
         }
 
-        /// <summary>Apply the pending changes to the actual parameter drivers (stub, not implemented yet).</summary>
+        /// <summary>Write the pending changes back to the states' parameter drivers (with undo support), then clear them.</summary>
         private void ApplyPendingChanges()
         {
-            // Stub: writing the pending changes back to the VRCAvatarParameterDriver values is not implemented yet.
+            if (pendingChanges.Count == 0)
+                return;
+
+            // group the changes per state so each state's drivers are only walked once
+            var statesWithChanges = new List<AnimatorState>();
+            foreach (var change in pendingChanges)
+            {
+                if (!statesWithChanges.Contains(change.state))
+                    statesWithChanges.Add(change.state);
+            }
+
+            foreach (var state in statesWithChanges)
+            {
+                var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
+                foreach (var change in pendingChanges)
+                {
+                    if (change.state != state)
+                        continue;
+
+                    // cellIndex points at the target parameter in the exact scan order the table cells were collected
+                    // (behaviours in order, each driver's parameters in order)
+                    int index = -1;
+                    VRC.SDKBase.VRC_AvatarParameterDriver driver = null;
+                    VRC.SDKBase.VRC_AvatarParameterDriver.Parameter target = null;
+                    foreach (var behaviour in behaviours)
+                    {
+                        if (!(behaviour is VRC.SDKBase.VRC_AvatarParameterDriver drv) || drv.parameters == null)
+                            continue;
+
+                        for (int p = 0; p < drv.parameters.Count; p++)
+                        {
+                            var prm = drv.parameters[p];
+                            if (prm == null || !string.Equals(prm.name, change.parameterName, StringComparison.Ordinal))
+                                continue;
+
+                            index++;
+                            if (index == change.cellIndex)
+                            {
+                                driver = drv;
+                                target = prm;
+                                break;
+                            }
+                        }
+
+                        if (target != null)
+                            break;
+                    }
+
+                    if (target == null)
+                        continue; // the driver changed since the table was scanned; the stale change is dropped
+
+                    Undo.RecordObject(driver, "Apply Preset Driver Values");
+                    target.value = change.newValue;
+                    EditorUtility.SetDirty(driver);
+                }
+            }
+
+            pendingChanges.Clear();
+            Repaint();
         }
 
         private void OnGUI()
@@ -813,11 +871,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
-                                using (new EditorGUI.DisabledScope(true))
-                                {
-                                    if (GUILayout.Button("Apply (coming soon)", GUILayout.Width(110)))
-                                        ApplyPendingChanges(); // stub
-                                }
+                                if (GUILayout.Button("Apply", GUILayout.Width(110)))
+                                    ApplyPendingChanges();
                                 if (GUILayout.Button("Discard", GUILayout.Width(80)))
                                     pendingChanges.Clear();
                             }
