@@ -356,8 +356,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static readonly List<DriverColumn> EmptyDriverColumns = new List<DriverColumn>();
 
-        // Fixed widths of the preset states table columns (kept in consts for easy tweaking)
-        private const float ColumnWidth = 70f;
+        // Widths of the preset states table columns (kept in consts for easy tweaking)
+        private const float ColumnWidthMin = 40f; // min width of a driver parameter column
+        private const float ColumnWidthMax = 90f; // max width of a driver parameter column
+        private const float ColumnTextPadding = 6f; // inner horizontal padding inside a driver parameter column
         private const float IdColumnWidth = 70f;
         private const float NameColumnWidth = 120f;
         private const float RowPadding = 2f; // vertical padding between rows
@@ -390,15 +392,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private void DrawPresetStates(PresetInfo preset)
         {
             var columns = preset.driverColumns ?? EmptyDriverColumns;
+            var columnWidths = BuildDriverColumnWidths(columns);
 
-            // One layout rect per row, sized for all fixed-width columns; the cells are then drawn at their calculated x & width inside it
-            float rowWidth = ColumnGrid.InnerIndent + IdColumnWidth + ColumnPadding + NameColumnWidth + ColumnPadding + (ColumnWidth + ColumnPadding) * columns.Count;
+            // One layout rect per row, sized for all columns; the cells are then drawn at their calculated x & width inside it
+            float rowWidth = ColumnGrid.InnerIndent + IdColumnWidth + ColumnPadding + NameColumnWidth + ColumnPadding;
+            for (int i = 0; i < columnWidths.Count; i++)
+                rowWidth += columnWidths[i] + ColumnPadding;
 
             // header row
             var headerRect = GetTableRowRect(rowWidth);
             var headerCell = GetTableCellRect(headerRect);
             DrawLabel(new Rect(headerCell.x, headerCell.y, IdColumnWidth, headerCell.height), "id", EditorStyles.boldLabel);
             float headerX = headerCell.x + IdColumnWidth + ColumnPadding;
+            int headerXIndex = 0;
             DrawLabel(new Rect(headerX, headerCell.y, NameColumnWidth, headerCell.height), "State", EditorStyles.boldLabel);
             headerX += NameColumnWidth + ColumnPadding;
             foreach (var column in columns)
@@ -407,15 +413,28 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 string headerTooltip = column.name
                     + Environment.NewLine + (vrcInfo != null ? vrcInfo.valueType.ToString() : "no VRC parameter");
                 var headerContent = new GUIContent(GetParameterDisplayName(column.name)) { tooltip = headerTooltip };
-                DrawLabel(new Rect(headerX, headerCell.y, ColumnWidth, headerCell.height), headerContent, EditorStyles.boldLabel);
-                headerX += ColumnWidth + ColumnPadding;
+                DrawLabel(new Rect(headerX, headerCell.y, columnWidths[headerXIndex], headerCell.height), headerContent, EditorStyles.boldLabel);
+                headerX += columnWidths[headerXIndex] + ColumnPadding;
+                headerXIndex++;
             }
 
             foreach (var entry in preset.states)
             {
                 var rowRect = GetTableRowRect(rowWidth);
-                DrawPresetStateRow(entry, columns, rowRect);
+                DrawPresetStateRow(entry, preset, columnWidths, rowRect);
             }
+        }
+
+        /// <summary>Compute the width of each driver parameter column based on the length of its display name, clamped to &lt;see cref="ColumnWidthMin"&gt;/&lt;see cref="ColumnWidthMax"&gt;.</summary>
+        private static List<float> BuildDriverColumnWidths(List<DriverColumn> columns)
+        {
+            var widths = new List<float>(columns.Count);
+            foreach (var column in columns)
+            {
+                float textWidth = EditorStyles.boldLabel.CalcSize(new GUIContent(GetParameterDisplayName(column.name))).x;
+                widths.Add(Mathf.Clamp(textWidth + ColumnTextPadding, ColumnWidthMin, ColumnWidthMax));
+            }
+            return widths;
         }
 
         /// <summary>Get the layout rect for one row of the table (a single GetRect call for the whole row).</summary>
@@ -451,7 +470,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>Draw every cell of one table row at its calculated x & width inside the row rect.</summary>
-        private void DrawPresetStateRow(PresetStateEntry entry, List<DriverColumn> columns, Rect rowRect)
+        private void DrawPresetStateRow(PresetStateEntry entry, PresetInfo preset, List<float> columnWidths, Rect rowRect)
         {
             var cellRect = GetTableCellRect(rowRect);
             string idText = entry.hasEntryTransition
@@ -475,10 +494,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
 
             x += NameColumnWidth + ColumnPadding;
-            for (int i = 0; i < columns.Count; i++)
+            for (int i = 0; i < columnWidths.Count; i++)
             {
-                DrawDriverCell(entry.state, columns[i], new Rect(x, cellRect.y, ColumnWidth, cellRect.height));
-                x += ColumnWidth + ColumnPadding;
+                // shrink the field/checkbox rect so its box doesn't eat into the column's inner text padding
+                var fieldRect = new Rect(x, cellRect.y, Mathf.Max(columnWidths[i] - ColumnTextPadding, 10f), cellRect.height);
+                DrawDriverCell(entry.state, preset.driverColumns[i], fieldRect);
+                x += columnWidths[i] + ColumnPadding;
             }
         }
 
