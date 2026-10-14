@@ -48,11 +48,40 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
+        /// <summary>One column of the preset states table: a parameter that the states' parameter drivers touch.</summary>
+        private struct DriverColumn
+        {
+            public string name;
+            public readonly Dictionary<int, List<DriverSetInfo>> perState; // state instance id -> cells
+
+            public DriverColumn(string name)
+            {
+                this.name = name;
+                this.perState = new Dictionary<int, List<DriverSetInfo>>();
+            }
+        }
+
+        /// <summary>A single parameter driver set operation for one state within a column.</summary>
+        private struct DriverSetInfo
+        {
+            public VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType operation;
+            public float value;
+            public float valueMin;
+            public float valueMax;
+            public string source;
+            public bool convertRange;
+            public float sourceMin;
+            public float sourceMax;
+            public float destMin;
+            public float destMax;
+        }
+
         private class PresetInfo
         {
             public AnimatorStateMachine stateMachine;
             public string presetParameter;
             public readonly List<PresetStateEntry> states = new List<PresetStateEntry>();
+            public List<DriverColumn> driverColumns;
         }
 
         /// <summary>Get the controller of the last base animation layer of the avatar.</summary>
@@ -221,6 +250,56 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     extras != null ? string.Join("\n", extras) : null));
             }
 
+            // Scan the states' VRCAvatarParameterDriver behaviours for the parameters they set (columns of the states table)
+            var columns = new List<DriverColumn>();
+            var columnByName = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var entry in preset.states)
+            {
+                var state = entry.state;
+                var stateId = state.GetInstanceID();
+                var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
+                for (int b = 0; b < behaviours.Length; b++)
+                {
+                    if (!(behaviours[b] is VRCAvatarParameterDriver driver) || driver.parameters == null)
+                        continue;
+
+                    for (int p = 0; p < driver.parameters.Count; p++)
+                    {
+                        var prm = driver.parameters[p];
+                        if (prm == null || string.IsNullOrEmpty(prm.name))
+                            continue;
+
+                        if (!columnByName.TryGetValue(prm.name, out var col))
+                        {
+                            col = columns.Count;
+                            columnByName[prm.name] = col;
+                            columns.Add(new DriverColumn(prm.name));
+                        }
+
+                        if (!columns[col].perState.TryGetValue(stateId, out var cells))
+                        {
+                            cells = new List<DriverSetInfo>();
+                            columns[col].perState[stateId] = cells;
+                        }
+
+                        cells.Add(new DriverSetInfo
+                        {
+                            operation = prm.type,
+                            value = prm.value,
+                            valueMin = prm.valueMin,
+                            valueMax = prm.valueMax,
+                            source = prm.source,
+                            convertRange = prm.convertRange,
+                            sourceMin = prm.sourceMin,
+                            sourceMax = prm.sourceMax,
+                            destMin = prm.destMin,
+                            destMax = prm.destMax,
+                        });
+                    }
+                }
+            }
+            preset.driverColumns = columns;
+
             return preset;
         }
 
@@ -273,6 +352,176 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
 
             return results;
+        }
+
+        private static readonly List<DriverColumn> EmptyDriverColumns = new List<DriverColumn>();
+
+        // Fixed widths of the preset states table columns (kept in consts for easy tweaking)
+        private const float ColumnWidth = 80f;
+        private const float IdColumnWidth = 80f;
+        private const float NameColumnWidth = 120f;
+        private const float RowPadding = 2f; // vertical padding between rows
+        private const float ColumnPadding = 4f; // horizontal padding between columns
+        private static readonly float RowHeight = EditorGUIUtility.singleLineHeight + 2f;
+
+        private VRCExpressionParameters.Parameter GetVRCExpressionParameterInfo(string parameterName)
+        {
+            if (lastFoundAvatarDescriptor == null
+                || lastFoundAvatarDescriptor.expressionParameters == null
+                || lastFoundAvatarDescriptor.expressionParameters.parameters == null
+                || string.IsNullOrEmpty(parameterName))
+                return null;
+
+            foreach (var p in lastFoundAvatarDescriptor.expressionParameters.parameters)
+            {
+                if (p != null && string.Equals(p.name, parameterName, StringComparison.Ordinal))
+                    return p;
+            }
+            return null;
+        }
+
+        private bool IsBoolParameter(string parameterName)
+        {
+            var info = GetVRCExpressionParameterInfo(parameterName);
+            return info != null && info.valueType == VRCExpressionParameters.ValueType.Bool;
+        }
+
+        /// <summary>Draw the preset states as a table: preset id, state name, then one column per parameter the states' drivers set.</summary>
+        private void DrawPresetStates(PresetInfo preset)
+        {
+            var columns = preset.driverColumns ?? EmptyDriverColumns;
+
+            // One layout rect per row, sized for all fixed-width columns; the cells are then drawn at their calculated x & width inside it
+            float rowWidth = ColumnGrid.InnerIndent + IdColumnWidth + ColumnPadding + NameColumnWidth + ColumnPadding + (ColumnWidth + ColumnPadding) * columns.Count;
+
+            // header row
+            var headerRect = GetTableRowRect(rowWidth);
+            var headerCell = GetTableCellRect(headerRect);
+            DrawLabel(new Rect(headerCell.x, headerCell.y, IdColumnWidth, headerCell.height), "id", EditorStyles.boldLabel);
+            float headerX = headerCell.x + IdColumnWidth + ColumnPadding;
+            DrawLabel(new Rect(headerX, headerCell.y, NameColumnWidth, headerCell.height), "State", EditorStyles.boldLabel);
+            headerX += NameColumnWidth + ColumnPadding;
+            foreach (var column in columns)
+            {
+                var vrcInfo = GetVRCExpressionParameterInfo(column.name);
+                string headerTooltip = (vrcInfo != null ? vrcInfo.valueType.ToString() : "no VRC parameter")
+                    + Environment.NewLine + "set by the state's parameter drivers";
+                var headerContent = new GUIContent(column.name) { tooltip = headerTooltip };
+                DrawLabel(new Rect(headerX, headerCell.y, ColumnWidth, headerCell.height), headerContent, EditorStyles.boldLabel);
+                headerX += ColumnWidth + ColumnPadding;
+            }
+
+            foreach (var entry in preset.states)
+            {
+                var rowRect = GetTableRowRect(rowWidth);
+                DrawPresetStateRow(entry, columns, rowRect);
+
+                EditorGUIUtility.AddCursorRect(rowRect, MouseCursor.Link);
+                if (Event.current.type == EventType.MouseDown && rowRect.Contains(Event.current.mousePosition) && Event.current.button == 0)
+                {
+                    Event.current.Use();
+                    Selection.activeObject = entry.state;
+                    EditorGUIUtility.PingObject(entry.state);
+                }
+            }
+        }
+
+        /// <summary>Get the layout rect for one row of the table (a single GetRect call for the whole row).</summary>
+        private static Rect GetTableRowRect(float width)
+        {
+            return GUILayoutUtility.GetRect(0f, RowHeight + RowPadding, GUILayout.Width(width));
+        }
+
+        /// <summary>Shrink a row rect so cells don't fill the row padding (keep the height of the content, centered on the padding).</summary>
+        private static Rect GetTableCellRect(Rect rowRect)
+        {
+            return new Rect(rowRect.x, rowRect.y + RowPadding * 0.5f, rowRect.width, rowRect.height - RowPadding);
+        }
+
+        /// <summary>Draw a non-layout label at an exact rect.</summary>
+        private static void DrawLabel(Rect rect, string text, GUIStyle style = null)
+        {
+            GUI.Label(rect, text, style ?? GUI.skin.label);
+        }
+
+        /// <summary>Draw a non-layout label at an exact rect.</summary>
+        private static void DrawLabel(Rect rect, GUIContent content, GUIStyle style = null)
+        {
+            GUI.Label(rect, content, style ?? GUI.skin.label);
+        }
+
+        /// <summary>Draw every cell of one table row at its calculated x & width inside the row rect.</summary>
+        private void DrawPresetStateRow(PresetStateEntry entry, List<DriverColumn> columns, Rect rowRect)
+        {
+            var cellRect = GetTableCellRect(rowRect);
+            string idText = entry.hasEntryTransition
+                ? (entry.extraConditions != null ? $"id = {entry.presetId} *" : $"id = {entry.presetId}")
+                : "default";
+            var idContent = new GUIContent(idText, entry.extraConditions != null
+                ? "Additional entry transition conditions:" + Environment.NewLine + entry.extraConditions
+                : "");
+            DrawLabel(new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height), idContent);
+            float x = cellRect.x + IdColumnWidth + ColumnPadding;
+            DrawLabel(new Rect(x, cellRect.y, NameColumnWidth, cellRect.height), entry.state.name);
+            x += NameColumnWidth + ColumnPadding;
+            for (int i = 0; i < columns.Count; i++)
+            {
+                DrawDriverCell(entry.state, columns[i], new Rect(x, cellRect.y, ColumnWidth, cellRect.height));
+                x += ColumnWidth + ColumnPadding;
+            }
+        }
+
+        private void DrawDriverCell(AnimatorState state, DriverColumn column, Rect cellRect)
+        {
+            if (!column.perState.TryGetValue(state.GetInstanceID(), out var cells) || cells.Count == 0)
+                return; // no drivers for this parameter on this state (also the default state's empty cells)
+
+            bool isBool = IsBoolParameter(column.name);
+            var lines = new List<string>();
+            foreach (var cell in cells)
+                lines.Add(FormatDriverCell(cell, isBool));
+
+            string joined = string.Join(", ", lines);
+            string cellTooltip = "display only" + Environment.NewLine + string.Join(Environment.NewLine, lines);
+
+            // bool columns render as a checkbox (display only, not wired to anything)
+            if (isBool)
+            {
+                var first = cells[0];
+                bool checkedValue = first.operation == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set && Mathf.Abs(first.value) > 0f;
+                EditorGUI.Toggle(cellRect, new GUIContent("", cellTooltip), checkedValue);
+                return;
+            }
+
+            // values render as a (disabled, display-only) input field
+            using (new EditorGUI.DisabledScope(true))
+            {
+                EditorGUI.TextField(cellRect, new GUIContent("", cellTooltip), joined);
+            }
+        }
+
+        private static string FormatDriverCell(DriverSetInfo cell, bool isBool)
+        {
+            switch (cell.operation)
+            {
+                case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set:
+                    return isBool ? (Mathf.Abs(cell.value) > 0f ? "true" : "false") : FormatDriverValue(cell.value);
+                case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Add:
+                    return isBool ? "toggle" : $"+{FormatDriverValue(cell.value)}";
+                case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Random:
+                    return $"rand {FormatDriverValue(cell.valueMin)} .. {FormatDriverValue(cell.valueMax)}";
+                case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy:
+                    if (cell.convertRange)
+                        return $"copy {cell.source} ({FormatDriverValue(cell.sourceMin)} .. {FormatDriverValue(cell.sourceMax)}) -> {FormatDriverValue(cell.destMin)} .. {FormatDriverValue(cell.destMax)}";
+                    return $"copy {cell.source}";
+                default:
+                    return "?";
+            }
+        }
+
+        private static string FormatDriverValue(float value)
+        {
+            return (float)Mathf.RoundToInt(value) == value ? Mathf.RoundToInt(value).ToString() : value.ToString("0.###");
         }
 
         private void OnGUI()
@@ -340,24 +589,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     EditorGUILayout.LabelField($"Preset States  (parameter: {preset.presetParameter}, {preset.states.Count} states)", EditorStyles.boldLabel);
 
-                    foreach (var entry in preset.states)
-                    {
-                        using var row = new EditorGUILayout.HorizontalScope();
-                        GUILayout.Space(ColumnGrid.InnerIndent);
-                        string idText = entry.hasEntryTransition
-                            ? (entry.extraConditions != null ? $"id = {entry.presetId} *" : $"id = {entry.presetId}")
-                            : "default";
-                        var idContent = entry.extraConditions != null
-                            ? new GUIContent(idText, $"Additional conditions:\n{entry.extraConditions}")
-                            : new GUIContent(idText);
-                        GUILayout.Label(idContent, GUILayout.Width(80f));
-                        GUILayout.Label($"{entry.state.name}");
-                        if (ClickableLastRect())
-                        {
-                            Selection.activeObject = entry.state;
-                            EditorGUIUtility.PingObject(entry.state);
-                        }
-                    }
+                    DrawPresetStates(preset);
                 }
             }
         }
