@@ -41,6 +41,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private string pendingAddRowCopyFrom = ""; // if set, copy the driver values of the row with this state name into the new state
         private int pendingAddRowId = -1;
 
+        // name typed into the trailing "add param" column's input (header row); the + buttons in its rows add a set operation for it
+        private string newParamInput = "";
+
         // the preset currently displayed (set in OnGUI, used by Apply to target the right machine / preset parameter)
         private AnimatorController currentController;
         private AnimatorStateMachine currentStateMachine;
@@ -410,6 +413,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private const float ColumnTextPadding = 6f; // inner horizontal padding inside a driver parameter column
         private const float IdColumnWidth = 70f;
         private const float NameColumnWidth = 120f;
+        private const float NewParamColumnWidth = 90f; // width of the trailing "add param" column
         private const float RowPadding = 2f; // vertical padding between rows
         private const float ColumnPadding = 4f; // horizontal padding between columns
         private static readonly float RowHeight = EditorGUIUtility.singleLineHeight + 2f;
@@ -446,6 +450,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             float rowWidth = ColumnGrid.InnerIndent + IdColumnWidth + ColumnPadding + NameColumnWidth + ColumnPadding;
             for (int i = 0; i < columnWidths.Count; i++)
                 rowWidth += columnWidths[i] + ColumnPadding;
+            rowWidth += NewParamColumnWidth + ColumnPadding;
 
             // header row
             var headerRect = GetTableRowRect(rowWidth);
@@ -465,6 +470,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 headerX += columnWidths[headerXIndex] + ColumnPadding;
                 headerXIndex++;
             }
+
+            // trailing "add param" column: the header (name) row holds the parameter name input, the rows hold + buttons
+            var newParamRect = new Rect(headerX, headerCell.y, NewParamColumnWidth, headerCell.height);
+            var newParam = EditorGUI.TextField(newParamRect, new GUIContent("", GetNewParamInputTooltip()), newParamInput);
+            if (newParam != newParamInput)
+                newParamInput = newParam;
 
             foreach (var entry in preset.states)
             {
@@ -522,7 +533,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (string.IsNullOrEmpty(pendingAddRowCopyFrom))
                 DrawDefaultText(copyRect, "copy from...");
 
-            // the parameter columns are left empty for a pending "add row" (nothing is set up beforehand)
+            // the parameter columns (including the trailing "add param" column) are left empty for a pending "add row"
         }
 
         /// <summary>Draw grey default text at the given rect (the 'copy from...' field while it's empty).</summary>
@@ -894,6 +905,113 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 DrawDriverCell(entry.state, preset.driverColumns[i], fieldRect);
                 x += columnWidths[i] + ColumnPadding;
             }
+
+            // trailing "add param" column: + adds a pending set operation for the header input's parameter on this state.
+            // the input resolves to a controller parameter by exact name, or when it fuzzy-matches exactly one parameter.
+            string resolvedParam = ResolveNewParam(newParamInput);
+            using (new EditorGUI.DisabledScope(resolvedParam == null))
+            {
+                var newParamCellRect = new Rect(x, cellRect.y, Mathf.Max(NewParamColumnWidth - ColumnTextPadding, 10f), cellRect.height);
+                var newParamContent = new GUIContent("+", resolvedParam == null
+                    ? GetFuzzyParamTooltip(newParamInput)
+                    : (string.Equals(resolvedParam, newParamInput, StringComparison.Ordinal)
+                        ? $"add a set operation for '{resolvedParam}' on '{entry.state.name}'"
+                        : $"'{newParamInput}' resolves to '{resolvedParam}' — adds a set operation for it on '{entry.state.name}'"));
+                if (GUI.Button(newParamCellRect, newParamContent))
+                    SetPendingValue(default(DriverSetInfo), resolvedParam, entry.state, 0f);
+            }
+        }
+
+        /// <summary>Resolve the "add param" input to a controller parameter: an exact name match, or a unique fuzzy match. Null if ambiguous.</summary>
+        private string ResolveNewParam(string input)
+        {
+            if (string.IsNullOrEmpty(input) || currentController == null)
+                return null;
+            if (IsControllerParameter(input))
+                return input;
+
+            var matches = FuzzyParamMatches(input);
+            return matches.Count == 1 ? matches[0] : null;
+        }
+
+        /// <summary>True if the current controller declares a parameter with this exact name.</summary>
+        private bool IsControllerParameter(string parameterName)
+        {
+            if (string.IsNullOrEmpty(parameterName) || currentController == null)
+                return false;
+
+            var parameters = currentController.parameters ?? Array.Empty<AnimatorControllerParameter>();
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (string.Equals(parameters[i].name, parameterName, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>Tooltip for the trailing "add param" input: a hint while empty, fuzzy controller parameter matches otherwise.</summary>
+        private string GetNewParamInputTooltip()
+        {
+            if (string.IsNullOrEmpty(newParamInput))
+                return "name of a controller parameter to add as a new set operation (use the + on the left)";
+            return GetFuzzyParamTooltip(newParamInput);
+        }
+
+        /// <summary>All controller parameters that fuzzy-match the input (case-insensitive subsequence).</summary>
+        private List<string> FuzzyParamMatches(string input)
+        {
+            var matches = new List<string>();
+            if (currentController == null)
+                return matches;
+
+            var parameters = currentController.parameters ?? Array.Empty<AnimatorControllerParameter>();
+            string needle = input.ToLowerInvariant();
+            foreach (var p in parameters)
+            {
+                if (string.IsNullOrEmpty(p.name))
+                    continue;
+                if (FuzzyContains(p.name.ToLowerInvariant(), needle))
+                    matches.Add(p.name);
+            }
+            return matches;
+        }
+
+        /// <summary>Tooltip listing the controller parameters that fuzzy-match the input, for when the name doesn't resolve exactly.</summary>
+        private string GetFuzzyParamTooltip(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return GetNewParamInputTooltip();
+            if (IsControllerParameter(input))
+                return $"'{input}' — press the + buttons to add it to the states";
+            if (currentController == null)
+                return $"no parameter named '{input}' (no controller selected)";
+
+            var matches = FuzzyParamMatches(input);
+            if (matches.Count == 1)
+                return $"no parameter named '{input}', but it uniquely matches '{matches[0]}' — the + buttons will add that";
+            if (matches.Count == 0)
+                return $"no parameter named '{input}' and no fuzzy matches";
+            if (matches.Count > 30)
+            {
+                var shown = matches.Take(30).ToList();
+                return $"no parameter named '{input}'. {matches.Count} fuzzy matches:" + Environment.NewLine
+                    + string.Join(Environment.NewLine, shown) + Environment.NewLine + $"… and {matches.Count - 30} more";
+            }
+            return $"no parameter named '{input}'. {matches.Count} fuzzy matches:" + Environment.NewLine + string.Join(Environment.NewLine, matches);
+        }
+
+        /// <summary>True if every character of needle appears in haystack in order (both already lowercased).</summary>
+        private static bool FuzzyContains(string haystack, string needle)
+        {
+            int h = 0;
+            for (int n = 0; n < needle.Length; n++)
+            {
+                int idx = haystack.IndexOf(needle[n], h);
+                if (idx < 0)
+                    return false;
+                h = idx + 1;
+            }
+            return true;
         }
 
         private void DrawDriverCell(AnimatorState state, DriverColumn column, Rect cellRect)
