@@ -38,6 +38,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         // a pending "add a whole new preset row" (a brand new state), triggered by the + in the table's bottom row
         private bool addRowPending = false;
         private string pendingAddRowName = "";
+        private string pendingAddRowCopyFrom = ""; // if set, copy the driver values of the row with this state name into the new state
         private int pendingAddRowId = -1;
 
         // the preset currently displayed (set in OnGUI, used by Apply to target the right machine / preset parameter)
@@ -475,14 +476,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             DrawAddPresetRow(preset, rowWidth);
         }
 
-        /// <summary>Draw the table's bottom "add row": a + button (disabled until a name is entered) and the new state's name input. Parameter columns stay empty.</summary>
+        /// <summary>
+        /// Draw the table's bottom "add row": a + button (disabled until a name is entered), the new state's name
+        /// input, and a "copy from..." input to its right. If the copy input is filled out, the new state's
+        /// driver set-operations are copied from the row with that state name. The parameter columns stay empty.
+        /// </summary>
         private void DrawAddPresetRow(PresetInfo preset, float rowWidth)
         {
             var rowRect = GetTableRowRect(rowWidth);
             var cellRect = GetTableCellRect(rowRect);
 
-            var idRect = new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height);
+            // name input + a 'copy from' input to its right (width: whatever of the row is left, capped at NameColumnWidth)
             var nameRect = new Rect(cellRect.x + IdColumnWidth + ColumnPadding, cellRect.y, NameColumnWidth, cellRect.height);
+            var idRect = new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height);
+            var copyMaxWidth = rowRect.width - ColumnGrid.InnerIndent - (nameRect.xMax - rowRect.x) - ColumnPadding;
+            var copyRect = new Rect(nameRect.xMax + ColumnPadding, cellRect.y, Mathf.Min(NameColumnWidth, Mathf.Max(0f, copyMaxWidth)), cellRect.height);
 
             int nextId = ComputeNextPresetId(preset);
             bool hasName = !string.IsNullOrEmpty(pendingAddRowName);
@@ -499,20 +507,33 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
 
             var newName = EditorGUI.TextField(nameRect, new GUIContent("", "new preset state name"), pendingAddRowName ?? "");
-            if (GUI.changed && newName != pendingAddRowName)
+            if (newName != pendingAddRowName)
             {
                 pendingAddRowName = newName;
                 if (string.IsNullOrEmpty(pendingAddRowName))
                     addRowPending = false; // clearing the name cancels the pending add
             }
 
+            var newCopyFrom = EditorGUI.TextField(copyRect, new GUIContent("", "if filled out, this new state's driver values are copied from the row with this state name"), pendingAddRowCopyFrom ?? "");
+            if (newCopyFrom != pendingAddRowCopyFrom)
+                pendingAddRowCopyFrom = newCopyFrom;
+
+            // while the copy-from input is empty, show the grey default text (TextFieldWithDefault style)
+            if (string.IsNullOrEmpty(pendingAddRowCopyFrom))
+                DrawDefaultText(copyRect, "copy from...");
+
             // the parameter columns are left empty for a pending "add row" (nothing is set up beforehand)
         }
 
-        /// <summary>
-        /// The preset id a new row should use: the first empty integer counting up from the smallest currently
-        /// used id. 0 is reserved for the default state and is never assigned to a new row.
-        /// </summary>
+        /// <summary>Draw grey default text at the given rect (the 'copy from...' field while it's empty).</summary>
+        private static void DrawDefaultText(Rect rect, string defaultText)
+        {
+            var prevColor = GUI.contentColor;
+            GUI.contentColor = Color.gray;
+            GUI.Label(rect, defaultText);
+            GUI.contentColor = prevColor;
+        }
+
         private static int ComputeNextPresetId(PresetInfo presets)
         {
             var used = new HashSet<int>();
@@ -536,7 +557,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// first state's position & the machine's existing spacing, and (while the preset menu has room) adds a
         /// matching menu entry.
         /// </summary>
-        private void ApplyAddRow(VRCAvatarDescriptor avatar, AnimatorController controller, AnimatorStateMachine sm, PresetInfo presets, string stateName, int presetId)
+        private void ApplyAddRow(VRCAvatarDescriptor avatar, AnimatorController controller, AnimatorStateMachine sm, PresetInfo presets, string stateName, string copyFromState, int presetId)
         {
             if (sm == null || controller == null || presets == null || string.IsNullOrEmpty(stateName))
                 return;
@@ -619,7 +640,59 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
                     value = 0f,
                 });
-                EditorUtility.SetDirty(presetDriver);
+            }
+
+            // if a copy-from state was given, copy set operations from its driver(s) into the new state's driver
+            if (!string.IsNullOrEmpty(copyFromState))
+            {
+                PresetStateEntry sourceEntry = default;
+                bool hasSource = false;
+                for (int s = 0; s < presets.states.Count; s++)
+                {
+                    if (string.Equals(presets.states[s].state?.name, copyFromState, StringComparison.Ordinal))
+                    {
+                        sourceEntry = presets.states[s];
+                        hasSource = true;
+                        break;
+                    }
+                }
+
+                if (hasSource && sourceEntry.state != null)
+                {
+                    var sourceBehaviours = sourceEntry.state.behaviours ?? Array.Empty<StateMachineBehaviour>();
+                    foreach (var behaviour in sourceBehaviours)
+                    {
+                        if (!(behaviour is VRC.SDKBase.VRC_AvatarParameterDriver sourceDriver) || sourceDriver.parameters == null)
+                            continue;
+
+                        foreach (var sourceParam in sourceDriver.parameters)
+                        {
+                            if (sourceParam == null || string.IsNullOrEmpty(sourceParam.name))
+                                continue;
+                            if (sourceParam.type != VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set)
+                                continue;
+                            if (string.Equals(sourceParam.name, presetParameter, StringComparison.Ordinal))
+                                continue; // the preset parameter stays 0 on the new state
+
+                            presetDriver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
+                            {
+                                name = sourceParam.name,
+                                type = sourceParam.type,
+                                value = sourceParam.value,
+                                valueMin = sourceParam.valueMin,
+                                valueMax = sourceParam.valueMax,
+                                source = sourceParam.source,
+                                convertRange = sourceParam.convertRange,
+                                sourceMin = sourceParam.sourceMin,
+                                sourceMax = sourceParam.sourceMax,
+                                destMin = sourceParam.destMin,
+                                destMax = sourceParam.destMax,
+                            });
+                        }
+                    }
+
+                    EditorUtility.SetDirty(presetDriver);
+                }
             }
 
             // re-lay out every state based on the first state's position & the machine's spacing
@@ -1034,9 +1107,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (addRowPending && !string.IsNullOrEmpty(pendingAddRowName)
                 && currentController != null && currentStateMachine != null && currentPreset != null)
             {
-                ApplyAddRow(lastFoundAvatarDescriptor, currentController, currentStateMachine, currentPreset, pendingAddRowName, pendingAddRowId);
+                ApplyAddRow(lastFoundAvatarDescriptor, currentController, currentStateMachine, currentPreset, pendingAddRowName, pendingAddRowCopyFrom, pendingAddRowId);
                 addRowPending = false;
                 pendingAddRowName = "";
+                pendingAddRowCopyFrom = "";
             }
 
             if (pendingChanges.Count == 0)
@@ -1169,6 +1243,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     pendingChangesControllerId = controllerId;
                     addRowPending = false;
                     pendingAddRowName = "";
+                    pendingAddRowCopyFrom = "";
                 }
 
                 if (presets.Count == 0)
@@ -1228,8 +1303,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         if (addRowPending)
                         {
+                            string copyNote = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? "" : $"  (copy from '{pendingAddRowCopyFrom}')";
                             IndentedRow(ColumnGrid.InnerIndent, () =>
-                                EditorGUILayout.LabelField($"new preset '{pendingAddRowName}'  (id = {pendingAddRowId})", EditorStyles.miniLabel));
+                                EditorGUILayout.LabelField($"new preset '{pendingAddRowName}'  (id = {pendingAddRowId}){copyNote}", EditorStyles.miniLabel));
                         }
 
                         // group the pending changes per state (keeping the original order of first edit)
@@ -1268,6 +1344,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     pendingChanges.Clear();
                                     addRowPending = false;
                                     pendingAddRowName = "";
+                                    pendingAddRowCopyFrom = "";
                                 }
                             }
                         });
