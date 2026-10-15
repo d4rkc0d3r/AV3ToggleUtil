@@ -475,10 +475,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // header row
             var headerRect = GetTableRowRect(rowWidth);
             var headerCell = GetTableCellRect(headerRect);
-            DrawLabel(new Rect(headerCell.x, headerCell.y, IdColumnWidth, headerCell.height), "id", EditorStyles.boldLabel);
+            GUI.Label(new Rect(headerCell.x, headerCell.y, IdColumnWidth, headerCell.height), "id", EditorStyles.boldLabel);
             float headerX = headerCell.x + IdColumnWidth + ColumnPadding;
             int headerXIndex = 0;
-            DrawLabel(new Rect(headerX, headerCell.y, NameColumnWidth, headerCell.height), "State", EditorStyles.boldLabel);
+            GUI.Label(new Rect(headerX, headerCell.y, NameColumnWidth, headerCell.height), "State", EditorStyles.boldLabel);
             headerX += NameColumnWidth + ColumnPadding;
             foreach (var column in columns)
             {
@@ -488,7 +488,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     + Environment.NewLine + Environment.NewLine + "right-click to remove the whole column (the parameter's operations from all states)";
                 var headerContent = new GUIContent(GetParameterDisplayName(column.name)) { tooltip = headerTooltip };
                 var columnHeaderRect = new Rect(headerX, headerCell.y, columnWidths[headerXIndex], headerCell.height);
-                DrawLabel(columnHeaderRect, headerContent, EditorStyles.boldLabel);
+                GUI.Label(columnHeaderRect, headerContent, EditorStyles.boldLabel);
 
                 // right-clicking the parameter name offers removing the whole column
                 if (Event.current.type == EventType.ContextClick && columnHeaderRect.Contains(Event.current.mousePosition))
@@ -884,7 +884,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 state = state,
                 driverBehaviour = cell.driverBehaviour,
                 operationIndex = cell.operationIndex,
-                parameterName = cell.driverBehaviour is VRC.SDKBase.VRC_AvatarParameterDriver d && d.parameters != null && d.parameters[cell.operationIndex] != null ? d.parameters[cell.operationIndex].name : parameterName,
+                parameterName = parameterName, // already validated to match the driver's operation name above
             });
         }
 
@@ -948,7 +948,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>Right-click context menu on a row's state name: deletes the whole row (the state itself) from the machine.</summary>
-        private void ShowDeleteStateMenu(PresetInfo preset, PresetStateEntry entry)
+        private void ShowDeleteStateMenu(PresetStateEntry entry)
         {
             var menu = new GenericMenu();
             string warning = entry.isDefault
@@ -956,12 +956,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 : "";
             menu.AddItem(new GUIContent($"delete state '{entry.state.name}' (row)",
                     $"queues a deletion of the state, its entry transition, its driver operations and its expression menu entry from the machine - press Apply in the pending changes box to confirm (Discard cancels).{warning}"),
-                false, () => DeletePresetState(preset, entry));
+                false, () => DeletePresetState(entry));
             menu.ShowAsContext();
         }
 
         /// <summary>Queue a deletion of a whole row (state + its entry transition + expression menu entry).</summary>
-        private void DeletePresetState(PresetInfo preset, PresetStateEntry entry)
+        private void DeletePresetState(PresetStateEntry entry)
         {
             var state = entry.state;
             if (state == null)
@@ -998,28 +998,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// <summary>Add a deletion to the pending queue (deduped).</summary>
         private void AddPendingDeletion(PendingDeletion deletion)
         {
-            bool identical = false;
-            foreach (var existing in pendingDeletions)
-            {
-                if (existing.kind != deletion.kind)
-                    continue;
-                if (deletion.kind == 0 && existing.state == deletion.state && existing.driverBehaviour == deletion.driverBehaviour && existing.operationIndex == deletion.operationIndex)
-                {
-                    identical = true;
-                    break;
-                }
-                if (deletion.kind == 1 && string.Equals(existing.parameterName, deletion.parameterName, StringComparison.Ordinal))
-                {
-                    identical = true;
-                    break;
-                }
-                if (deletion.kind == 2 && existing.state == deletion.state)
-                {
-                    identical = true;
-                    break;
-                }
-            }
-            if (identical)
+            if (IsPendingDeletion(deletion.kind, deletion.state, deletion.driverBehaviour, deletion.operationIndex, deletion.parameterName))
                 return;
 
             pendingDeletions.Add(deletion);
@@ -1167,18 +1146,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return string.Join(" ", words);
         }
 
-        /// <summary>Draw a non-layout label at an exact rect.</summary>
-        private static void DrawLabel(Rect rect, string text, GUIStyle style = null)
-        {
-            GUI.Label(rect, text, style ?? GUI.skin.label);
-        }
-
-        /// <summary>Draw a non-layout label at an exact rect.</summary>
-        private static void DrawLabel(Rect rect, GUIContent content, GUIStyle style = null)
-        {
-            GUI.Label(rect, content, style ?? GUI.skin.label);
-        }
-
         /// <summary>Draw every cell of one table row at its calculated x & width inside the row rect.</summary>
         private void DrawPresetStateRow(PresetStateEntry entry, PresetInfo preset, List<float> columnWidths, Rect rowRect)
         {
@@ -1189,10 +1156,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var idContent = new GUIContent(idText, entry.extraConditions != null
                 ? "Additional entry transition conditions:" + Environment.NewLine + entry.extraConditions
                 : "");
-            DrawLabel(new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height), idContent);
+            GUI.Label(new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height), idContent);
             float x = cellRect.x + IdColumnWidth + ColumnPadding;
             var nameRect = new Rect(x, cellRect.y, NameColumnWidth, cellRect.height);
-            DrawLabel(nameRect, entry.state.name);
+            GUI.Label(nameRect, entry.state.name);
 
             // clicking the state name selects & pings the state
             EditorGUIUtility.AddCursorRect(nameRect, MouseCursor.Link);
@@ -1207,7 +1174,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (Event.current.type == EventType.ContextClick && nameRect.Contains(Event.current.mousePosition))
             {
                 Event.current.Use();
-                ShowDeleteStateMenu(preset, entry);
+                ShowDeleteStateMenu(entry);
             }
 
             x += NameColumnWidth + ColumnPadding;
