@@ -555,24 +555,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     addRowPending = false; // clearing the name cancels the pending add
             }
 
-            var newCopyFrom = EditorGUI.TextField(copyRect, new GUIContent("", "if filled out, this new state's driver values are copied from the row with this state name"), pendingAddRowCopyFrom ?? "");
-            if (newCopyFrom != pendingAddRowCopyFrom)
-                pendingAddRowCopyFrom = newCopyFrom;
-
-            // while the copy-from input is empty, show the grey default text (TextFieldWithDefault style)
-            if (string.IsNullOrEmpty(pendingAddRowCopyFrom))
-                DrawDefaultText(copyRect, "copy from...");
+            // 'copy from' dropdown: index 0 is the 'copy from...' placeholder (no copy), the rest are the existing states
+            var copyOptions = new string[preset.states.Count + 1];
+            copyOptions[0] = "copy from...";
+            for (int i = 0; i < preset.states.Count; i++)
+                copyOptions[i + 1] = preset.states[i].state.name;
+            int copyIndex = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? 0 : Array.IndexOf(copyOptions, pendingAddRowCopyFrom) + 1;
+            if (copyIndex < 1)
+                copyIndex = 0; // the stored name no longer matches any state (e.g. stale from another display) -> placeholder
+            int newCopyIndex = EditorGUI.Popup(copyRect, copyIndex, copyOptions);
+            pendingAddRowCopyFrom = newCopyIndex < 1 ? "" : copyOptions[newCopyIndex];
 
             // the parameter columns (including the trailing "add param" column) are left empty for a pending "add row"
-        }
-
-        /// <summary>Draw grey default text at the given rect (the 'copy from...' field while it's empty).</summary>
-        private static void DrawDefaultText(Rect rect, string defaultText)
-        {
-            var prevColor = GUI.contentColor;
-            GUI.contentColor = Color.gray;
-            GUI.Label(rect, defaultText);
-            GUI.contentColor = prevColor;
         }
 
         private static int ComputeNextPresetId(PresetInfo presets)
