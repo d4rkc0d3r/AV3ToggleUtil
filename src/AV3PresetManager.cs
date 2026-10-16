@@ -504,7 +504,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             // trailing "add param" column: the header (name) row holds the parameter name input, the rows hold + buttons
             var newParamRect = new Rect(headerX, headerCell.y, NewParamColumnWidth, headerCell.height);
-            var newParam = EditorGUI.TextField(newParamRect, new GUIContent("", GetNewParamInputTooltip()), newParamInput);
+            string newParamInputTooltip = GetNewParamInputTooltip();
+            SetRectTooltip(newParamRect, newParamInputTooltip);
+            var newParam = EditorGUI.TextField(newParamRect, newParamInput);
             if (newParam != newParamInput)
                 newParamInput = newParam;
 
@@ -598,7 +600,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
 
-            var newName = EditorGUI.TextField(nameRect, new GUIContent("", "New preset state name"), pendingAddRowName ?? "");
+            SetRectTooltip(nameRect, "New preset state name");
+            var newName = EditorGUI.TextField(nameRect, pendingAddRowName ?? "");
             if (newName != pendingAddRowName)
             {
                 pendingAddRowName = newName;
@@ -1336,22 +1339,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (string.IsNullOrEmpty(input))
                 return GetNewParamInputTooltip();
             if (IsControllerParameter(input))
-                return $"'{input}' — press the + buttons to add it to the states";
+                return $"Parameter '{input}'" + Environment.NewLine + "Press the + buttons to add it to the states";
             if (currentController == null)
-                return $"no parameter named '{input}' (no controller selected)";
+                return $"No parameter named '{input}'" + Environment.NewLine + "No controller selected";
 
             var matches = FuzzyParamMatches(input);
             if (matches.Count == 1)
-                return $"no parameter named '{input}', but it uniquely matches '{matches[0]}' — the + buttons will add that";
+                return $"No parameter named '{input}'" + Environment.NewLine
+                    + $"Uniquely matches '{matches[0]}'" + Environment.NewLine + "The + buttons will add that";
             if (matches.Count == 0)
-                return $"no parameter named '{input}' and no fuzzy matches";
+                return $"No parameter named '{input}'" + Environment.NewLine + "No fuzzy matches";
             if (matches.Count > 30)
             {
                 var shown = matches.Take(30).ToList();
-                return $"no parameter named '{input}'. {matches.Count} fuzzy matches:" + Environment.NewLine
+                return $"No parameter named '{input}'" + Environment.NewLine + $"{matches.Count} fuzzy matches:" + Environment.NewLine
                     + string.Join(Environment.NewLine, shown) + Environment.NewLine + $"… and {matches.Count - 30} more";
             }
-            return $"no parameter named '{input}'. {matches.Count} fuzzy matches:" + Environment.NewLine + string.Join(Environment.NewLine, matches);
+            return $"No parameter named '{input}'" + Environment.NewLine
+                + $"{matches.Count} fuzzy matches:" + Environment.NewLine + string.Join(Environment.NewLine, matches);
         }
 
         /// <summary>True if every character of needle appears in haystack in order (both already lowercased).</summary>
@@ -1402,9 +1407,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // pressing the + removes the queued deletions, restoring the cell to its current value
             if (IsCellPendingDeletion(state, cells))
             {
-                var undeleteTooltip = $"Restore '{column.name}' on '{state.name}'";
-                var undeleteContent = new GUIContent("+", undeleteTooltip);
-                if (GUI.Button(cellRect, undeleteContent))
+                var restoreTooltip = $"Restore '{column.name}' on '{state.name}'";
+                var restoreContent = new GUIContent("+", restoreTooltip);
+                if (GUI.Button(cellRect, restoreContent))
                 {
                     for (int i = 0; i < cells.Count; i++)
                         RemovePendingDeletion(0, state, cells[i].driverBehaviour, cells[i].operationIndex, null);
@@ -1469,17 +1474,28 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             DrawSetCell(cellRect, isBool, effectiveValue, cellTooltip, editableCell, column.name, state);
         }
 
+        /// <summary>Draw a tooltip over the given rect: an empty label carrying the tooltip is drawn on top of the control,
+        /// since a control's own GUIContent tooltip only shows on its (empty) label and stays invisible otherwise.</summary>
+        private static void SetRectTooltip(Rect controlRect, string tooltip)
+        {
+            if (string.IsNullOrEmpty(tooltip))
+                return;
+            GUI.Label(controlRect, new GUIContent("", tooltip));
+        }
+
         /// <summary>Draw a set-mode driver value as an editable checkbox (bool) or delayed text field (numeric); edits are recorded as pending changes.</summary>
         private void DrawSetCell(Rect cellRect, bool isBool, float effectiveValue, string tooltip, DriverSetInfo originalCell, string parameterName, AnimatorState state)
         {
             if (isBool)
             {
-                bool newValue = EditorGUI.Toggle(cellRect, new GUIContent("", tooltip), effectiveValue != 0f);
+                SetRectTooltip(cellRect, tooltip);
+                bool newValue = EditorGUI.Toggle(cellRect, effectiveValue != 0f);
                 if (GUI.changed)
                     SetPendingValue(originalCell, parameterName, state, newValue ? 1f : 0f);
                 return;
             }
 
+            SetRectTooltip(cellRect, tooltip);
             string displayed = FormatDriverValue(effectiveValue);
             string committed = EditorGUI.DelayedTextField(cellRect, displayed);
             if (GUI.changed)
@@ -1494,9 +1510,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// <summary>Draw a display-only (disabled) input field cell.</summary>
         private static void DrawReadOnlyCell(Rect cellRect, string text, string tooltip)
         {
+            SetRectTooltip(cellRect, tooltip);
             using (new EditorGUI.DisabledScope(true))
             {
-                EditorGUI.TextField(cellRect, new GUIContent("", tooltip), text);
+                EditorGUI.TextField(cellRect, text);
             }
         }
 
