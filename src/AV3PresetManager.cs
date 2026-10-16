@@ -518,15 +518,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         /// <summary>
         /// Draw the table's bottom "add row": a + button (disabled until a name is entered), the new state's name
-        /// input, and a "copy from..." input to its right. If the copy input is filled out, the new state's
-        /// driver set-operations are copied from the row with that state name. The parameter columns stay empty.
+        /// input, and a "copy from..." dropdown to its right. The new state's driver set-operations are copied
+        /// from the row of the selected state. The parameter columns stay empty.
         /// </summary>
         private void DrawAddPresetRow(PresetInfo preset, float rowWidth)
         {
             var rowRect = GetTableRowRect(rowWidth);
             var cellRect = GetTableCellRect(rowRect);
 
-            // name input + a 'copy from' input to its right (width: whatever of the row is left, capped at NameColumnWidth)
+            // name input + a 'copy from' dropdown to its right (width: whatever of the row is left, capped at NameColumnWidth)
             var nameRect = new Rect(cellRect.x + IdColumnWidth + ColumnPadding, cellRect.y, NameColumnWidth, cellRect.height);
             var idRect = new Rect(cellRect.x, cellRect.y, IdColumnWidth, cellRect.height);
             var copyMaxWidth = rowRect.width - ColumnGrid.InnerIndent - (nameRect.xMax - rowRect.x) - ColumnPadding;
