@@ -554,16 +554,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     addRowPending = false; // clearing the name cancels the pending add
             }
 
-            // 'copy from' dropdown: index 0 is the 'copy from...' placeholder (no copy), the rest are the existing states
-            var copyOptions = new string[preset.states.Count + 1];
-            copyOptions[0] = "copy from...";
-            for (int i = 0; i < preset.states.Count; i++)
-                copyOptions[i + 1] = preset.states[i].state.name;
-            int copyIndex = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? 0 : Array.IndexOf(copyOptions, pendingAddRowCopyFrom) + 1;
-            if (copyIndex < 1)
-                copyIndex = 0; // the stored name no longer matches any state (e.g. stale from another display) -> placeholder
-            int newCopyIndex = EditorGUI.Popup(copyRect, copyIndex, copyOptions);
-            pendingAddRowCopyFrom = newCopyIndex < 1 ? "" : copyOptions[newCopyIndex];
+            // 'copy from' dropdown: the button shows the selected state (or the 'copy from...' placeholder),
+            // the menu lists the placeholder + every existing state; each item stores the exact state name (no index mapping)
+            string copyShown = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? "copy from..." : pendingAddRowCopyFrom;
+            if (GUI.Button(copyRect, copyShown, EditorStyles.popup))
+            {
+                var copyMenu = new GenericMenu();
+                copyMenu.AddItem(new GUIContent("copy from..."), string.IsNullOrEmpty(pendingAddRowCopyFrom), () => pendingAddRowCopyFrom = "");
+                foreach (var stateEntry in preset.states)
+                {
+                    string stateName = stateEntry.state.name; // captured per item, the callbacks run after OnGUI finishes
+                    copyMenu.AddItem(new GUIContent(stateName), string.Equals(pendingAddRowCopyFrom, stateName, StringComparison.Ordinal), () => pendingAddRowCopyFrom = stateName);
+                }
+                copyMenu.ShowAsContext();
+            }
 
             // the parameter columns (including the trailing "add param" column) are left empty for a pending "add row"
         }
