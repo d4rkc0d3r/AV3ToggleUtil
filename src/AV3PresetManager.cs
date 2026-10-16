@@ -484,8 +484,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 var vrcInfo = GetVRCExpressionParameterInfo(column.name);
                 string headerTooltip = column.name
-                    + Environment.NewLine + (vrcInfo != null ? vrcInfo.valueType.ToString() : "no VRC parameter")
-                    + Environment.NewLine + Environment.NewLine + "right-click to remove the whole column (the parameter's operations from all states)";
+                    + Environment.NewLine + (vrcInfo != null ? vrcInfo.valueType.ToString() : "no VRC parameter");
                 var headerContent = new GUIContent(GetParameterDisplayName(column.name)) { tooltip = headerTooltip };
                 var columnHeaderRect = new Rect(headerX, headerCell.y, columnWidths[headerXIndex], headerCell.height);
                 GUI.Label(columnHeaderRect, headerContent, EditorStyles.boldLabel);
@@ -536,7 +535,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             int nextId = ComputeNextPresetId(preset);
             bool hasName = !string.IsNullOrEmpty(pendingAddRowName);
             var idLabel = addRowPending ? $"id = {pendingAddRowId}" : "+";
-            var idContent = new GUIContent(idLabel, "add a new preset state (row) with this id");
+            var idContent = new GUIContent(idLabel, $"Add a preset state with id {nextId}");
 
             using (new EditorGUI.DisabledScope(!hasName))
             {
@@ -547,7 +546,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
 
-            var newName = EditorGUI.TextField(nameRect, new GUIContent("", "new preset state name"), pendingAddRowName ?? "");
+            var newName = EditorGUI.TextField(nameRect, new GUIContent("", "New preset state name"), pendingAddRowName ?? "");
             if (newName != pendingAddRowName)
             {
                 pendingAddRowName = newName;
@@ -830,14 +829,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private void ShowRemoveCellMenu(AnimatorState state, DriverColumn column, List<DriverSetInfo> cells)
         {
             var menu = new GenericMenu();
-            bool isBool = IsBoolParameter(column.name);
             for (int i = 0; i < cells.Count; i++)
             {
                 var cell = cells[i];
-                string line = FormatDriverCell(cell, isBool);
-                string label = cells.Count > 1 ? $"remove '{line}'  ({i + 1}/{cells.Count})" : $"remove '{line}'";
+                string label = $"Delete '{column.name}' from '{state.name}'";
                 menu.AddItem(new GUIContent(label,
-                        $"queues a deletion of just this '{line}' operation of '{column.name}' from '{state.name}' - press Apply in the pending changes box to confirm (Discard cancels)"),
+                        $"Queues a deletion of just the '{column.name}' operation ({i + 1}/{cells.Count}) from '{state.name}' - press Apply in the pending changes box to confirm (Discard cancels)"),
                     false, () => RemoveDriverOperation(state, cell, column.name));
             }
             menu.ShowAsContext();
@@ -866,7 +863,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     EditorUtility.DisplayDialog("d4rk Preset Manager",
                         $"'" + state.name + "' has a pending value edit on '" + (driverParameters[i] != null ? driverParameters[i].name : "?") +
-                        "'. Apply or discard it first, then delete '" + parameterName + "'.",
+                        "'. Apply or discard it first, then delete '" + parameterName + "' from '" + state.name + "'.",
                         "OK");
                     return;
                 }
@@ -886,8 +883,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private void ShowRemoveColumnMenu(PresetInfo preset, DriverColumn column)
         {
             var menu = new GenericMenu();
-            menu.AddItem(new GUIContent($"remove parameter '{column.name}' from all states (column)",
-                    $"queues a deletion of every '{column.name}' operation from the drivers of all {preset.states.Count} states - press Apply in the pending changes box to confirm (Discard cancels)"),
+            menu.AddItem(new GUIContent($"Delete '{column.name}' from all states",
+                    $"Queues a deletion of every '{column.name}' operation from the drivers of all {preset.states.Count} states - press Apply in the pending changes box to confirm (Discard cancels)"),
                 false, () => RemoveColumnFromAllStates(preset, column));
             menu.ShowAsContext();
         }
@@ -928,7 +925,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             {
                                 EditorUtility.DisplayDialog("d4rk Preset Manager",
                                     $"'" + state.name + "' has a pending value edit on '" + (parameters[p] != null ? parameters[p].name : "?") +
-                                    "'. Apply or discard it first, then delete the '" + column.name + "' column.",
+                                    "'. Apply or discard it first, then delete '" + column.name + "' from all states.",
                                     "OK");
                                 return;
                             }
@@ -946,10 +943,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var menu = new GenericMenu();
             string warning = entry.isDefault
-                ? " this state is the machine's default state - the remaining states take its place afterwards."
+                ? " This state is the machine's default state - the remaining states take its place afterwards."
                 : "";
-            menu.AddItem(new GUIContent($"delete state '{entry.state.name}' (row)",
-                    $"queues a deletion of the state, its entry transition, its driver operations and its expression menu entry from the machine - press Apply in the pending changes box to confirm (Discard cancels).{warning}"),
+            menu.AddItem(new GUIContent($"Delete state '{entry.state.name}'",
+                    $"Queues a deletion of the state, its entry transition, its driver operations and its expression menu entry from the machine - press Apply in the pending changes box to confirm (Discard cancels).{warning}"),
                 false, () => DeletePresetState(entry));
             menu.ShowAsContext();
         }
@@ -1188,9 +1185,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var newParamCellRect = new Rect(x, cellRect.y, Mathf.Max(NewParamColumnWidth - ColumnTextPadding, 10f), cellRect.height);
                 var newParamContent = new GUIContent("+", resolvedParam == null
                     ? GetFuzzyParamTooltip(newParamInput)
-                    : (string.Equals(resolvedParam, newParamInput, StringComparison.Ordinal)
-                        ? $"add a set operation for '{resolvedParam}' on '{entry.state.name}'"
-                        : $"'{newParamInput}' resolves to '{resolvedParam}' — adds a set operation for it on '{entry.state.name}'"));
+                    : $"Add a set operation for '{resolvedParam}' on '{entry.state.name}'");
                 if (GUI.Button(newParamCellRect, newParamContent))
                     SetPendingValue(default(DriverSetInfo), resolvedParam, entry.state, 0f);
             }
@@ -1227,7 +1222,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private string GetNewParamInputTooltip()
         {
             if (string.IsNullOrEmpty(newParamInput))
-                return "name of a controller parameter to add as a new set operation (use the + on the left)";
+                return "Name of a controller parameter to add as a new set operation" + Environment.NewLine
+                    + "Use the + buttons in the rows below";
             return GetFuzzyParamTooltip(newParamInput);
         }
 
@@ -1306,12 +1302,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         operation = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
                         value = addedValue,
                     }, isBool);
-                    string tooltip = "new set operation (pending)" + Environment.NewLine + addedLine;
+                    string tooltip = "New set operation (pending)" + Environment.NewLine + addedLine;
                     DrawSetCell(cellRect, isBool, addedValue, tooltip, newCell, column.name, state);
                     return;
                 }
 
-                var addTooltip = $"add a set operation for '{column.name}' on '{state.name}'";
+                var addTooltip = $"Add a set operation for '{column.name}' on '{state.name}'";
                 var addContent = new GUIContent("+", addTooltip);
                 if (GUI.Button(cellRect, addContent))
                     SetPendingValue(newCell, column.name, state, 0f);
@@ -1358,7 +1354,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 // no set-mode value: the whole cell is display only
                 string joined = string.Join(", ", lines);
-                string readOnlyTooltip = "display only" + Environment.NewLine + string.Join(Environment.NewLine, lines);
+                string readOnlyTooltip = "Display only" + Environment.NewLine + string.Join(Environment.NewLine, lines);
                 DrawReadOnlyCell(cellRect, joined, readOnlyTooltip);
                 return;
             }
@@ -1367,7 +1363,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             float effectiveValue = hasPending
                 ? GetPendingValue(editableCell, column.name, state)
                 : editableCell.value;
-            string cellTooltip = "only the set-mode value is editable" + Environment.NewLine
+            string cellTooltip = "Only the set-mode value is editable" + Environment.NewLine
                 + (hasChange ? "value changed (pending)" + Environment.NewLine : "")
                 + string.Join(Environment.NewLine, lines);
 
@@ -1637,14 +1633,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 case 0:
                     return deletion.state != null
-                        ? $"delete '{deletion.parameterName}' from '{deletion.state.name}'"
-                        : $"delete '{deletion.parameterName}'";
+                        ? $"Delete '{deletion.parameterName}' from '{deletion.state.name}'"
+                        : $"Delete '{deletion.parameterName}'";
                 case 1:
-                    return $"delete column '{deletion.parameterName}'  (all states)";
+                    return $"Delete '{deletion.parameterName}' from all states";
                 default:
                     return deletion.state != null
-                        ? $"delete state '{deletion.state.name}'  (row)"
-                        : $"delete state '{deletion.parameterName}'  (row)";
+                        ? $"Delete state '{deletion.state.name}'"
+                        : $"Delete state '{deletion.parameterName}'";
             }
         }
 
@@ -1884,9 +1880,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         if (addRowPending)
                         {
-                            string copyNote = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? "" : $"  (copy from '{pendingAddRowCopyFrom}')";
+                            string basedOn = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? "" : $" based on '{pendingAddRowCopyFrom}'";
                             IndentedRow(ColumnGrid.InnerIndent, () =>
-                                EditorGUILayout.LabelField($"new preset '{pendingAddRowName}'  (id = {pendingAddRowId}){copyNote}", EditorStyles.miniLabel));
+                                EditorGUILayout.LabelField($"Add preset '{pendingAddRowName}' with id {pendingAddRowId}{basedOn}", EditorStyles.miniLabel));
                         }
 
                         // group the pending changes per state (keeping the original order of first edit)
