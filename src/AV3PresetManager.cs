@@ -463,7 +463,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// <summary>Draw the preset states as a table: preset id, state name, then one column per parameter the states' drivers set.</summary>
         private void DrawPresetStates(PresetInfo preset)
         {
-            var columns = preset.driverColumns ?? EmptyDriverColumns;
+            // pending column deletions & row deletions are reflected live: those columns / rows aren't drawn until Apply
+            var columns = FilterDrawnColumns(preset);
+            var rows = FilterDrawnStates(preset);
             var columnWidths = BuildDriverColumnWidths(columns);
 
             // One layout rect per row, sized for all columns; the cells are then drawn at their calculated x & width inside it
@@ -506,14 +508,64 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (newParam != newParamInput)
                 newParamInput = newParam;
 
-            foreach (var entry in preset.states)
+            foreach (var entry in rows)
             {
                 var rowRect = GetTableRowRect(rowWidth);
-                DrawPresetStateRow(entry, preset, columnWidths, rowRect);
+                DrawPresetStateRow(entry, columns, columnWidths, rowRect);
             }
 
             // a bottom row to add a whole new preset state (id +, name input; parameter columns stay empty)
             DrawAddPresetRow(preset, rowWidth);
+        }
+
+        /// <summary>The table's columns, minus the ones queued for deletion (all columns when nothing is queued).</summary>
+        private List<DriverColumn> FilterDrawnColumns(PresetInfo preset)
+        {
+            var columns = preset.driverColumns ?? EmptyDriverColumns;
+            bool any = false;
+            for (int i = 0; i < columns.Count; i++)
+            {
+                if (IsPendingDeletion(1, null, null, -1, columns[i].name))
+                {
+                    any = true;
+                    break;
+                }
+            }
+            if (!any)
+                return columns;
+
+            var kept = new List<DriverColumn>(columns.Count);
+            foreach (var column in columns)
+            {
+                if (!IsPendingDeletion(1, null, null, -1, column.name))
+                    kept.Add(column);
+            }
+            return kept;
+        }
+
+        /// <summary>The table's rows, minus the states queued for deletion (all rows when nothing is queued).</summary>
+        private List<PresetStateEntry> FilterDrawnStates(PresetInfo preset)
+        {
+            var states = preset.states;
+            bool any = false;
+            for (int i = 0; i < states.Count; i++)
+            {
+                if (IsPendingDeletion(2, states[i].state, null, -1, null))
+                {
+                    any = true;
+                    break;
+                }
+            }
+            if (!any)
+                return states;
+
+            var kept = new List<PresetStateEntry>(states.Count);
+            foreach (var entry in states)
+            {
+                if (!IsPendingDeletion(2, entry.state, null, -1, null))
+                    kept.Add(entry);
+            }
+            return kept;
         }
 
         /// <summary>
@@ -1035,6 +1087,34 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return pendingChanges.Exists(c => c.state == state && c.driverBehaviour == driver && c.operationIndex == operationIndex);
         }
 
+        /// <summary>True when every one of the cell's driver operations is queued for deletion.</summary>
+        private bool IsCellPendingDeletion(AnimatorState state, List<DriverSetInfo> cells)
+        {
+            for (int i = 0; i < cells.Count; i++)
+            {
+                if (IsPendingDeletion(0, state, cells[i].driverBehaviour, cells[i].operationIndex, null))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>Remove queued deletions of the given kind from the pending queue (used by the table's restore buttons).</summary>
+        private void RemovePendingDeletion(int kind, AnimatorState state, StateMachineBehaviour driver, int operationIndex, string parameterName)
+        {
+            for (int i = pendingDeletions.Count - 1; i >= 0; i--)
+            {
+                var d = pendingDeletions[i];
+                if (d.kind != kind)
+                    continue;
+                if (kind == 0 && d.state == state && d.driverBehaviour == driver && d.operationIndex == operationIndex)
+                    pendingDeletions.RemoveAt(i);
+                else if (kind == 1 && string.Equals(d.parameterName, parameterName, StringComparison.Ordinal))
+                    pendingDeletions.RemoveAt(i);
+                else if (kind == 2 && d.state == state)
+                    pendingDeletions.RemoveAt(i);
+            }
+        }
+
         /// <summary>Remove the preset menu control that matches the deleted state (a control of the preset parameter with the state's name/id).</summary>
         private static void RemovePresetMenuEntry(VRCExpressionsMenu menu, string presetParameter, string stateName, int presetId)
         {
@@ -1142,7 +1222,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>Draw every cell of one table row at its calculated x & width inside the row rect.</summary>
-        private void DrawPresetStateRow(PresetStateEntry entry, PresetInfo preset, List<float> columnWidths, Rect rowRect)
+        private void DrawPresetStateRow(PresetStateEntry entry, List<DriverColumn> columns, List<float> columnWidths, Rect rowRect)
         {
             var cellRect = GetTableCellRect(rowRect);
             string idText = entry.hasEntryTransition
@@ -1177,7 +1257,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 // shrink the field/checkbox rect so its box doesn't eat into the column's inner text padding
                 var fieldRect = new Rect(x, cellRect.y, Mathf.Max(columnWidths[i] - ColumnTextPadding, 10f), cellRect.height);
-                DrawDriverCell(entry.state, preset.driverColumns[i], fieldRect);
+                DrawDriverCell(entry.state, columns[i], fieldRect);
                 x += columnWidths[i] + ColumnPadding;
             }
 
@@ -1315,6 +1395,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var addContent = new GUIContent("+", addTooltip);
                 if (GUI.Button(cellRect, addContent))
                     SetPendingValue(newCell, column.name, state, 0f);
+                return;
+            }
+
+            // a cell whose operations are all queued for deletion renders back to the empty state:
+            // pressing the + removes the queued deletions, restoring the cell to its current value
+            if (IsCellPendingDeletion(state, cells))
+            {
+                var undeleteTooltip = $"Restore '{column.name}' on '{state.name}'";
+                var undeleteContent = new GUIContent("+", undeleteTooltip);
+                if (GUI.Button(cellRect, undeleteContent))
+                {
+                    for (int i = 0; i < cells.Count; i++)
+                        RemovePendingDeletion(0, state, cells[i].driverBehaviour, cells[i].operationIndex, null);
+                    Repaint();
+                }
                 return;
             }
 
