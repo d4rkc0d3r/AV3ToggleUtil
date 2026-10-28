@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEditor;
 using UnityEditor.Animations;
 using VRC.SDK3.Avatars.Components;
+using VRC.SDK3.Avatars.ScriptableObjects;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,6 +16,49 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         {
             Selection.activeObject = obj;
             EditorGUIUtility.PingObject(obj);
+        }
+
+        /// <summary>
+        /// Formats a parameter's declared value type, appending the signedness-prefixed bit width
+        /// in parentheses for Int and Float parameters, e.g. "Int (u8)", "Float (s4)", "Bool".
+        /// </summary>
+        public static string GetValueTypeDisplayString(VRCExpressionParameters.Parameter parameter)
+        {
+            if (parameter == null)
+                return "Unknown";
+
+            var valueType = parameter.valueType;
+            switch (valueType)
+            {
+                case VRCExpressionParameters.ValueType.Bool:
+                    return "Bool";
+                case VRCExpressionParameters.ValueType.Int:
+                case VRCExpressionParameters.ValueType.Float:
+                    bool isSigned = GetParameterRepresentation(valueType, parameter.flippedRepresentation)
+                        == VRCExpressionParameters.Parameter.ValueRepresentation.Signed;
+                    var bitWidth = Mathf.Clamp(parameter.bitWidth, (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
+                    return $"{valueType} ({(isSigned ? "s" : "u")}{bitWidth})";
+                default:
+                    return valueType.ToString();
+            }
+        }
+
+        /// <summary>
+        /// Resolves a parameter's value representation to signed/unsigned.
+        /// Float defaults to Signed, Int defaults to Unsigned; flippedRepresentation inverts the default.
+        /// </summary>
+        public static VRCExpressionParameters.Parameter.ValueRepresentation GetParameterRepresentation(
+            VRCExpressionParameters.ValueType valueType, bool flipped)
+        {
+            bool isSigned = valueType switch
+            {
+                VRCExpressionParameters.ValueType.Float => !flipped,
+                VRCExpressionParameters.ValueType.Int => flipped,
+                _ => false // Bool is always unsigned
+            };
+            return isSigned
+                ? VRCExpressionParameters.Parameter.ValueRepresentation.Signed
+                : VRCExpressionParameters.Parameter.ValueRepresentation.Unsigned;
         }
 
         public static void ForEachClipInMotion(Motion motion, Action<AnimationClip> onClip, HashSet<BlendTree> visitedTrees = null)

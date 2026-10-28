@@ -486,7 +486,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 var vrcInfo = GetVRCExpressionParameterInfo(column.name);
                 string headerTooltip = column.name
-                    + Environment.NewLine + (vrcInfo != null ? vrcInfo.valueType.ToString() : "no VRC parameter");
+                    + Environment.NewLine + (vrcInfo != null ? GetValueTypeDisplayString(vrcInfo) : "no VRC parameter");
                 var headerContent = new GUIContent(GetParameterDisplayName(column.name)) { tooltip = headerTooltip };
                 var columnHeaderRect = new Rect(headerX, headerCell.y, columnWidths[headerXIndex], headerCell.height);
                 GUI.Label(columnHeaderRect, headerContent, EditorStyles.boldLabel);

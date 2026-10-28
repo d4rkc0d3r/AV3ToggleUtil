@@ -1782,7 +1782,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         var vrcParameter = GetVRCExpressionParameterInfo(av, selectedParameter);
                         if (vrcParameter != null)
                         {
-                            GUILayout.Label($"{vrcParameter.valueType}"
+                            GUILayout.Label($"{GetValueTypeDisplayString(vrcParameter)}"
                                 + (vrcParameter.saved ? ", Saved" : "")
                                 + (vrcParameter.networkSynced ? ", Synced" : ""));
                         }
