@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using d4rkpl4y3r.AV3ToggleUtil.Util;
 using HarmonyLib;
 using UnityEditor;
@@ -29,6 +30,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private int cachedAvatarId = 0;
         private Dictionary<string, ScanResult> scanResultCache = new(StringComparer.Ordinal);
+        private List<string> intOptimizeCandidatesCache;
+        private List<string> floatOptimizeCandidatesCache;
         private HashSet<string> usedParametersCache;
         private (HashSet<string> physBoneParameters, HashSet<string> contactParameters) componentSourceCache;
         private HashSet<string> driverParametersCache;
@@ -1208,6 +1211,79 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return true;
         }
 
+        private bool ApplyIntOptimize(VRCAvatarDescriptor av, List<string> candidates)
+        {
+            if (av == null || candidates == null || candidates.Count == 0)
+                return false;
+
+            var expressionParameters = av.expressionParameters;
+            if (expressionParameters == null)
+                return false;
+
+            var changed = false;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                var parameterInfo = GetVRCExpressionParameterInfo(av, candidates[i]);
+                if (parameterInfo == null)
+                    continue;
+
+                var scanResult = GetScanResultOrNull(candidates[i]);
+                if (scanResult == null)
+                    continue;
+
+                var values = ScanUsedValues(scanResult);
+                var minUsedValue = (long)Math.Round(values.Min(), MidpointRounding.AwayFromZero);
+                var maxUsedValue = (long)Math.Round(values.Max(), MidpointRounding.AwayFromZero);
+                var idealBitWidth = GetBitCountForRange(minUsedValue, maxUsedValue);
+                idealBitWidth = Mathf.Clamp(idealBitWidth, (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
+
+                if (idealBitWidth != (int)parameterInfo.bitWidth)
+                {
+                    parameterInfo.bitWidth = (byte)idealBitWidth;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+                return false;
+
+            EditorUtility.SetDirty(expressionParameters);
+            EditorUtility.SetDirty(av);
+            ResetCaches();
+            return true;
+        }
+
+        private bool ApplyFloatOptimize(VRCAvatarDescriptor av, List<string> candidates)
+        {
+            if (av == null || candidates == null || candidates.Count == 0)
+                return false;
+
+            var expressionParameters = av.expressionParameters;
+            if (expressionParameters == null)
+                return false;
+
+            var changed = false;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                var parameterInfo = GetVRCExpressionParameterInfo(av, candidates[i]);
+                if (parameterInfo == null || parameterInfo.bitWidth == 6)
+                    continue;
+
+                // unsigned 6-bit: flippedRepresentation inverts the Float default (signed) to unsigned
+                parameterInfo.bitWidth = 6;
+                parameterInfo.flippedRepresentation = true;
+                changed = true;
+            }
+
+            if (!changed)
+                return false;
+
+            EditorUtility.SetDirty(expressionParameters);
+            EditorUtility.SetDirty(av);
+            ResetCaches();
+            return true;
+        }
+
         private ScanResult BuildScanResult(VRCAvatarDescriptor av, string parameterName)
         {
             var result = new ScanResult();
@@ -1401,6 +1477,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private void ResetCaches()
         {
             scanResultCache.Clear();
+            intOptimizeCandidatesCache = null;
+            floatOptimizeCandidatesCache = null;
             usedParametersCache = null;
             driverParametersCache = null;
             componentSourceCache = default;
@@ -1526,6 +1604,165 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return new HashSet<string>(
                 expressionParams.Where(p => p != null && !string.IsNullOrEmpty(p.name)).Select(p => p.name),
                 StringComparer.Ordinal);
+        }
+
+        private List<string> GetIntOptimizeCandidates(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            if (intOptimizeCandidatesCache == null || scanResultCache.Count < allParameters.Count)
+            {
+                var candidates = new List<string>();
+                EnsureParametersScanned(av, allParameters);
+                foreach (var parameter in allParameters)
+                {
+                    var scanResult = scanResultCache[parameter];
+                    if (scanResult.conditionValues.Count == 0
+                        && scanResult.blendTreeValues.Count == 0
+                        && scanResult.parameterDriverValues.Count == 0)
+                        continue;
+
+                    var parameterInfo = GetVRCExpressionParameterInfo(av, parameter);
+                    if (parameterInfo == null || parameterInfo.valueType != VRCExpressionParameters.ValueType.Int)
+                        continue;
+
+                    var currentBitWidth = ClampBitWidth(parameterInfo.bitWidth);
+                    if (currentBitWidth <= (int)VRCExpressionParameters.Parameter.MinBitWidth)
+                        continue;
+
+                    var minUsedValue = (long)Math.Round(ScanUsedValues(scanResult).Min(), MidpointRounding.AwayFromZero);
+                    var maxUsedValue = (long)Math.Round(ScanUsedValues(scanResult).Max(), MidpointRounding.AwayFromZero);
+                    var idealBitWidth = GetBitCountForRange(minUsedValue, maxUsedValue);
+                    if (idealBitWidth >= currentBitWidth)
+                        continue;
+
+                    candidates.Add(parameter);
+                }
+                intOptimizeCandidatesCache = candidates;
+            }
+
+            return intOptimizeCandidatesCache;
+        }
+
+        private List<string> GetFloatOptimizeCandidates(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            if (floatOptimizeCandidatesCache == null || scanResultCache.Count < allParameters.Count)
+            {
+                var candidates = new List<string>();
+                EnsureParametersScanned(av, allParameters);
+                foreach (var parameter in allParameters)
+                {
+                    // eligible when the parameter is referenced by at least one Radial Puppet control
+                    var hasRadialPuppet = false;
+                    var scanResult = scanResultCache[parameter];
+                    for (int i = 0; i < scanResult.menuUsages.Count; i++)
+                    {
+                        if (scanResult.menuUsages[i].controlType == VRCExpressionsMenu.Control.ControlType.RadialPuppet)
+                        {
+                            hasRadialPuppet = true;
+                            break;
+                        }
+                    }
+                    if (!hasRadialPuppet)
+                        continue;
+
+                    var parameterInfo = GetVRCExpressionParameterInfo(av, parameter);
+                    if (parameterInfo == null || parameterInfo.valueType != VRCExpressionParameters.ValueType.Float)
+                        continue;
+
+                    // only optimize parameters still at the default signed 8-bit representation
+                    var isSigned = GetParameterRepresentation(
+                        VRCExpressionParameters.ValueType.Float, parameterInfo.flippedRepresentation)
+                        == VRCExpressionParameters.Parameter.ValueRepresentation.Signed;
+                    if (!isSigned || parameterInfo.bitWidth != 8)
+                        continue;
+
+                    candidates.Add(parameter);
+                }
+                floatOptimizeCandidatesCache = candidates;
+            }
+
+            return floatOptimizeCandidatesCache;
+        }
+
+        private static List<float> ScanUsedValues(ScanResult scanResult)
+        {
+            var values = new List<float>(
+                scanResult.conditionValues.Count + scanResult.blendTreeValues.Count + scanResult.parameterDriverValues.Count);
+            values.AddRange(scanResult.conditionValues);
+            values.AddRange(scanResult.blendTreeValues);
+            values.AddRange(scanResult.parameterDriverValues);
+            return values;
+        }
+
+        private static int GetBitCountForRange(long minValue, long maxValue)
+        {
+            int bits;
+            if (minValue >= 0)
+            {
+                // unsigned: minimum n such that maxValue <= 2^n - 1
+                bits = 0;
+                while (maxValue >= (1L << bits))
+                    bits++;
+            }
+            else
+            {
+                // two's complement: minimum n such that minValue >= -2^(n-1) and maxValue <= 2^(n-1) - 1
+                bits = 1;
+                while (minValue < -(1L << (bits - 1)) || maxValue > (1L << (bits - 1)) - 1)
+                    bits++;
+            }
+
+            return Mathf.Max(bits, (int)VRCExpressionParameters.Parameter.MinBitWidth);
+        }
+
+        private static int ClampBitWidth(byte bitWidth)
+        {
+            return Mathf.Clamp((int)bitWidth, (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
+        }
+
+        private string BuildIntOptimizeTooltip(VRCAvatarDescriptor av, List<string> candidates)
+        {
+            var builder = new StringBuilder();
+            builder.Append("Set each Int parameter's bit width to the minimum needed for its used range.");
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                builder.Append('\n');
+
+                var scanResult = scanResultCache[candidates[i]];
+                var values = ScanUsedValues(scanResult);
+                var minUsedValue = (long)Math.Round(values.Min(), MidpointRounding.AwayFromZero);
+                var maxUsedValue = (long)Math.Round(values.Max(), MidpointRounding.AwayFromZero);
+                var sign = minUsedValue < 0 ? "s" : "u";
+                var parameterInfo = GetVRCExpressionParameterInfo(av, candidates[i]);
+                var currentBitWidth = parameterInfo != null ? ClampBitWidth(parameterInfo.bitWidth) : 0;
+                var idealBitWidth = GetBitCountForRange(minUsedValue, maxUsedValue);
+                builder.Append(candidates[i])
+                    .Append(": ").Append(sign).Append(currentBitWidth)
+                    .Append(" -> ").Append(sign).Append(idealBitWidth)
+                    .Append("  (uses [").Append(minUsedValue).Append(", ").Append(maxUsedValue).Append("])");
+            }
+
+            return builder.ToString();
+        }
+
+        private static string BuildFloatOptimizeTooltip(VRCAvatarDescriptor av, List<string> candidates)
+        {
+            var builder = new StringBuilder();
+            builder.Append("Set all signed 8-bit Float parameters referenced by at least one Radial Puppet control in the expression menus to unsigned 6-bit (u6).");
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                builder.Append('\n');
+
+                var parameterInfo = GetVRCExpressionParameterInfo(av, candidates[i]);
+                var currentBitWidth = parameterInfo != null ? ClampBitWidth(parameterInfo.bitWidth) : 0;
+                builder.Append(candidates[i]).Append(": s").Append(currentBitWidth).Append(" -> u6");
+            }
+
+            return builder.ToString();
+        }
+
+        private ScanResult GetScanResultOrNull(string parameterName)
+        {
+            return scanResultCache.TryGetValue(parameterName, out var scanResult) ? scanResult : null;
         }
 
         private (HashSet<string> included, HashSet<string> excluded) GetFilterParameterSets(VRCAvatarDescriptor av, List<string> allParameters)
@@ -1659,6 +1896,41 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     showBoolParameters = GUILayout.Toggle(showBoolParameters, "Bool", EditorStyles.miniButton, GUILayout.ExpandWidth(false));
                     showIntParameters = GUILayout.Toggle(showIntParameters, "Int", EditorStyles.miniButton, GUILayout.ExpandWidth(false));
                     showFloatParameters = GUILayout.Toggle(showFloatParameters, "Float", EditorStyles.miniButton, GUILayout.ExpandWidth(false));
+                }
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.Label("Optimize");
+                    GUILayout.FlexibleSpace();
+
+                    var intOptimizeCandidates = GetIntOptimizeCandidates(av, allParameters);
+                    var intOptimizeTooltip = (intOptimizeCandidates.Count > 0 ? BuildIntOptimizeTooltip(av, intOptimizeCandidates) : "No Int parameters have a used range smaller than their current bit width.");
+                    using (new EditorGUI.DisabledScope(intOptimizeCandidates.Count == 0))
+                    {
+                        if (GUILayout.Toggle(false, new GUIContent("Int", intOptimizeTooltip), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
+                        {
+                            if (ApplyIntOptimize(av, intOptimizeCandidates))
+                            {
+                                GUI.FocusControl(null);
+                                Repaint();
+                                return;
+                            }
+                        }
+                    }
+
+                    var floatOptimizeCandidates = GetFloatOptimizeCandidates(av, allParameters);
+                    var floatOptimizeTooltip = (floatOptimizeCandidates.Count > 0 ? BuildFloatOptimizeTooltip(av, floatOptimizeCandidates) : "No signed 8-bit Float parameters are referenced by a Radial Puppet control in the expression menus.");
+                    using (new EditorGUI.DisabledScope(floatOptimizeCandidates.Count == 0))
+                    {
+                        if (GUILayout.Toggle(false, new GUIContent("Float", floatOptimizeTooltip), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
+                        {
+                            if (ApplyFloatOptimize(av, floatOptimizeCandidates))
+                            {
+                                GUI.FocusControl(null);
+                                Repaint();
+                                return;
+                            }
+                        }
+                    }
                 }
                 parameterFilter.DrawGUI();
                 using var leftScroll = new EditorGUILayout.ScrollViewScope(leftScrollPos);
