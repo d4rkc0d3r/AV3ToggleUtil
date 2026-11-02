@@ -1625,13 +1625,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         continue;
 
                     var currentBitWidth = ClampBitWidth(parameterInfo.bitWidth);
-                    if (currentBitWidth <= (int)VRCExpressionParameters.Parameter.MinBitWidth)
-                        continue;
 
                     var minUsedValue = (long)Math.Round(ScanUsedValues(scanResult).Min(), MidpointRounding.AwayFromZero);
                     var maxUsedValue = (long)Math.Round(ScanUsedValues(scanResult).Max(), MidpointRounding.AwayFromZero);
-                    var idealBitWidth = GetBitCountForRange(minUsedValue, maxUsedValue);
-                    if (idealBitWidth >= currentBitWidth)
+                    var idealBitWidth = Mathf.Clamp(GetBitCountForRange(minUsedValue, maxUsedValue),
+                        (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
+                    if (idealBitWidth == currentBitWidth)
                         continue;
 
                     candidates.Add(parameter);
@@ -1905,7 +1904,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     GUILayout.FlexibleSpace();
 
                     var intOptimizeCandidates = GetIntOptimizeCandidates(av, filteredParameters);
-                    var intOptimizeTooltip = (intOptimizeCandidates.Count > 0 ? BuildIntOptimizeTooltip(av, intOptimizeCandidates) : "No synced Int parameters have a used range smaller than their current bit width.");
+                    var intOptimizeTooltip = (intOptimizeCandidates.Count > 0 ? BuildIntOptimizeTooltip(av, intOptimizeCandidates) : "No synced Int parameters have a bit width that differs from the minimum required for their used range.");
                     using (new EditorGUI.DisabledScope(intOptimizeCandidates.Count == 0))
                     {
                         if (GUILayout.Toggle(false, new GUIContent("Int", intOptimizeTooltip), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
