@@ -1684,6 +1684,36 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return floatOptimizeCandidatesCache.Where(p => filterSet.Contains(p)).ToList();
         }
 
+        private List<string> GetUnusedRemoveCandidates(VRCAvatarDescriptor av, List<string> allParameters)
+        {
+            EnsureParametersScanned(av, allParameters);
+            var candidates = new List<string>(allParameters.Count);
+            for (int i = 0; i < allParameters.Count; i++)
+            {
+                var parameter = allParameters[i];
+                if (VRChatBuiltInParameters.Contains(parameter))
+                    continue;
+
+                if (!IsParameterUsedInControllers(scanResultCache[parameter]))
+                    candidates.Add(parameter);
+            }
+            return candidates;
+        }
+
+        private bool ApplyUnusedRemove(VRCAvatarDescriptor av, List<string> candidates)
+        {
+            if (av == null || candidates == null || candidates.Count == 0)
+                return false;
+
+            var changed = false;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (ApplyParameterRemove(av, candidates[i]))
+                    changed = true;
+            }
+            return changed;
+        }
+
         private static List<float> ScanUsedValues(ScanResult scanResult)
         {
             var values = new List<float>(
@@ -1720,11 +1750,39 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return Mathf.Clamp((int)bitWidth, (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
         }
 
+        private const int TooltipMaxEntries = 20;
+
+        private static void AppendTooltipOverflow(StringBuilder builder, List<string> candidates, int visibleCount)
+        {
+            var hidden = candidates.Count - visibleCount;
+            if (hidden <= 0)
+                return;
+
+            if (hidden == 1)
+                builder.Append('\n').Append(candidates[visibleCount]);
+            else
+                builder.Append('\n').Append("+").Append(hidden).Append(" more");
+        }
+
+        private static string BuildUnusedRemoveTooltip(List<string> candidates)
+        {
+            var builder = new StringBuilder();
+            builder.Append("Remove these unused parameters from the expression parameters, menus & controllers.");
+            var visibleCount = Mathf.Min(TooltipMaxEntries, candidates.Count);
+            for (int i = 0; i < visibleCount; i++)
+            {
+                builder.Append('\n').Append(candidates[i]);
+            }
+            AppendTooltipOverflow(builder, candidates, visibleCount);
+            return builder.ToString();
+        }
+
         private string BuildIntOptimizeTooltip(VRCAvatarDescriptor av, List<string> candidates)
         {
             var builder = new StringBuilder();
             builder.Append("Set each Int parameter's bit width to the minimum needed for its used range.");
-            for (int i = 0; i < candidates.Count; i++)
+            var visibleCount = Mathf.Min(TooltipMaxEntries, candidates.Count);
+            for (int i = 0; i < visibleCount; i++)
             {
                 builder.Append('\n');
 
@@ -1741,6 +1799,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     .Append(" -> ").Append(sign).Append(idealBitWidth)
                     .Append("  (uses [").Append(minUsedValue).Append(", ").Append(maxUsedValue).Append("])");
             }
+            AppendTooltipOverflow(builder, candidates, visibleCount);
 
             return builder.ToString();
         }
@@ -1749,7 +1808,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var builder = new StringBuilder();
             builder.Append("Set all signed 8-bit Float parameters referenced by at least one Radial Puppet control in the expression menus to unsigned 6-bit (u6).");
-            for (int i = 0; i < candidates.Count; i++)
+            var visibleCount = Mathf.Min(TooltipMaxEntries, candidates.Count);
+            for (int i = 0; i < visibleCount; i++)
             {
                 builder.Append('\n');
 
@@ -1757,6 +1817,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var currentBitWidth = parameterInfo != null ? ClampBitWidth(parameterInfo.bitWidth) : 0;
                 builder.Append(candidates[i]).Append(": s").Append(currentBitWidth).Append(" -> u6");
             }
+            AppendTooltipOverflow(builder, candidates, visibleCount);
 
             return builder.ToString();
         }
@@ -1902,6 +1963,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     GUILayout.Label("Optimize");
                     GUILayout.FlexibleSpace();
+
+                    var unusedRemoveCandidates = GetUnusedRemoveCandidates(av, filteredParameters);
+                    var unusedRemoveTooltip = (unusedRemoveCandidates.Count > 0 ? BuildUnusedRemoveTooltip(unusedRemoveCandidates) : "No unused parameters (not referenced by any Animator controller) match the current filter.");
+                    using (new EditorGUI.DisabledScope(unusedRemoveCandidates.Count == 0))
+                    {
+                        if (GUILayout.Toggle(false, new GUIContent("Unused", unusedRemoveTooltip), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
+                        {
+                            if (ApplyUnusedRemove(av, unusedRemoveCandidates))
+                            {
+                                GUI.FocusControl(null);
+                                Repaint();
+                                return;
+                            }
+                        }
+                    }
 
                     var intOptimizeCandidates = GetIntOptimizeCandidates(av, filteredParameters);
                     var intOptimizeTooltip = (intOptimizeCandidates.Count > 0 ? BuildIntOptimizeTooltip(av, intOptimizeCandidates) : "No synced Int parameters have a bit width that differs from the minimum required for their used range.");
