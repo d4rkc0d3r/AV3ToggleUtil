@@ -1621,7 +1621,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         continue;
 
                     var parameterInfo = GetVRCExpressionParameterInfo(av, parameter);
-                    if (parameterInfo == null || parameterInfo.valueType != VRCExpressionParameters.ValueType.Int)
+                    if (parameterInfo == null || parameterInfo.valueType != VRCExpressionParameters.ValueType.Int || !parameterInfo.networkSynced)
                         continue;
 
                     var currentBitWidth = ClampBitWidth(parameterInfo.bitWidth);
@@ -1666,7 +1666,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         continue;
 
                     var parameterInfo = GetVRCExpressionParameterInfo(av, parameter);
-                    if (parameterInfo == null || parameterInfo.valueType != VRCExpressionParameters.ValueType.Float)
+                    if (parameterInfo == null || parameterInfo.valueType != VRCExpressionParameters.ValueType.Float || !parameterInfo.networkSynced)
                         continue;
 
                     // only optimize parameters still at the default signed 8-bit representation
@@ -1905,7 +1905,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     GUILayout.FlexibleSpace();
 
                     var intOptimizeCandidates = GetIntOptimizeCandidates(av, filteredParameters);
-                    var intOptimizeTooltip = (intOptimizeCandidates.Count > 0 ? BuildIntOptimizeTooltip(av, intOptimizeCandidates) : "No Int parameters have a used range smaller than their current bit width.");
+                    var intOptimizeTooltip = (intOptimizeCandidates.Count > 0 ? BuildIntOptimizeTooltip(av, intOptimizeCandidates) : "No synced Int parameters have a used range smaller than their current bit width.");
                     using (new EditorGUI.DisabledScope(intOptimizeCandidates.Count == 0))
                     {
                         if (GUILayout.Toggle(false, new GUIContent("Int", intOptimizeTooltip), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
@@ -1920,7 +1920,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
 
                     var floatOptimizeCandidates = GetFloatOptimizeCandidates(av, filteredParameters);
-                    var floatOptimizeTooltip = (floatOptimizeCandidates.Count > 0 ? BuildFloatOptimizeTooltip(av, floatOptimizeCandidates) : "No signed 8-bit Float parameters are referenced by a Radial Puppet control in the expression menus.");
+                    var floatOptimizeTooltip = (floatOptimizeCandidates.Count > 0 ? BuildFloatOptimizeTooltip(av, floatOptimizeCandidates) : "No synced signed 8-bit Float parameters are referenced by a Radial Puppet control in the expression menus.");
                     using (new EditorGUI.DisabledScope(floatOptimizeCandidates.Count == 0))
                     {
                         if (GUILayout.Toggle(false, new GUIContent("Float", floatOptimizeTooltip), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
