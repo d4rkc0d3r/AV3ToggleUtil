@@ -1639,7 +1639,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 intOptimizeCandidatesCache = candidates;
             }
 
-            return intOptimizeCandidatesCache;
+            var filterSet = allParameters.ToHashSet(StringComparer.Ordinal);
+            return intOptimizeCandidatesCache.Where(p => filterSet.Contains(p)).ToList();
         }
 
         private List<string> GetFloatOptimizeCandidates(VRCAvatarDescriptor av, List<string> allParameters)
@@ -1680,7 +1681,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 floatOptimizeCandidatesCache = candidates;
             }
 
-            return floatOptimizeCandidatesCache;
+            var filterSet = allParameters.ToHashSet(StringComparer.Ordinal);
+            return floatOptimizeCandidatesCache.Where(p => filterSet.Contains(p)).ToList();
         }
 
         private static List<float> ScanUsedValues(ScanResult scanResult)
@@ -1902,7 +1904,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     GUILayout.Label("Optimize");
                     GUILayout.FlexibleSpace();
 
-                    var intOptimizeCandidates = GetIntOptimizeCandidates(av, allParameters);
+                    var intOptimizeCandidates = GetIntOptimizeCandidates(av, filteredParameters);
                     var intOptimizeTooltip = (intOptimizeCandidates.Count > 0 ? BuildIntOptimizeTooltip(av, intOptimizeCandidates) : "No Int parameters have a used range smaller than their current bit width.");
                     using (new EditorGUI.DisabledScope(intOptimizeCandidates.Count == 0))
                     {
@@ -1917,7 +1919,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         }
                     }
 
-                    var floatOptimizeCandidates = GetFloatOptimizeCandidates(av, allParameters);
+                    var floatOptimizeCandidates = GetFloatOptimizeCandidates(av, filteredParameters);
                     var floatOptimizeTooltip = (floatOptimizeCandidates.Count > 0 ? BuildFloatOptimizeTooltip(av, floatOptimizeCandidates) : "No signed 8-bit Float parameters are referenced by a Radial Puppet control in the expression menus.");
                     using (new EditorGUI.DisabledScope(floatOptimizeCandidates.Count == 0))
                     {
