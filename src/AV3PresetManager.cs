@@ -486,13 +486,23 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 var vrcInfo = GetVRCExpressionParameterInfo(column.name);
                 string headerTooltip = column.name
-                    + Environment.NewLine + (vrcInfo != null ? GetValueTypeDisplayString(vrcInfo) : "no VRC parameter");
+                    + Environment.NewLine + (vrcInfo != null ? GetValueTypeDisplayString(vrcInfo) : "no VRC parameter")
+                    + Environment.NewLine + "Click to open in Parameter Inspector";
                 var headerContent = new GUIContent(GetParameterDisplayName(column.name)) { tooltip = headerTooltip };
                 var columnHeaderRect = new Rect(headerX, headerCell.y, columnWidths[headerXIndex], headerCell.height);
                 GUI.Label(columnHeaderRect, headerContent, EditorStyles.boldLabel);
 
+                // left-clicking the parameter name opens it in the Parameter Inspector (same pattern as AV3Helper.ClickableLastRect)
+                EditorGUIUtility.AddCursorRect(columnHeaderRect, MouseCursor.Link);
+                if (Event.current.type == EventType.MouseDown
+                    && Event.current.button == 0
+                    && columnHeaderRect.Contains(Event.current.mousePosition))
+                {
+                    Event.current.Use();
+                    AV3ParameterInspector.OpenWithParameter(column.name);
+                }
                 // right-clicking the parameter name offers removing the whole column
-                if (Event.current.type == EventType.ContextClick && columnHeaderRect.Contains(Event.current.mousePosition))
+                else if (Event.current.type == EventType.ContextClick && columnHeaderRect.Contains(Event.current.mousePosition))
                 {
                     Event.current.Use();
                     ShowRemoveColumnMenu(preset, column);
