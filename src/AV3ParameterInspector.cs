@@ -402,35 +402,25 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return state.cycleOffsetParameterActive && IsSameParameter(state.cycleOffsetParameter, parameterName);
         }
 
-        private static bool BehaviourDriverWritesToParameter(StateMachineBehaviour behaviour, string parameterName)
+        // single pass over the driver's entries: write = any entry targets the parameter, source = a Copy entry reads from it
+        private static (bool writes, bool source) BehaviourDriverParameterUsage(StateMachineBehaviour behaviour, string parameterName)
         {
             if (behaviour == null || !(behaviour is VRCAvatarParameterDriver typedDriver) || typedDriver.parameters == null)
-                return false;
+                return (false, false);
 
+            var writes = false;
+            var source = false;
             for (int p = 0; p < typedDriver.parameters.Count; p++)
             {
                 var parameter = typedDriver.parameters[p];
                 if (IsSameParameter(parameter.name, parameterName))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private static bool BehaviourDriverCopiesFromParameter(StateMachineBehaviour behaviour, string parameterName)
-        {
-            if (behaviour == null || !(behaviour is VRCAvatarParameterDriver typedDriver) || typedDriver.parameters == null)
-                return false;
-
-            for (int p = 0; p < typedDriver.parameters.Count; p++)
-            {
-                var parameter = typedDriver.parameters[p];
+                    writes = true;
                 if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
                     && IsSameParameter(parameter.source, parameterName))
-                    return true;
+                    source = true;
             }
 
-            return false;
+            return (writes, source);
         }
 
         private static bool BehaviourUsesPlayAudioParameter(StateMachineBehaviour behaviour, string parameterName)
@@ -440,34 +430,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 && IsSameParameter(playAudio.ParameterName, parameterName);
         }
 
-        private static bool StateDriverWritesToParameter(AnimatorState state, string parameterName)
+        private static (bool write, bool source) StateDriverParameterUsage(AnimatorState state, string parameterName)
         {
-            if (state == null) return false;
+            if (state == null) return (false, false);
             var behaviours = state.behaviours;
-            if (behaviours == null) return false;
+            if (behaviours == null) return (false, false);
 
+            var write = false;
+            var source = false;
             for (int i = 0; i < behaviours.Length; i++)
             {
-                if (BehaviourDriverWritesToParameter(behaviours[i], parameterName))
-                    return true;
+                var (behaviourWrite, behaviourSource) = BehaviourDriverParameterUsage(behaviours[i], parameterName);
+                write |= behaviourWrite;
+                source |= behaviourSource;
             }
 
-            return false;
-        }
-
-        private static bool StateDriverCopiesFromParameter(AnimatorState state, string parameterName)
-        {
-            if (state == null) return false;
-            var behaviours = state.behaviours;
-            if (behaviours == null) return false;
-
-            for (int i = 0; i < behaviours.Length; i++)
-            {
-                if (BehaviourDriverCopiesFromParameter(behaviours[i], parameterName))
-                    return true;
-            }
-
-            return false;
+            return (write, source);
         }
 
         private static bool StateUsesPlayAudioParameter(AnimatorState state, string parameterName)
@@ -485,34 +463,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return false;
         }
 
-        private static bool StateMachineDriverWritesToParameter(AnimatorStateMachine stateMachine, string parameterName)
+        private static (bool write, bool source) StateMachineDriverParameterUsage(AnimatorStateMachine stateMachine, string parameterName)
         {
-            if (stateMachine == null) return false;
+            if (stateMachine == null) return (false, false);
             var behaviours = stateMachine.behaviours;
-            if (behaviours == null) return false;
+            if (behaviours == null) return (false, false);
 
+            var write = false;
+            var source = false;
             for (int i = 0; i < behaviours.Length; i++)
             {
-                if (BehaviourDriverWritesToParameter(behaviours[i], parameterName))
-                    return true;
+                var (behaviourWrite, behaviourSource) = BehaviourDriverParameterUsage(behaviours[i], parameterName);
+                write |= behaviourWrite;
+                source |= behaviourSource;
             }
 
-            return false;
-        }
-
-        private static bool StateMachineDriverCopiesFromParameter(AnimatorStateMachine stateMachine, string parameterName)
-        {
-            if (stateMachine == null) return false;
-            var behaviours = stateMachine.behaviours;
-            if (behaviours == null) return false;
-
-            for (int i = 0; i < behaviours.Length; i++)
-            {
-                if (BehaviourDriverCopiesFromParameter(behaviours[i], parameterName))
-                    return true;
-            }
-
-            return false;
+            return (write, source);
         }
 
         private static bool StateMachineUsesPlayAudioParameter(AnimatorStateMachine stateMachine, string parameterName)
@@ -530,6 +496,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return false;
         }
 
+        // a transition only counts as an incoming one if it targets `state` and uses the parameter
+        private static bool IncomingTransitionUsesParameter(AnimatorTransitionBase transition, AnimatorState state, string parameterName)
+        {
+            return transition != null
+                && transition.destinationState == state
+                && TransitionUsesParameter(transition, parameterName);
+        }
+
         private static bool HasIncomingTransitionUsingParameter(AnimatorStateMachine ownerStateMachine, AnimatorState state, string parameterName)
         {
             if (ownerStateMachine == null || state == null) return false;
@@ -539,10 +513,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 for (int i = 0; i < anyStateTransitions.Length; i++)
                 {
-                    var transition = anyStateTransitions[i];
-                    if (transition == null) continue;
-                    if (transition.destinationState != state) continue;
-                    if (TransitionUsesParameter(transition, parameterName)) return true;
+                    if (IncomingTransitionUsesParameter(anyStateTransitions[i], state, parameterName))
+                        return true;
                 }
             }
 
@@ -556,10 +528,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 for (int t = 0; t < sourceTransitions.Length; t++)
                 {
-                    var transition = sourceTransitions[t];
-                    if (transition == null) continue;
-                    if (transition.destinationState != state) continue;
-                    if (TransitionUsesParameter(transition, parameterName)) return true;
+                    if (IncomingTransitionUsesParameter(sourceTransitions[t], state, parameterName))
+                        return true;
                 }
             }
 
@@ -568,10 +538,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 for (int i = 0; i < entryTransitions.Length; i++)
                 {
-                    var transition = entryTransitions[i];
-                    if (transition == null) continue;
-                    if (transition.destinationState != state) continue;
-                    if (TransitionUsesParameter(transition, parameterName)) return true;
+                    if (IncomingTransitionUsesParameter(entryTransitions[i], state, parameterName))
+                        return true;
                 }
             }
 
@@ -679,23 +647,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static string FormatUsedRangeBitCount(long minValue, long maxValue)
         {
-            int bits;
-            if (minValue >= 0)
-            {
-                // unsigned: minimum n such that maxValue <= 2^n - 1
-                bits = 0;
-                while (maxValue >= (1L << bits))
-                    bits++;
-            }
-            else
-            {
-                // two's complement: minimum n such that minValue >= -2^(n-1) and maxValue <= 2^(n-1) - 1
-                bits = 1;
-                while (minValue < -(1L << (bits - 1)) || maxValue > (1L << (bits - 1)) - 1)
-                    bits++;
-            }
-
-            return $"{bits}-bit";
+            return $"{GetBitCountForRange(minValue, maxValue)}-bit";
         }
 
         private static bool IsParameterWrittenByPhysBone(string selectedParameter, string configuredParameter)
@@ -724,11 +676,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!IsParameterWrittenByPhysBone(selectedParameter, physBone.parameter))
                     continue;
 
-                var path = AnimationUtility.CalculateTransformPath(physBone.transform, root);
-                if (string.IsNullOrEmpty(path))
-                    path = "(Root)";
-
-                writers.Add(new ComponentParameterWriter("PhysBone", path, physBone.parameter));
+                writers.Add(new ComponentParameterWriter("PhysBone", GetTransformPath(physBone.transform, root), physBone.parameter));
             }
 
             foreach (var contactReceiver in root.GetComponentsInChildren<VRCContactReceiver>(true))
@@ -739,11 +687,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!IsSameParameter(selectedParameter, contactReceiver.parameter))
                     continue;
 
-                var path = AnimationUtility.CalculateTransformPath(contactReceiver.transform, root);
-                if (string.IsNullOrEmpty(path))
-                    path = "(Root)";
-
-                writers.Add(new ComponentParameterWriter("Contact", path, contactReceiver.parameter));
+                writers.Add(new ComponentParameterWriter("Contact", GetTransformPath(contactReceiver.transform, root), contactReceiver.parameter));
             }
 
             return writers
@@ -751,6 +695,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ThenBy(x => x.path, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.configuredParameter, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static string GetTransformPath(Transform transform, Transform root)
+        {
+            var path = AnimationUtility.CalculateTransformPath(transform, root);
+            return string.IsNullOrEmpty(path) ? "(Root)" : path;
         }
 
         private static bool RenameTransitionConditions(AnimatorTransitionBase transition, string oldParameter, string newParameter)
@@ -1446,9 +1396,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (scanResult == null)
                     continue;
 
-                var values = ScanUsedValues(scanResult);
-                var minUsedValue = (long)Math.Round(values.Min(), MidpointRounding.AwayFromZero);
-                var maxUsedValue = (long)Math.Round(values.Max(), MidpointRounding.AwayFromZero);
+                var (minUsedValue, maxUsedValue) = GetUsedValueRangeRounded(scanResult);
                 var idealBitWidth = GetBitCountForRange(minUsedValue, maxUsedValue);
                 idealBitWidth = Mathf.Clamp(idealBitWidth, (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
 
@@ -1637,8 +1585,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (usage.cycleOffset)
                                     ForEachClipInMotion(state.motion, c => result.cycleOffsetClips.Add(c));
 
-                                usage.parameterDriverWrite = StateDriverWritesToParameter(state, parameterName);
-                                usage.parameterDriverSource = StateDriverCopiesFromParameter(state, parameterName);
+                                var (stateParameterDriverWrite, stateParameterDriverSource) = StateDriverParameterUsage(state, parameterName);
+                                usage.parameterDriverWrite = stateParameterDriverWrite;
+                                usage.parameterDriverSource = stateParameterDriverSource;
                                 if (usage.parameterDriverWrite || usage.parameterDriverSource)
                                 {
                                     var driverBehaviours = state.behaviours;
@@ -1654,8 +1603,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     result.stateUsages.Add(usage);
                             }
 
-                            var machineParameterDriverWrite = StateMachineDriverWritesToParameter(sm, parameterName);
-                            var machineParameterDriverSource = StateMachineDriverCopiesFromParameter(sm, parameterName);
+                            var (machineParameterDriverWrite, machineParameterDriverSource) = StateMachineDriverParameterUsage(sm, parameterName);
                             var machinePlayAudio = StateMachineUsesPlayAudioParameter(sm, parameterName);
                             if (machineParameterDriverWrite || machineParameterDriverSource || machinePlayAudio)
                             {
@@ -1870,8 +1818,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                     var currentBitWidth = ClampBitWidth(parameterInfo.bitWidth);
 
-                    var minUsedValue = (long)Math.Round(ScanUsedValues(scanResult).Min(), MidpointRounding.AwayFromZero);
-                    var maxUsedValue = (long)Math.Round(ScanUsedValues(scanResult).Max(), MidpointRounding.AwayFromZero);
+                    var (minUsedValue, maxUsedValue) = GetUsedValueRangeRounded(scanResult);
                     var idealBitWidth = Mathf.Clamp(GetBitCountForRange(minUsedValue, maxUsedValue),
                         (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
                     if (idealBitWidth == currentBitWidth)
@@ -1968,6 +1915,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return values;
         }
 
+        private static (long min, long max) GetUsedValueRangeRounded(ScanResult scanResult)
+        {
+            var values = ScanUsedValues(scanResult);
+            var minUsedValue = (long)Math.Round(values.Min(), MidpointRounding.AwayFromZero);
+            var maxUsedValue = (long)Math.Round(values.Max(), MidpointRounding.AwayFromZero);
+            return (minUsedValue, maxUsedValue);
+        }
+
         private static int GetBitCountForRange(long minValue, long maxValue)
         {
             int bits;
@@ -2031,9 +1986,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 builder.Append('\n');
 
                 var scanResult = scanResultCache[candidates[i]];
-                var values = ScanUsedValues(scanResult);
-                var minUsedValue = (long)Math.Round(values.Min(), MidpointRounding.AwayFromZero);
-                var maxUsedValue = (long)Math.Round(values.Max(), MidpointRounding.AwayFromZero);
+                var (minUsedValue, maxUsedValue) = GetUsedValueRangeRounded(scanResult);
                 var sign = minUsedValue < 0 ? "s" : "u";
                 var parameterInfo = GetVRCExpressionParameterInfo(av, candidates[i]);
                 var currentBitWidth = parameterInfo != null ? ClampBitWidth(parameterInfo.bitWidth) : 0;
@@ -2404,9 +2357,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         GUILayout.Label($"{info.parameterType}");
                     }
 
-                    var usedValues = new List<float>(cachedScanResult.conditionValues);
-                    usedValues.AddRange(cachedScanResult.blendTreeValues);
-                    usedValues.AddRange(cachedScanResult.parameterDriverValues);
+                    var usedValues = ScanUsedValues(cachedScanResult);
                     var selectedParameterType = GetParameterType(av, selectedParameter);
                     if (usedValues.Count > 0 && selectedParameterType == AnimatorControllerParameterType.Int)
                     {
