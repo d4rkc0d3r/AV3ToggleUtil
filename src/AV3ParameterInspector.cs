@@ -451,6 +451,53 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return false;
         }
 
+        private static bool StateMachineUsesParameterDriver(AnimatorStateMachine stateMachine, string parameterName)
+        {
+            if (stateMachine == null) return false;
+            var behaviours = stateMachine.behaviours;
+            if (behaviours == null) return false;
+
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                var behaviour = behaviours[i];
+                if (behaviour == null || !(behaviour is VRCAvatarParameterDriver typedDriver))
+                    continue;
+
+                if (typedDriver.parameters == null)
+                    continue;
+
+                for (int p = 0; p < typedDriver.parameters.Count; p++)
+                {
+                    var parameter = typedDriver.parameters[p];
+                    if (IsSameParameter(parameter.name, parameterName))
+                        return true;
+
+                    if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                        && IsSameParameter(parameter.source, parameterName))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool StateMachineUsesPlayAudioParameter(AnimatorStateMachine stateMachine, string parameterName)
+        {
+            if (stateMachine == null) return false;
+            var behaviours = stateMachine.behaviours;
+            if (behaviours == null) return false;
+
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                if (behaviours[i] is VRCAnimatorPlayAudio playAudio
+                    && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                    && IsSameParameter(playAudio.ParameterName, parameterName))
+                    return true;
+            }
+
+            return false;
+        }
+
         private static bool HasIncomingTransitionUsingParameter(AnimatorStateMachine ownerStateMachine, AnimatorState state, string parameterName)
         {
             if (ownerStateMachine == null || state == null) return false;
@@ -770,6 +817,53 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     if (RenameTransitionConditions(entryTransitions[i], oldParameter, newParameter))
                         changed = true;
+                }
+            }
+
+            var machineBehaviours = stateMachine.behaviours;
+            if (machineBehaviours != null)
+            {
+                for (int b = 0; b < machineBehaviours.Length; b++)
+                {
+                    var behaviour = machineBehaviours[b];
+
+                    if (behaviour is VRCAnimatorPlayAudio playAudio
+                        && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                        && IsSameParameter(playAudio.ParameterName, oldParameter))
+                    {
+                        playAudio.ParameterName = newParameter;
+                        EditorUtility.SetDirty(playAudio);
+                        changed = true;
+                        continue;
+                    }
+
+                    if (!(behaviour is VRCAvatarParameterDriver driver) || driver.parameters == null)
+                        continue;
+
+                    var driverChanged = false;
+                    for (int p = 0; p < driver.parameters.Count; p++)
+                    {
+                        var parameter = driver.parameters[p];
+
+                        if (IsSameParameter(parameter.name, oldParameter))
+                        {
+                            parameter.name = newParameter;
+                            driverChanged = true;
+                        }
+
+                        if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                            && IsSameParameter(parameter.source, oldParameter))
+                        {
+                            parameter.source = newParameter;
+                            driverChanged = true;
+                        }
+                    }
+
+                    if (driverChanged)
+                    {
+                        EditorUtility.SetDirty(driver);
+                        changed = true;
+                    }
                 }
             }
 
@@ -1438,6 +1532,32 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     result.stateUsages.Add(usage);
                             }
 
+                            var machineParameterDriver = StateMachineUsesParameterDriver(sm, parameterName);
+                            var machinePlayAudio = StateMachineUsesPlayAudioParameter(sm, parameterName);
+                            if (machineParameterDriver || machinePlayAudio)
+                            {
+                                var subStateMachinePath = string.IsNullOrEmpty(smPath) ? "" : $" / {smPath}";
+                                var machineUsage = new StateUsage
+                                {
+                                    controller = controller,
+                                    controllerName = controller.name,
+                                    layerName = layer.name,
+                                    layerIndex = layerIndex,
+                                    statePath = $"{controller.name} / {layer.name}{subStateMachinePath}",
+                                    stateName = "(State Machine)",
+                                    stateMachine = sm,
+                                    subStateMachinePath = smPath,
+                                    parameterDriver = machineParameterDriver,
+                                    playAudio = machinePlayAudio,
+                                };
+
+                                var machineBehaviours = sm.behaviours;
+                                for (int b = 0; b < machineBehaviours.Length; b++)
+                                    CollectParameterDriverValues(machineBehaviours[b], parameterName, result.parameterDriverValues);
+
+                                result.stateUsages.Add(machineUsage);
+                            }
+
                             var childStateMachines = sm.stateMachines;
                             for (int i = 0; i < childStateMachines.Length; i++)
                             {
@@ -1850,10 +1970,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static void FocusAnimatorState(StateUsage usage)
         {
-            if (usage == null || usage.controller == null || usage.state == null)
+            if (usage == null || usage.controller == null)
                 return;
 
             FocusAnimatorLayer(usage);
+            if (usage.state == null)
+                return;
+
             SelectAndPingObject(usage.state);
         }
 
@@ -2259,12 +2382,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     FocusAnimatorLayer(representative);
                             }
 
+                            var machineUsage = group.FirstOrDefault(x => x.state == null);
                             var states = group
                                 .Where(x => x.state != null)
                                 .GroupBy(x => x.state)
                                 .Select(g => g.First())
                                 .OrderBy(x => x.stateName, StringComparer.OrdinalIgnoreCase)
                                 .ToList();
+                            if (machineUsage != null)
+                                states.Add(machineUsage);
 
                             columnGrid.DrawEntries(states, stateUsage =>
                             {
@@ -2302,8 +2428,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 DrawStateUsageSection("States Using Parameter as Speed", s => s.speed);
                 DrawStateUsageSection("States Using Parameter as Mirror", s => s.mirror);
                 DrawStateUsageSection("States Using Parameter as Cycle Offset", s => s.cycleOffset);
-                DrawStateUsageSection("States Using Parameter in Parameter Drivers", s => s.parameterDriver);
-                DrawStateUsageSection("States Using Parameter in Play Audio Scripts", s => s.playAudio);
+                DrawStateUsageSection("States & Sub State Machines Using Parameter in Parameter Drivers", s => s.parameterDriver);
+                DrawStateUsageSection("States & Sub State Machines Using Parameter in Play Audio Scripts", s => s.playAudio);
 
                 var allAffected = cachedScanResult.transitionClips
                     .Concat(cachedScanResult.blendTreeClips)
