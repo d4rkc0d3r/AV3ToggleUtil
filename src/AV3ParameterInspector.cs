@@ -1173,9 +1173,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return true;
         }
 
+        // a parameter is only "used" when its value is consumed; writes by parameter drivers alone don't count
         private static bool IsParameterUsedInControllers(ScanResult scanResult)
         {
-            return scanResult != null && scanResult.stateUsages.Count > 0;
+            if (scanResult == null) return false;
+
+            for (int i = 0; i < scanResult.stateUsages.Count; i++)
+            {
+                var usage = scanResult.stateUsages[i];
+                if (usage.transitionIn || usage.transitionOut || usage.blendTree
+                    || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset
+                    || usage.parameterDriverSource || usage.playAudio)
+                    return true;
+            }
+
+            return false;
         }
 
         private static bool RemoveFromExpressionParameters(VRCAvatarDescriptor av, string parameterName)
@@ -1525,14 +1537,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (usage.playAudio)
                                     ForEachClipInMotion(state.motion, c => result.playAudioClips.Add(c));
 
-                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriverWrite || usage.parameterDriverSource || usage.playAudio)
+                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriverSource || usage.playAudio)
                                     result.stateUsages.Add(usage);
                             }
 
-                            var machineParameterDriverWrite = StateMachineDriverWritesToParameter(sm, parameterName);
                             var machineParameterDriverSource = StateMachineDriverCopiesFromParameter(sm, parameterName);
                             var machinePlayAudio = StateMachineUsesPlayAudioParameter(sm, parameterName);
-                            if (machineParameterDriverWrite || machineParameterDriverSource || machinePlayAudio)
+                            if (machineParameterDriverSource || machinePlayAudio)
                             {
                                 var subStateMachinePath = string.IsNullOrEmpty(smPath) ? "" : $" / {smPath}";
                                 var machineUsage = new StateUsage
@@ -1545,7 +1556,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     stateName = "(State Machine)",
                                     stateMachine = sm,
                                     subStateMachinePath = smPath,
-                                    parameterDriverWrite = machineParameterDriverWrite,
                                     parameterDriverSource = machineParameterDriverSource,
                                     playAudio = machinePlayAudio,
                                 };
