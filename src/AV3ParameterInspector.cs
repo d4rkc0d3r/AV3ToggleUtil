@@ -1650,13 +1650,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (usage.playAudio)
                                     ForEachClipInMotion(state.motion, c => result.playAudioClips.Add(c));
 
-                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriverSource || usage.playAudio)
+                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriverWrite || usage.parameterDriverSource || usage.playAudio)
                                     result.stateUsages.Add(usage);
                             }
 
+                            var machineParameterDriverWrite = StateMachineDriverWritesToParameter(sm, parameterName);
                             var machineParameterDriverSource = StateMachineDriverCopiesFromParameter(sm, parameterName);
                             var machinePlayAudio = StateMachineUsesPlayAudioParameter(sm, parameterName);
-                            if (machineParameterDriverSource || machinePlayAudio)
+                            if (machineParameterDriverWrite || machineParameterDriverSource || machinePlayAudio)
                             {
                                 var subStateMachinePath = string.IsNullOrEmpty(smPath) ? "" : $" / {smPath}";
                                 var machineUsage = new StateUsage
@@ -1669,6 +1670,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     stateName = "(State Machine)",
                                     stateMachine = sm,
                                     subStateMachinePath = smPath,
+                                    parameterDriverWrite = machineParameterDriverWrite,
                                     parameterDriverSource = machineParameterDriverSource,
                                     playAudio = machinePlayAudio,
                                 };
@@ -1776,7 +1778,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private HashSet<string> GetUsedParameters(VRCAvatarDescriptor av, List<string> allParameters)
         {
-            return GetParametersMatching(av, allParameters, r => r.stateUsages.Count > 0, ref usedParametersCache);
+            return GetParametersMatching(av, allParameters, r => IsParameterUsedInControllers(r), ref usedParametersCache);
         }
 
         private (HashSet<string> physBoneParameters, HashSet<string> contactParameters) GetComponentSourceParameters(VRCAvatarDescriptor av, List<string> allParameters)
