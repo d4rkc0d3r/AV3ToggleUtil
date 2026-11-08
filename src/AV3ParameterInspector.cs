@@ -607,11 +607,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return av.expressionParameters.parameters.FirstOrDefault(p => p != null && IsSameParameter(p.name, parameterName));
         }
 
-        private static List<(string controllerName, AnimatorControllerParameterType parameterType)> GetAnimatorControllerParameterInfos(
+        private static List<(AnimatorController controller, string controllerName, AnimatorControllerParameterType parameterType)> GetAnimatorControllerParameterInfos(
             VRCAvatarDescriptor av,
             string parameterName)
         {
-            var results = new List<(string controllerName, AnimatorControllerParameterType parameterType)>();
+            var results = new List<(AnimatorController controller, string controllerName, AnimatorControllerParameterType parameterType)>();
             if (av == null || string.IsNullOrEmpty(parameterName))
                 return results;
 
@@ -624,7 +624,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (parameter == null)
                     continue;
 
-                results.Add((controller.name, parameter.type));
+                results.Add((controller, controller.name, parameter.type));
             }
 
             return results
@@ -2397,6 +2397,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         using var controllerInfoRow = new EditorGUILayout.HorizontalScope();
                         GUILayout.Space(innerIndent);
                         GUILayout.Label($"{info.controllerName}", GUILayout.Width(width));
+                        if (ClickableLastRect())
+                            SelectAndPingObject(info.controller);
                         GUILayout.Label($"{info.parameterType}");
                     }
 
