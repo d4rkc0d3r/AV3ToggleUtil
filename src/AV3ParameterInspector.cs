@@ -138,7 +138,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public bool speed;
             public bool mirror;
             public bool cycleOffset;
-            public bool parameterDriver;
+            public bool parameterDriverWrite;
+            public bool parameterDriverSource;
             public bool playAudio;
         }
 
@@ -401,7 +402,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return state.cycleOffsetParameterActive && IsSameParameter(state.cycleOffsetParameter, parameterName);
         }
 
-        private static bool BehaviourUsesParameterDriver(StateMachineBehaviour behaviour, string parameterName)
+        private static bool BehaviourDriverWritesToParameter(StateMachineBehaviour behaviour, string parameterName)
         {
             if (behaviour == null || !(behaviour is VRCAvatarParameterDriver typedDriver) || typedDriver.parameters == null)
                 return false;
@@ -411,7 +412,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var parameter = typedDriver.parameters[p];
                 if (IsSameParameter(parameter.name, parameterName))
                     return true;
+            }
 
+            return false;
+        }
+
+        private static bool BehaviourDriverCopiesFromParameter(StateMachineBehaviour behaviour, string parameterName)
+        {
+            if (behaviour == null || !(behaviour is VRCAvatarParameterDriver typedDriver) || typedDriver.parameters == null)
+                return false;
+
+            for (int p = 0; p < typedDriver.parameters.Count; p++)
+            {
+                var parameter = typedDriver.parameters[p];
                 if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
                     && IsSameParameter(parameter.source, parameterName))
                     return true;
@@ -427,7 +440,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 && IsSameParameter(playAudio.ParameterName, parameterName);
         }
 
-        private static bool StateUsesParameterDriver(AnimatorState state, string parameterName)
+        private static bool StateDriverWritesToParameter(AnimatorState state, string parameterName)
         {
             if (state == null) return false;
             var behaviours = state.behaviours;
@@ -435,7 +448,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             for (int i = 0; i < behaviours.Length; i++)
             {
-                if (BehaviourUsesParameterDriver(behaviours[i], parameterName))
+                if (BehaviourDriverWritesToParameter(behaviours[i], parameterName))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool StateDriverCopiesFromParameter(AnimatorState state, string parameterName)
+        {
+            if (state == null) return false;
+            var behaviours = state.behaviours;
+            if (behaviours == null) return false;
+
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                if (BehaviourDriverCopiesFromParameter(behaviours[i], parameterName))
                     return true;
             }
 
@@ -457,7 +485,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return false;
         }
 
-        private static bool StateMachineUsesParameterDriver(AnimatorStateMachine stateMachine, string parameterName)
+        private static bool StateMachineDriverWritesToParameter(AnimatorStateMachine stateMachine, string parameterName)
         {
             if (stateMachine == null) return false;
             var behaviours = stateMachine.behaviours;
@@ -465,7 +493,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             for (int i = 0; i < behaviours.Length; i++)
             {
-                if (BehaviourUsesParameterDriver(behaviours[i], parameterName))
+                if (BehaviourDriverWritesToParameter(behaviours[i], parameterName))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool StateMachineDriverCopiesFromParameter(AnimatorStateMachine stateMachine, string parameterName)
+        {
+            if (stateMachine == null) return false;
+            var behaviours = stateMachine.behaviours;
+            if (behaviours == null) return false;
+
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                if (BehaviourDriverCopiesFromParameter(behaviours[i], parameterName))
                     return true;
             }
 
@@ -1469,8 +1512,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (usage.cycleOffset)
                                     ForEachClipInMotion(state.motion, c => result.cycleOffsetClips.Add(c));
 
-                                usage.parameterDriver = StateUsesParameterDriver(state, parameterName);
-                                if (usage.parameterDriver)
+                                usage.parameterDriverWrite = StateDriverWritesToParameter(state, parameterName);
+                                usage.parameterDriverSource = StateDriverCopiesFromParameter(state, parameterName);
+                                if (usage.parameterDriverWrite || usage.parameterDriverSource)
                                 {
                                     var driverBehaviours = state.behaviours;
                                     for (int b = 0; b < driverBehaviours.Length; b++)
@@ -1481,13 +1525,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (usage.playAudio)
                                     ForEachClipInMotion(state.motion, c => result.playAudioClips.Add(c));
 
-                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriver || usage.playAudio)
+                                if (usage.transitionIn || usage.transitionOut || usage.blendTree || usage.motionTime || usage.speed || usage.mirror || usage.cycleOffset || usage.parameterDriverWrite || usage.parameterDriverSource || usage.playAudio)
                                     result.stateUsages.Add(usage);
                             }
 
-                            var machineParameterDriver = StateMachineUsesParameterDriver(sm, parameterName);
+                            var machineParameterDriverWrite = StateMachineDriverWritesToParameter(sm, parameterName);
+                            var machineParameterDriverSource = StateMachineDriverCopiesFromParameter(sm, parameterName);
                             var machinePlayAudio = StateMachineUsesPlayAudioParameter(sm, parameterName);
-                            if (machineParameterDriver || machinePlayAudio)
+                            if (machineParameterDriverWrite || machineParameterDriverSource || machinePlayAudio)
                             {
                                 var subStateMachinePath = string.IsNullOrEmpty(smPath) ? "" : $" / {smPath}";
                                 var machineUsage = new StateUsage
@@ -1500,7 +1545,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                     stateName = "(State Machine)",
                                     stateMachine = sm,
                                     subStateMachinePath = smPath,
-                                    parameterDriver = machineParameterDriver,
+                                    parameterDriverWrite = machineParameterDriverWrite,
+                                    parameterDriverSource = machineParameterDriverSource,
                                     playAudio = machinePlayAudio,
                                 };
 
@@ -1665,7 +1711,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private HashSet<string> GetDriverParameters(VRCAvatarDescriptor av, List<string> allParameters)
         {
-            return GetParametersMatching(av, allParameters, r => r.stateUsages.Any(s => s.parameterDriver), ref driverParametersCache);
+            return GetParametersMatching(av, allParameters, r => r.stateUsages.Any(s => s.parameterDriverWrite || s.parameterDriverSource), ref driverParametersCache);
         }
 
         private static HashSet<string> GetExpressionFileParameters(VRCAvatarDescriptor av)
@@ -2381,7 +2427,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 DrawStateUsageSection("States Using Parameter as Speed", s => s.speed);
                 DrawStateUsageSection("States Using Parameter as Mirror", s => s.mirror);
                 DrawStateUsageSection("States Using Parameter as Cycle Offset", s => s.cycleOffset);
-                DrawStateUsageSection("States & Sub State Machines Using Parameter in Parameter Drivers", s => s.parameterDriver);
+                DrawStateUsageSection("States & Sub State Machines Writing Parameter Via Parameter Drivers", s => s.parameterDriverWrite);
+                DrawStateUsageSection("States & Sub State Machines Copying From Parameter Via Parameter Drivers", s => s.parameterDriverSource);
                 DrawStateUsageSection("States & Sub State Machines Using Parameter in Play Audio Scripts", s => s.playAudio);
 
                 var allAffected = cachedScanResult.transitionClips
