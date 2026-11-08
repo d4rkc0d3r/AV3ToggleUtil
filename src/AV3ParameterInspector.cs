@@ -1290,6 +1290,109 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return parametersChanged;
         }
 
+        private static bool RemoveParameterFromDriver(VRCAvatarParameterDriver driver, string parameterName)
+        {
+            if (driver == null || driver.parameters == null)
+                return false;
+
+            var changed = false;
+            for (int i = driver.parameters.Count - 1; i >= 0; i--)
+            {
+                var parameter = driver.parameters[i];
+                if (parameter == null)
+                    continue;
+
+                var referencesParameter = IsSameParameter(parameter.name, parameterName)
+                    || (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                        && IsSameParameter(parameter.source, parameterName));
+                if (!referencesParameter)
+                    continue;
+
+                driver.parameters.RemoveAt(i);
+                changed = true;
+            }
+
+            if (changed)
+                EditorUtility.SetDirty(driver);
+
+            return changed;
+        }
+
+        private static bool RemoveParameterFromBehaviours(StateMachineBehaviour[] behaviours, string parameterName, out StateMachineBehaviour[] remainingBehaviours)
+        {
+            remainingBehaviours = behaviours;
+            if (behaviours == null)
+                return false;
+
+            var changed = false;
+            var remaining = new List<StateMachineBehaviour>(behaviours.Length);
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                var behaviour = behaviours[i];
+                if (behaviour == null)
+                    continue;
+
+                if (behaviour is VRCAvatarParameterDriver driver)
+                {
+                    var removedEntries = RemoveParameterFromDriver(driver, parameterName);
+                    if (removedEntries)
+                        changed = true;
+                    if (removedEntries && driver.parameters.Count == 0)
+                    {
+                        // driver no longer drives anything, remove the whole behaviour
+                        Object.DestroyImmediate(behaviour);
+                        continue;
+                    }
+                }
+
+                remaining.Add(behaviour);
+            }
+
+            if (changed)
+                remainingBehaviours = remaining.ToArray();
+
+            return changed;
+        }
+
+        private static bool RemoveInStateMachineBehaviours(AnimatorStateMachine stateMachine, string parameterName)
+        {
+            if (stateMachine == null)
+                return false;
+
+            var changed = false;
+
+            if (RemoveParameterFromBehaviours(stateMachine.behaviours, parameterName, out var newMachineBehaviours))
+            {
+                stateMachine.behaviours = newMachineBehaviours;
+                EditorUtility.SetDirty(stateMachine);
+                changed = true;
+            }
+
+            var states = stateMachine.states;
+            for (int i = 0; i < states.Length; i++)
+            {
+                var state = states[i].state;
+                if (state == null)
+                    continue;
+
+                if (RemoveParameterFromBehaviours(state.behaviours, parameterName, out var newStateBehaviours))
+                {
+                    state.behaviours = newStateBehaviours;
+                    EditorUtility.SetDirty(state);
+                    changed = true;
+                }
+            }
+
+            var childStateMachines = stateMachine.stateMachines;
+            for (int i = 0; i < childStateMachines.Length; i++)
+            {
+                if (RemoveInStateMachineBehaviours(childStateMachines[i].stateMachine, parameterName))
+                    changed = true;
+            }
+
+            return changed;
+        }
+
         private bool ApplyParameterRemove(VRCAvatarDescriptor av, string parameterName)
         {
             if (av == null || string.IsNullOrEmpty(parameterName))
@@ -1303,6 +1406,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 if (RemoveFromAnimatorController(controller, parameterName))
                     changed = true;
+
+                var controllerLayers = controller.layers;
+                if (controllerLayers != null)
+                {
+                    for (int i = 0; i < controllerLayers.Length; i++)
+                    {
+                        if (RemoveInStateMachineBehaviours(controllerLayers[i].stateMachine, parameterName))
+                            changed = true;
+                    }
+                }
             }
 
             if (!changed)
