@@ -401,6 +401,32 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return state.cycleOffsetParameterActive && IsSameParameter(state.cycleOffsetParameter, parameterName);
         }
 
+        private static bool BehaviourUsesParameterDriver(StateMachineBehaviour behaviour, string parameterName)
+        {
+            if (behaviour == null || !(behaviour is VRCAvatarParameterDriver typedDriver) || typedDriver.parameters == null)
+                return false;
+
+            for (int p = 0; p < typedDriver.parameters.Count; p++)
+            {
+                var parameter = typedDriver.parameters[p];
+                if (IsSameParameter(parameter.name, parameterName))
+                    return true;
+
+                if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                    && IsSameParameter(parameter.source, parameterName))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool BehaviourUsesPlayAudioParameter(StateMachineBehaviour behaviour, string parameterName)
+        {
+            return behaviour is VRCAnimatorPlayAudio playAudio
+                && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                && IsSameParameter(playAudio.ParameterName, parameterName);
+        }
+
         private static bool StateUsesParameterDriver(AnimatorState state, string parameterName)
         {
             if (state == null) return false;
@@ -409,26 +435,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             for (int i = 0; i < behaviours.Length; i++)
             {
-                var behaviour = behaviours[i];
-                if (behaviour == null) continue;
-
-                if (behaviour is VRCAvatarParameterDriver typedDriver)
-                {
-                    if (typedDriver.parameters != null)
-                    {
-                        for (int p = 0; p < typedDriver.parameters.Count; p++)
-                        {
-                            var parameter = typedDriver.parameters[p];
-                            if (IsSameParameter(parameter.name, parameterName))
-                                return true;
-
-                            if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
-                                && IsSameParameter(parameter.source, parameterName))
-                                return true;
-                        }
-                    }
-                    continue;
-                }
+                if (BehaviourUsesParameterDriver(behaviours[i], parameterName))
+                    return true;
             }
 
             return false;
@@ -442,9 +450,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             for (int i = 0; i < behaviours.Length; i++)
             {
-                if (behaviours[i] is VRCAnimatorPlayAudio playAudio
-                    && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
-                    && IsSameParameter(playAudio.ParameterName, parameterName))
+                if (BehaviourUsesPlayAudioParameter(behaviours[i], parameterName))
                     return true;
             }
 
@@ -459,23 +465,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             for (int i = 0; i < behaviours.Length; i++)
             {
-                var behaviour = behaviours[i];
-                if (behaviour == null || !(behaviour is VRCAvatarParameterDriver typedDriver))
-                    continue;
-
-                if (typedDriver.parameters == null)
-                    continue;
-
-                for (int p = 0; p < typedDriver.parameters.Count; p++)
-                {
-                    var parameter = typedDriver.parameters[p];
-                    if (IsSameParameter(parameter.name, parameterName))
-                        return true;
-
-                    if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
-                        && IsSameParameter(parameter.source, parameterName))
-                        return true;
-                }
+                if (BehaviourUsesParameterDriver(behaviours[i], parameterName))
+                    return true;
             }
 
             return false;
@@ -489,9 +480,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             for (int i = 0; i < behaviours.Length; i++)
             {
-                if (behaviours[i] is VRCAnimatorPlayAudio playAudio
-                    && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
-                    && IsSameParameter(playAudio.ParameterName, parameterName))
+                if (BehaviourUsesPlayAudioParameter(behaviours[i], parameterName))
                     return true;
             }
 
@@ -793,12 +782,67 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return changed;
         }
 
+        private static bool RenameInBehaviours(StateMachineBehaviour[] behaviours, string oldParameter, string newParameter)
+        {
+            if (behaviours == null)
+                return false;
+
+            var changed = false;
+
+            for (int b = 0; b < behaviours.Length; b++)
+            {
+                var behaviour = behaviours[b];
+
+                if (behaviour is VRCAnimatorPlayAudio playAudio
+                    && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
+                    && IsSameParameter(playAudio.ParameterName, oldParameter))
+                {
+                    playAudio.ParameterName = newParameter;
+                    EditorUtility.SetDirty(playAudio);
+                    changed = true;
+                    continue;
+                }
+
+                if (!(behaviour is VRCAvatarParameterDriver driver) || driver.parameters == null)
+                    continue;
+
+                var driverChanged = false;
+                for (int p = 0; p < driver.parameters.Count; p++)
+                {
+                    var parameter = driver.parameters[p];
+
+                    if (IsSameParameter(parameter.name, oldParameter))
+                    {
+                        parameter.name = newParameter;
+                        driverChanged = true;
+                    }
+
+                    if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
+                        && IsSameParameter(parameter.source, oldParameter))
+                    {
+                        parameter.source = newParameter;
+                        driverChanged = true;
+                    }
+                }
+
+                if (driverChanged)
+                {
+                    EditorUtility.SetDirty(driver);
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
         private static bool RenameInStateMachine(AnimatorStateMachine stateMachine, string oldParameter, string newParameter)
         {
             if (stateMachine == null)
                 return false;
 
             var changed = false;
+
+            changed |= RenameInBehaviours(stateMachine.behaviours, oldParameter, newParameter);
 
             var anyStateTransitions = stateMachine.anyStateTransitions;
             if (anyStateTransitions != null)
@@ -817,53 +861,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     if (RenameTransitionConditions(entryTransitions[i], oldParameter, newParameter))
                         changed = true;
-                }
-            }
-
-            var machineBehaviours = stateMachine.behaviours;
-            if (machineBehaviours != null)
-            {
-                for (int b = 0; b < machineBehaviours.Length; b++)
-                {
-                    var behaviour = machineBehaviours[b];
-
-                    if (behaviour is VRCAnimatorPlayAudio playAudio
-                        && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
-                        && IsSameParameter(playAudio.ParameterName, oldParameter))
-                    {
-                        playAudio.ParameterName = newParameter;
-                        EditorUtility.SetDirty(playAudio);
-                        changed = true;
-                        continue;
-                    }
-
-                    if (!(behaviour is VRCAvatarParameterDriver driver) || driver.parameters == null)
-                        continue;
-
-                    var driverChanged = false;
-                    for (int p = 0; p < driver.parameters.Count; p++)
-                    {
-                        var parameter = driver.parameters[p];
-
-                        if (IsSameParameter(parameter.name, oldParameter))
-                        {
-                            parameter.name = newParameter;
-                            driverChanged = true;
-                        }
-
-                        if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
-                            && IsSameParameter(parameter.source, oldParameter))
-                        {
-                            parameter.source = newParameter;
-                            driverChanged = true;
-                        }
-                    }
-
-                    if (driverChanged)
-                    {
-                        EditorUtility.SetDirty(driver);
-                        changed = true;
-                    }
                 }
             }
 
@@ -914,52 +911,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (RenameBlendTreeParameters(state.motion, oldParameter, newParameter))
                     changed = true;
 
-                var stateBehaviours = state.behaviours;
-                if (stateBehaviours == null)
-                    continue;
-
-                for (int b = 0; b < stateBehaviours.Length; b++)
-                {
-                    var behaviour = stateBehaviours[b];
-
-                    if (behaviour is VRCAnimatorPlayAudio playAudio
-                        && playAudio.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter
-                        && IsSameParameter(playAudio.ParameterName, oldParameter))
-                    {
-                        playAudio.ParameterName = newParameter;
-                        EditorUtility.SetDirty(playAudio);
-                        changed = true;
-                        continue;
-                    }
-
-                    if (!(behaviour is VRCAvatarParameterDriver driver) || driver.parameters == null)
-                        continue;
-
-                    var driverChanged = false;
-                    for (int p = 0; p < driver.parameters.Count; p++)
-                    {
-                        var parameter = driver.parameters[p];
-
-                        if (IsSameParameter(parameter.name, oldParameter))
-                        {
-                            parameter.name = newParameter;
-                            driverChanged = true;
-                        }
-
-                        if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy
-                            && IsSameParameter(parameter.source, oldParameter))
-                        {
-                            parameter.source = newParameter;
-                            driverChanged = true;
-                        }
-                    }
-
-                    if (driverChanged)
-                    {
-                        EditorUtility.SetDirty(driver);
-                        changed = true;
-                    }
-                }
+                if (RenameInBehaviours(state.behaviours, oldParameter, newParameter))
+                    changed = true;
             }
 
             var childStateMachines = stateMachine.stateMachines;
