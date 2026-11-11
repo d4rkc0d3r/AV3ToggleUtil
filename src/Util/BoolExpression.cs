@@ -91,12 +91,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         /// Empty/whitespace input succeeds with an empty (unconditional) expression.
         /// </summary>
         public static bool TryParse(string text, out BoolExpression result, out string error)
+            => TryParse(text, null, out result, out error);
+
+        /// <summary>
+        /// Like <see cref="TryParse(string, out BoolExpression, out string)"/> but with a set of
+        /// known parameter names. Names may contain spaces (matched with space-tolerance);
+        /// at a term position the longest known name wins over plain identifier scanning.
+        /// </summary>
+        public static bool TryParse(string text, IEnumerable<string> knownParameterNames, out BoolExpression result, out string error)
         {
             var expr = new BoolExpression();
             try
             {
                 if (!string.IsNullOrWhiteSpace(text))
-                    new Parser(text).ParseInto(expr);
+                    new Parser(text, knownParameterNames).ParseInto(expr);
             }
             catch (ParseException e)
             {
@@ -380,10 +388,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         {
             private readonly string _text;
             private int _pos;
+            private readonly HashSet<string> _knownTokens;
 
-            public Parser(string text)
+            public Parser(string text, IEnumerable<string> knownTokens = null)
             {
                 _text = text;
+                if (knownTokens != null)
+                {
+                    _knownTokens = new HashSet<string>();
+                    foreach (var t in knownTokens)
+                        if (!string.IsNullOrEmpty(t))
+                            _knownTokens.Add(t);
+                }
             }
 
             public void ParseInto(BoolExpression expr)
@@ -501,9 +517,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
             private BoolTerm ParseTerm()
             {
-                var parameter = ParseIdentifier();
-                if (parameter == null)
-                    throw new ParseException($"Expected a parameter name at position {_pos}");
+                var parameter = ParseParameterName();
                 SkipWs();
 
                 if (Match(">="))
@@ -519,6 +533,128 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 if (Match("<"))
                     return new BoolTerm(parameter, BoolTermOp.Less, ParseNumber());
                 return new BoolTerm(parameter, BoolTermOp.If);
+            }
+
+            /// <summary>
+            /// At a term position, try every known parameter name using a whitespace-tolerant
+            /// matcher and keep the longest match. When no token set is provided, fall back
+            /// to plain identifier scanning. When a token set IS provided and no token
+            /// matches, scan a candidate identifier and throw a ParseException naming it.
+            /// </summary>
+            private string ParseParameterName()
+            {
+                if (_knownTokens == null)
+                {
+                    var ident = ParseIdentifier();
+                    if (ident == null)
+                    {
+                        SkipWs();
+                        throw new ParseException($"Expected a parameter name at position {_pos}");
+                    }
+                    return ident;
+                }
+
+                string best = null;
+                var bestEnd = -1;
+                foreach (var token in _knownTokens)
+                {
+                    var end = TryMatchKnownToken(token);
+                    if (end > bestEnd)
+                    {
+                        bestEnd = end;
+                        best = token;
+                    }
+                }
+                if (best != null)
+                {
+                    _pos = bestEnd;
+                    return best;
+                }
+
+                var candidate = ScanIdentifierOrSpaceIdentifier();
+                if (string.IsNullOrEmpty(candidate))
+                {
+                    SkipWs();
+                    throw new ParseException($"Expected a known parameter name at position {_pos}");
+                }
+                SkipWs();
+                throw new ParseException($"Unknown parameter '{candidate}' at position {_pos}");
+            }
+
+            /// <summary>
+            /// Matches a known token starting at _pos, tolerating extra/any whitespace where
+            /// the token has a space (so "my  var" works for "my var"). Returns the end
+            /// position in _text, or -1.
+            /// </summary>
+            private int TryMatchKnownToken(string token)
+            {
+                if (_pos >= _text.Length)
+                    return -1;
+
+                if (_pos + token.Length <= _text.Length && _text.Substring(_pos, token.Length) == token)
+                    return _pos + token.Length;
+
+                var t = _pos;
+                for (var i = 0; i < token.Length; i++)
+                {
+                    var c = token[i];
+                    if (c == ' ')
+                    {
+                        if (t >= _text.Length || !char.IsWhiteSpace(_text[t]))
+                            return -1;
+                        while (t < _text.Length && char.IsWhiteSpace(_text[t]))
+                            t++;
+                        if (t >= _text.Length)
+                            return -1;
+                    }
+                    else
+                    {
+                        if (t >= _text.Length || _text[t] != c)
+                            return -1;
+                        t++;
+                    }
+                }
+                return t;
+            }
+
+            /// <summary>
+            /// Greedily scans a candidate parameter name: identifier characters plus internal
+            /// whitespace runs (so "my  var" is one candidate). Trailing whitespace is ignored
+            /// so a bare "my var" followed by "&" still scans as "my var".
+            /// </summary>
+            private string ScanIdentifierOrSpaceIdentifier()
+            {
+                var start = _pos;
+                var lastNonWs = start;
+                while (_pos < _text.Length)
+                {
+                    var c = _text[_pos];
+                    if (char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.' || c == '$')
+                    {
+                        lastNonWs = ++_pos;
+                    }
+                    else if (char.IsWhiteSpace(c))
+                    {
+                        // Keep consuming whitespace only if it is followed by an
+                        // identifier character (i.e. it is part of a multi-word name).
+                        var t = _pos;
+                        while (t < _text.Length && char.IsWhiteSpace(_text[t]))
+                            t++;
+                        if (t < _text.Length)
+                        {
+                            var nc = _text[t];
+                            if (char.IsLetterOrDigit(nc) || nc == '_' || nc == '-' || nc == '.' || nc == '$')
+                            {
+                                _pos = t;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                    else
+                        break;
+                }
+                return _pos > start ? _text.Substring(start, lastNonWs - start) : null;
             }
 
             private string ParseIdentifier()

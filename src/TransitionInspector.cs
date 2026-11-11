@@ -54,7 +54,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     var settingsMixed = AnyMixedValue(transitions);
                     var hasExit = AnyMatches(transitions, t => t.isExit);
                     var canonical = GetCanonicalExpression(transitions, out _);
-                    DrawConditionEditor(stateKey, group, transitions, canonical, settingsMixed, hasExit);
+                    var knownParams = GetKnownParameterNames(transitions);
+                    DrawConditionEditor(stateKey, group, transitions, canonical, settingsMixed, hasExit, knownParams);
 
                     // Apply (inside DrawConditionEditor) may remove transitions mid-frame;
                     // drop any destroyed ones before the Settings rows iterate this list.
@@ -104,7 +105,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private void DrawConditionEditor(string headerText, KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, List<AnimatorStateTransition> transitions, BoolExpression canonical, bool settingsMixed, bool hasExitTransition)
+        private void DrawConditionEditor(string headerText, KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, List<AnimatorStateTransition> transitions, BoolExpression canonical, bool settingsMixed, bool hasExitTransition, IEnumerable<string> knownParameterNames)
         {
             var formattedText = FormatConditionText(canonical);
             if (!conditionFieldStates.TryGetValue(headerText, out var state))
@@ -115,7 +116,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             // Snapshot before any button can mutate the text this frame.
             var preButtonText = state.Text;
-            var parseOk = BoolExpression.TryParse(state.Text, out var parsed, out var parseError);
+            var parseOk = BoolExpression.TryParse(state.Text, knownParameterNames, out var parsed, out var parseError);
             var editable = !settingsMixed && !hasExitTransition;
             var differs = parseOk && canonical.Differs(parsed);
 
@@ -183,7 +184,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             // Raw text wrap; the parser's '!' handles flattening.
                             var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
                             state.HasUserInput = true;
-                            if (BoolExpression.TryParse(negatedText, out var negated, out _))
+                            if (BoolExpression.TryParse(negatedText, knownParameterNames, out var negated, out _))
                                 state.Text = FormatConditionText(negated);
                             else
                                 state.Text = negatedText;
@@ -772,6 +773,23 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (string.IsNullOrEmpty(path))
                 return null;
             return AssetDatabase.LoadMainAssetAtPath(path) as AnimatorController;
+        }
+
+        private static IEnumerable<string> GetKnownParameterNames(List<AnimatorStateTransition> transitions)
+        {
+            var first = transitions.Find(t => t != null);
+            if (first == null)
+                return null;
+
+            var controller = ResolveController(first);
+            if (controller == null)
+                return null;
+
+            var parameters = controller.parameters;
+            var names = new string[parameters.Length];
+            for (var i = 0; i < parameters.Length; i++)
+                names[i] = parameters[i].name;
+            return names;
         }
 
         private static (string name, bool isAnyState) ResolveSourceState(AnimatorStateTransition transition, AnimatorController controller)
