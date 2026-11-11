@@ -291,12 +291,11 @@ namespace d4rkpl4y3r.Utils
 
                 if (active.foldouts[shaderName])
                 {
-                    EditorGUI.indentLevel++;
+                    using var _ = new EditorGUI.IndentLevelScope();
                     foreach ((var programName, var ps) in stats.programs.OrderByDescending(p => p.Value.totalSeconds))
                     {
                         TableEntry(programName, $"{ps.totalSeconds:F2}", $"{ps.freshVariants}", $"{ps.cacheHits}", $"{ps.occurrences}", false);
                     }
-                    EditorGUI.indentLevel--;
                 }
             }
         }
