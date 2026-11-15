@@ -104,6 +104,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             return 5;
         }
 
+        private static readonly HashSet<string> knownToggleProperties = new() {
+            "m_IsActive", "m_Enabled",
+            // SkinnedMeshRenderer
+            "m_UpdateWhenOffscreen",
+            "m_ReceiveShadows",
+            "m_SkinnedMotionVectors",
+        };
+
+        /// <summary>Whether a binding animates a boolean-ish property (0/1 float, bool field, or known toggle property).</summary>
+        public static bool IsBoolBinding(EditorCurveBinding binding)
+        {
+            if (knownToggleProperties.Contains(binding.propertyName))
+                return true;
+            return binding.type.GetField(binding.propertyName,
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.FieldType == typeof(bool);
+        }
+
         public static void CollectComponentBindings(IEnumerable<AnimationClip> clips, VRCAvatarDescriptor av, Dictionary<Component, HashSet<string>> componentPropertyMap)
         {
             if (av == null || av.transform == null)

@@ -253,14 +253,6 @@ public class CreateAV3ToggleMenu : EditorWindow
         return "";
     }
 
-    private readonly HashSet<string> knownToggleProperties = new() {
-        "m_IsActive", "m_Enabled",
-        // SkinnedMeshRenderer
-        "m_UpdateWhenOffscreen",
-        "m_ReceiveShadows",
-        "m_SkinnedMotionVectors",
-    };
-
     private const string MaterialArrayPropertyPrefix = "m_Materials.Array.data[";
 
     private static bool IsMaterialSwapBinding(EditorCurveBinding binding)
@@ -299,14 +291,6 @@ public class CreateAV3ToggleMenu : EditorWindow
         return value.isObjectReference
             ? new ToggleBindingValue(value.onObject, value.offObject)
             : new ToggleBindingValue(value.onValue, value.offValue);
-    }
-
-    bool IsToggleBinding(EditorCurveBinding binding)
-    {
-        if (knownToggleProperties.Contains(binding.propertyName))
-            return true;
-        return binding.type.GetField(binding.propertyName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-            ?.FieldType == typeof(bool);
     }
 
     private string GetBindingObjectName(EditorCurveBinding binding)
@@ -396,7 +380,7 @@ public class CreateAV3ToggleMenu : EditorWindow
         foreach ((var binding, var values) in sortedBindings)
         {
             using var horizontalScope = new EditorGUILayout.HorizontalScope();
-            bool isToggle = IsToggleBinding(binding);
+            bool isToggle = IsBoolBinding(binding);
             bool isColor = binding.propertyName.EndsWith(".r");
             bool isMaterialSwap = IsMaterialSwapBinding(binding);
             Vector4 ValueField(Vector4 value)
@@ -771,7 +755,7 @@ public class CreateAV3ToggleMenu : EditorWindow
                     {
                         sceneValue = BitConverter.SingleToInt32Bits(sceneValue);
                     }
-                    var isToggle = IsToggleBinding(binding);
+                    var isToggle = IsBoolBinding(binding);
                     if (binding.propertyName.EndsWith(".r"))
                     {
                         var vectorBindings = GetRemainingVectorBindings(binding, avGO).ToArray();

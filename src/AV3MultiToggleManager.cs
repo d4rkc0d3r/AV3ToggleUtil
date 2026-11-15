@@ -61,7 +61,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public System.Type bindType;
             public string propertyName;
             public bool isObjectReference;
-            public bool isBool; // m_IsActive / m_Enabled -> rendered as a checkbox
+            public bool isBool; // boolean-ish binding (see AV3Helper.IsBoolBinding) -> rendered as a checkbox
             public readonly Dictionary<int, BindingCell> perState = new Dictionary<int, BindingCell>(); // state instance id -> cell
         }
 
@@ -352,7 +352,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         path = binding.path,
                         bindType = binding.type,
                         propertyName = binding.propertyName,
-                        isBool = IsBoolBinding(binding.propertyName),
+                        isBool = IsBoolBinding(binding),
                     });
                 }
 
@@ -710,12 +710,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return (float)Mathf.RoundToInt(value) == value
                 ? Mathf.RoundToInt(value).ToString(CultureInfo.InvariantCulture)
                 : value.ToString("0.###", CultureInfo.InvariantCulture);
-        }
-
-        /// <summary>Bindings that hold a boolean as a 0/1 float and should be shown as checkboxes.</summary>
-        private static bool IsBoolBinding(string propertyName)
-        {
-            return propertyName == "m_IsActive" || propertyName == "m_Enabled";
         }
 
         private void OnGUI()
