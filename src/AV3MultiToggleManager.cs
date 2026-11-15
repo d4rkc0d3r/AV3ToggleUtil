@@ -14,16 +14,20 @@ using static d4rkpl4y3r.AV3ToggleUtil.Util.AV3Helper;
 namespace d4rkpl4y3r.AV3ToggleUtil
 {
     /// <summary>
-    /// Inspect "multi toggle" state machines inside the FX animator controller (the last base animation
-    /// layer) of the currently selected avatar. Detection &amp; display only.
+    /// Inspect "multi toggles" inside the FX animator controller (the last base animation layer) of the
+    /// currently selected avatar. Detection &amp; display only. There are two equivalent forms:
     ///
-    /// A multi toggle state machine is a state machine where:
+    /// 1. A state machine where:
     ///  - every state is targeted by exactly one any-state transition with a single condition of an
     ///    int parameter == value (all the same parameter, different values per state; other
     ///    any-state transitions like exits are ignored),
     ///  - no state has any transitions going out of it,
     ///  - every state's motion is a single AnimationClip (no blend trees) whose float/int curves are
     ///    all effectively constant (multiple keys allowed only if they all hold the same value).
+    ///
+    /// 2. A 1d blend tree (Simple1D, automatic thresholds off, not normalized) that is directly the
+    ///    motion of a state, whose children are all clips (no nested trees) placed at strictly
+    ///    increasing integer thresholds, with every child clip's curves effectively constant.
     /// </summary>
     public class MultiToggleManager : EditorWindow
     {
@@ -32,15 +36,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
 
+        /// <summary>
+        /// One column of the table: a toggle entry. For state machines it's one of the machine's states
+        /// (the state name is the column name); for blend trees it's a child clip of the tree at a given threshold.
+        /// </summary>
         private readonly struct MultiToggleStateEntry
         {
-            public readonly AnimatorState state;
+            public readonly string name;
             public readonly AnimationClip clip;
             public readonly int toggleId;
 
-            public MultiToggleStateEntry(AnimatorState state, AnimationClip clip, int toggleId)
+            public MultiToggleStateEntry(string name, AnimationClip clip, int toggleId)
             {
-                this.state = state;
+                this.name = name;
                 this.clip = clip;
                 this.toggleId = toggleId;
             }
@@ -65,9 +73,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public UnityEngine.Object reference; // the referenced asset for object reference rows
         }
 
+        private enum ToggleKind
+        {
+            StateMachine,
+            BlendTree,
+        }
+
         private class MultiToggleInfo
         {
+            public ToggleKind kind;
             public AnimatorStateMachine stateMachine;
+            public BlendTree tree;
+            public string treeStateName; // the first state whose motion is this tree (blend tree entries only)
             public string toggleParameter;
             public readonly List<MultiToggleStateEntry> states = new List<MultiToggleStateEntry>();
             public readonly List<BindingRow> rows = new List<BindingRow>();
@@ -170,6 +187,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // every state's motion must be a single (no blend tree) AnimationClip with effectively constant curves
             var info = new MultiToggleInfo
             {
+                kind = ToggleKind.StateMachine,
                 stateMachine = stateMachine,
                 toggleParameter = toggleParameter,
             };
@@ -183,8 +201,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!IsEffectivelyConstant(clip))
                     return null; // an animated (non-constant) curve disqualifies
 
-                info.states.Add(new MultiToggleStateEntry(state, clip, targetInfo[state.GetInstanceID()].toggleId));
-                CollectStateBindings(clip, state.GetInstanceID(), info.rows, rowIndexOf);
+                info.states.Add(new MultiToggleStateEntry(state.name, clip, targetInfo[state.GetInstanceID()].toggleId));
+                CollectStateBindings(clip, clip.GetInstanceID(), info.rows, rowIndexOf);
             }
 
             info.states.Sort(CompareStateEntries);
@@ -196,7 +214,86 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             if (a.toggleId != b.toggleId)
                 return a.toggleId.CompareTo(b.toggleId);
-            return string.Compare(a.state.name, b.state.name, StringComparison.Ordinal);
+            return string.Compare(a.name, b.name, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Analyze a 1d blend tree as a multi toggle: the tree switches between its child clips based on the
+        /// value of its blend parameter. Qualifies when it's a Simple1D tree with automatic thresholds off,
+        /// not using normalized values, 2+ child clips (no nested trees), strictly increasing integer thresholds,
+        /// and every child clip is effectively constant.
+        /// </summary>
+        private static MultiToggleInfo AnalyzeMultiToggleBlendTree(BlendTree tree, string stateName)
+        {
+            if (tree == null)
+                return null;
+
+            if (tree.blendType != BlendTreeType.Simple1D)
+                return null;
+            if (tree.useAutomaticThresholds)
+                return null; // automatic thresholds aren't stable integer steps
+            if (IsNormalizedBlendTree(tree))
+                return null; // normalized values remap the thresholds, so they're no longer literal parameter values
+
+            var children = tree.children ?? Array.Empty<ChildMotion>();
+            if (children.Length < 2)
+                return null; // a single child isn't a toggle
+
+            float previousThreshold = float.NegativeInfinity;
+            var seenThresholds = new HashSet<float>();
+            for (int i = 0; i < children.Length; i++)
+            {
+                var child = children[i];
+                if (!(child.motion is AnimationClip clip))
+                    return null; // nested blend trees aren't supported
+
+                if (float.IsNaN(child.threshold) || float.IsInfinity(child.threshold))
+                    return null;
+
+                // the thresholds must be exact (non fractional) and strictly increasing
+                if (child.threshold != Mathf.RoundToInt(child.threshold))
+                    return null;
+                if (child.threshold <= previousThreshold)
+                    return null;
+                if (!seenThresholds.Add(child.threshold))
+                    return null;
+                previousThreshold = child.threshold;
+            }
+
+            var info = new MultiToggleInfo
+            {
+                kind = ToggleKind.BlendTree,
+                tree = tree,
+                treeStateName = stateName,
+                toggleParameter = string.IsNullOrEmpty(tree.blendParameter) ? "?" : tree.blendParameter,
+            };
+            var rowIndexOf = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < children.Length; i++)
+            {
+                var child = children[i];
+                var clip = (AnimationClip)child.motion;
+                if (!IsEffectivelyConstant(clip))
+                    return null; // an animated (non-constant) curve disqualifies
+
+                info.states.Add(new MultiToggleStateEntry(clip.name, clip, Mathf.RoundToInt(child.threshold)));
+                CollectStateBindings(clip, clip.GetInstanceID(), info.rows, rowIndexOf);
+            }
+
+            info.states.Sort(CompareStateEntries);
+            info.rows.Sort(CompareBindingRows);
+            return info;
+        }
+
+        /// <summary>
+        /// Whether the tree blends using normalized values (min/max remapped to 0..1) instead of the
+        /// literal parameter values. No public API exposes this in 2022.3, so it's read from the
+        /// serialized data.
+        /// </summary>
+        private static bool IsNormalizedBlendTree(BlendTree tree)
+        {
+            var serializedObject = new SerializedObject(tree);
+            var property = serializedObject.FindProperty("m_NormalizedBlendValues");
+            return property != null && property.boolValue;
         }
 
         private static int CompareBindingRows(BindingRow a, BindingRow b)
@@ -305,14 +402,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>
-        /// Scan all state machines in the controller (layers and nested sub state machines) and
-        /// return the path + analysis of every machine that is a multi toggle state machine.
+        /// Scan the whole controller (layers and nested sub state machines, recursively) and return the
+        /// path + analysis of every multi toggle found: qualifying state machines and 1d blend trees that
+        /// are directly the motion of a state (deduplicated by tree instance).
         /// </summary>
-        private static List<(string path, AnimatorStateMachine stateMachine, MultiToggleInfo info)> FindMultiToggleStateMachines(AnimatorController controller)
+        private static List<(string path, MultiToggleInfo info)> FindMultiToggles(AnimatorController controller)
         {
-            var results = new List<(string path, AnimatorStateMachine stateMachine, MultiToggleInfo info)>();
+            var results = new List<(string path, MultiToggleInfo info)>();
             if (controller == null)
                 return results;
+
+            var seenTrees = new HashSet<int>(); // tree instance ids -> one entry per tree instance
 
             void Scan(AnimatorStateMachine stateMachine, string path)
             {
@@ -321,7 +421,26 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 var info = AnalyzeMultiToggleStateMachine(controller, stateMachine);
                 if (info != null)
-                    results.Add((path, stateMachine, info));
+                    results.Add((path, info));
+
+                var stateChildren = stateMachine.states ?? Array.Empty<ChildAnimatorState>();
+                for (int i = 0; i < stateChildren.Length; i++)
+                {
+                    var state = stateChildren[i].state;
+                    if (state == null)
+                        continue;
+
+                    var tree = state.motion as BlendTree;
+                    if (tree == null)
+                        continue; // only trees that are directly the motion of a state
+
+                    if (!seenTrees.Add(tree.GetInstanceID()))
+                        continue; // same tree assigned to multiple states -> one entry
+
+                    var treeInfo = AnalyzeMultiToggleBlendTree(tree, state.name);
+                    if (treeInfo != null)
+                        results.Add((string.IsNullOrEmpty(path) ? state.name : $"{path}/{state.name}", treeInfo));
+                }
 
                 var childBindings = stateMachine.stateMachines ?? Array.Empty<ChildAnimatorStateMachine>();
                 for (int i = 0; i < childBindings.Length; i++)
@@ -360,7 +479,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var widths = new List<float>(states.Count);
             foreach (var entry in states)
             {
-                var size = GUI.skin.label.CalcSize(new GUIContent($"{GetShortStateName(states, entry.state.name)} ({entry.toggleId})"));
+                var size = GUI.skin.label.CalcSize(new GUIContent($"{GetShortStateName(states, entry.name)} ({entry.toggleId})"));
                 widths.Add(Mathf.Clamp(size.x + ColumnTextPadding, ColumnWidthMin, ColumnWidthMax));
             }
             return widths;
@@ -377,7 +496,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             int commonLength = name.Length;
             for (int i = 1; i < states.Count; i++)
             {
-                var other = states[i].state.name;
+                var other = states[i].name;
                 int n = Mathf.Min(commonLength, other.Length);
                 int j = 0;
                 while (j < n && name[j] == other[j])
@@ -404,7 +523,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // never strip a name down to an empty header
             for (int i = 0; i < states.Count; i++)
             {
-                if (states[i].state.name.Length <= stripLength)
+                if (states[i].name.Length <= stripLength)
                     return name;
             }
 
@@ -491,8 +610,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             for (int i = 0; i < info.states.Count; i++)
             {
                 var entry = info.states[i];
-                var headerContent = new GUIContent($"{GetShortStateName(info.states, entry.state.name)} ({entry.toggleId})",
-                    $"State: {entry.state.name}{Environment.NewLine}Value: {entry.toggleId}{Environment.NewLine}Clip: {entry.clip.name}");
+                var tooltip = info.kind == ToggleKind.StateMachine
+                    ? $"State: {entry.name}{Environment.NewLine}Value: {entry.toggleId}{Environment.NewLine}Clip: {entry.clip.name}"
+                    : $"Blend Tree: {info.treeStateName}{Environment.NewLine}Clip: {entry.name}{Environment.NewLine}Threshold: {entry.toggleId} (parameter: {info.toggleParameter})";
+                var headerContent = new GUIContent($"{GetShortStateName(info.states, entry.name)} ({entry.toggleId})", tooltip);
                 GUI.Label(new Rect(headerX, headerCell.y, columnWidths[i], headerCell.height), headerContent, EditorStyles.boldLabel);
                 headerX += columnWidths[i] + ColumnPadding;
             }
@@ -542,7 +663,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             for (int i = 0; i < states.Count; i++)
             {
                 var columnRect = new Rect(x, cellRect.y, columnWidths[i], cellRect.height);
-                row.perState.TryGetValue(states[i].state.GetInstanceID(), out var cell);
+                row.perState.TryGetValue(states[i].clip.GetInstanceID(), out var cell);
 
                 if (row.isObjectReference)
                 {
@@ -619,15 +740,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 using var scroll = new EditorGUILayout.ScrollViewScope(scrollPos);
                 scrollPos = scroll.scrollPosition;
 
-                var toggles = FindMultiToggleStateMachines(controller);
+                var toggles = FindMultiToggles(controller);
 
                 if (toggles.Count == 0)
                 {
-                    EditorGUILayout.HelpBox($"No multi toggle state machines found in controller '{controller.name}'.\n" +
+                    EditorGUILayout.HelpBox($"No multi toggles found in controller '{controller.name}'.\n" +
                         "A multi toggle state machine has a transition for each of its states pointing at it (an any-state transition) " +
                         "with a single int parameter == condition (all on the same parameter, different values per state). " +
                         "The states must have no transitions going out of them, and each state's motion must be a single animation clip " +
-                        "(no blend tree) whose curves are all effectively constant.", MessageType.Info);
+                        "(no blend tree) whose curves are all effectively constant.\n" +
+                        "A 1d blend tree directly assigned as a state's motion also counts, when automatic thresholds are off, " +
+                        "it has 2+ clip children (no nested trees) at strictly increasing integer thresholds, and every child clip's curves " +
+                        "are all effectively constant.", MessageType.Info);
                     return;
                 }
 
@@ -636,17 +760,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
-                    EditorGUILayout.LabelField("Multi Toggle State Machine", EditorStyles.boldLabel);
-                    var options = toggles.Select(t => $"{t.path}  [param: {t.info.toggleParameter}, {t.info.states.Count} states]").ToArray();
-                    selectedToggleIndex = EditorGUILayout.Popup("State Machine", selectedToggleIndex, options);
+                    EditorGUILayout.LabelField("Multi Toggle", EditorStyles.boldLabel);
+                    var options = toggles.Select(t =>
+                        t.info.kind == ToggleKind.StateMachine
+                            ? $"[SM] {t.path}  [param: {t.info.toggleParameter}, {t.info.states.Count} states]"
+                            : $"[BT] {t.path}  [param: {t.info.toggleParameter}, {t.info.states.Count} clips]").ToArray();
+                    selectedToggleIndex = EditorGUILayout.Popup("Toggle", selectedToggleIndex, options);
                 }
 
-                var (_, _, info) = toggles[selectedToggleIndex];
+                var (_, info) = toggles[selectedToggleIndex];
 
                 EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
-                    EditorGUILayout.LabelField($"Multi Toggle Bindings  (parameter: {info.toggleParameter}, {info.states.Count} states, {info.rows.Count} bindings)", EditorStyles.boldLabel);
+                    var kindLabel = info.kind == ToggleKind.StateMachine ? "states" : "clips";
+                    EditorGUILayout.LabelField($"Multi Toggle Bindings  (parameter: {info.toggleParameter}, {info.states.Count} {kindLabel}, {info.rows.Count} bindings)", EditorStyles.boldLabel);
 
                     DrawMultiToggleTable(info, av.transform);
                 }
