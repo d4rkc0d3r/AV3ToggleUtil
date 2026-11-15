@@ -487,8 +487,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         /// <summary>
         /// The state name with the longest common whole-word prefix of all the states' names removed.
-        /// Only word boundaries are considered: the stripped part always ends on a space inside the shared
-        /// prefix (i.e. it's a complete word), so no partial words are ever cut.
+        /// The strip point must be a position where every name starts a new word - words start after a
+        /// space, at a camel-case word start (an uppercase letter right after a lowercase letter or
+        /// digit, e.g. "Fluid|Off"), or at the very beginning. Positions are checked from the end of the
+        /// shared prefix down, so the stripped part always contains only complete words.
         /// </summary>
         private static string GetShortStateName(List<MultiToggleStateEntry> states, string name)
         {
@@ -506,28 +508,41 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     break;
             }
 
-            // the longest whole-word prefix is everything up to (and including) the last space inside the shared part
-            int stripLength = -1;
-            for (int i = commonLength - 1; i >= 0; i--)
+            // the strip point is the farthest position where every name starts a new word - this can
+            // sit inside the shared prefix ("Hat| OFF") or exactly at its end ("ToggleFluid|Off")
+            for (int p = commonLength; p > 0; p--)
             {
-                if (name[i] == ' ')
+                bool allStartWords = true;
+                for (int i = 0; i < states.Count; i++)
                 {
-                    stripLength = i + 1;
-                    break;
+                    var other = states[i].name;
+                    // also guards against stripping a name down to an empty header
+                    if (other.Length <= p || !IsWordStartInName(other, p))
+                    {
+                        allStartWords = false;
+                        break;
+                    }
                 }
+                if (allStartWords)
+                    return name.Substring(p);
             }
 
-            if (stripLength < 0)
-                return name; // shared part contains no word boundary
+            return name; // no position where every name starts a word
+        }
 
-            // never strip a name down to an empty header
-            for (int i = 0; i < states.Count; i++)
-            {
-                if (states[i].name.Length <= stripLength)
-                    return name;
-            }
-
-            return name.Substring(stripLength);
+        /// <summary>
+        /// Whether a word starts at the given index in the name: after a space, at a camel-case
+        /// word start (uppercase right after a lowercase letter or digit), or at the beginning.
+        /// </summary>
+        private static bool IsWordStartInName(string name, int index)
+        {
+            if (index == 0)
+                return true;
+            var previous = name[index - 1];
+            var current = name[index];
+            if (previous == ' ')
+                return current != ' '; // never leave a leading space
+            return char.IsUpper(current) && (char.IsLower(previous) || char.IsDigit(previous));
         }
 
         /// <summary>Compute the widths of the leading path &amp; property columns based on the width of their widest content.</summary>
