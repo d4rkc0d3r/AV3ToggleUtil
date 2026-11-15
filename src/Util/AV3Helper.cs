@@ -239,7 +239,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                                 GUILayout.Space(ColumnGrid.InnerIndent + 15);
                                 EditorGUILayout.LabelField(new GUIContent(prop, "Click to open in Animation Utility"), EditorStyles.label);
                                 if (ClickableLastRect())
-                                    d4rkAV3AnimationUtilMenu.OpenWithFilters(path, filterProp, typeName);
+                                    d4rkAV3AnimationUtilMenu.OpenWithFilters(path, filterProp, typeName, avatarRoot);
                             }
                         }
                     }

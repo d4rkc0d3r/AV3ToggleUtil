@@ -765,10 +765,12 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         window.titleContent = new GUIContent("d4rk AV3 Animation Util");
     }
 
-    public static d4rkAV3AnimationUtilMenu OpenWithFilters(string path, string propertyName, string typeName)
+    public static d4rkAV3AnimationUtilMenu OpenWithFilters(string path, string propertyName, string typeName, Transform avatarRoot = null)
     {
         var window = GetWindow<d4rkAV3AnimationUtilMenu>();
         window.titleContent = new GUIContent("d4rk AV3 Animation Util");
+        if (avatarRoot != null)
+            window.AvatarDescriptor = FindAvatarDescriptor(avatarRoot.gameObject);
         window.selectionMode = SelectionMode.Search;
         window.filterBySelection = false;
         window.searchBindingPathFilter.Text = path ?? "";
