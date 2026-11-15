@@ -68,9 +68,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private struct BindingCell
         {
             public bool hasValue;
-            public string display; // formatted value for non-bool rows
-            public bool boolValue; // the 0/1 flag for bool rows
-            public UnityEngine.Object reference; // the referenced asset for object reference rows
+            public string display;
+            public bool boolValue;
+            public UnityEngine.Object reference;
         }
 
         private enum ToggleKind
@@ -412,7 +412,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (controller == null)
                 return results;
 
-            var seenTrees = new HashSet<int>(); // tree instance ids -> one entry per tree instance
+            var seenTrees = new HashSet<int>();
 
             void Scan(AnimatorStateMachine stateMachine, string path)
             {
@@ -462,15 +462,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         // Widths of the table columns (kept in consts for easy tweaking)
-        private const float ColumnWidthMin = 60f; // min width of a state column
-        private const float ColumnWidthMax = 120f; // max width of a state column
-        private const float ColumnTextPadding = 6f; // inner horizontal padding inside a state column
-        private const float PathColumnWidthMin = 200f; // min width of the path column
-        private const float PathColumnWidthMax = 300f; // max width of the path column
-        private const float PropColumnWidthMin = 100f; // min width of the property column
-        private const float PropColumnWidthMax = 220f; // max width of the property column
-        private const float RowPadding = 1f; // vertical padding between rows
-        private const float ColumnPadding = 4f; // horizontal padding between columns
+        private const float ColumnWidthMin = 80f;
+        private const float ColumnWidthMax = 120f;
+        private const float ColumnTextPadding = 6f;
+        private const float PathColumnWidthMin = 200f;
+        private const float PathColumnWidthMax = 300f;
+        private const float PropColumnWidthMin = 100f;
+        private const float PropColumnWidthMax = 220f;
+        private const float RowPadding = 1f;
+        private const float ColumnPadding = 4f;
         private static readonly float RowHeight = EditorGUIUtility.singleLineHeight + 2f;
 
         /// <summary>Compute the width of each state column based on the length of its (possibly shortened) header, clamped to &lt;see cref="ColumnWidthMin"/&gt;/&lt;see cref="ColumnWidthMax"/&gt;.</summary>
