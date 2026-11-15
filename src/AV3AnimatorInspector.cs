@@ -290,7 +290,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             var selectedEntry = controllers.FirstOrDefault(c => IsSameController(c.controller, selectedController));
             if (selectedEntry == null)
-                selectedEntry = controllers[0];
+            {
+                var fxController = GetFxAnimatorController(av);
+                selectedEntry = controllers.FirstOrDefault(c => IsSameController(c.controller, fxController));
+                if (selectedEntry == null)
+                    selectedEntry = controllers[0];
+                selectedController = selectedEntry.controller;
+            }
 
             var layers = selectedEntry.controller.layers ?? Array.Empty<AnimatorControllerLayer>();
             if (selectedLayerIndex >= layers.Length)
