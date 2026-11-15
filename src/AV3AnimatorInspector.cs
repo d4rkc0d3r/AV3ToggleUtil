@@ -19,7 +19,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
     {
         private Vector2 leftScrollPos;
         private Vector2 rightScrollPos;
-        private SplitterState splitter = new();
+        private SplitterState splitter = new() { leftPanelWidth = 260f };
         private ColumnGrid columnGrid = new();
         private bool showComponentProperties = true;
 
@@ -438,6 +438,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var window = GetWindow<AV3AnimatorInspector>();
             window.titleContent = new GUIContent("d4rk Animator Inspector");
+            InitializeLatestAvatarDescriptor(ref window.lastFoundAvatarDescriptor);
             window.Show();
         }
 

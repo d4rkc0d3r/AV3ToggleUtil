@@ -2534,6 +2534,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var window = GetWindow<AV3ParameterInspector>();
             window.titleContent = new GUIContent("d4rk Parameter Inspector");
+            InitializeLatestAvatarDescriptor(ref window.lastFoundAvatarDescriptor);
             window.Show();
         }
 

@@ -2069,6 +2069,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var window = GetWindow<PresetManager>();
             window.titleContent = new GUIContent("d4rk Preset Manager");
+            InitializeLatestAvatarDescriptor(ref window.lastFoundAvatarDescriptor);
             window.Show();
         }
 

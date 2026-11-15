@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEditor;
 using UnityEditor.Animations;
 using VRC.SDK3.Avatars.Components;
@@ -336,6 +337,45 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             if (selected != null)
                 lastFound = selected;
             return lastFound;
+        }
+
+        /// <summary>
+        /// Initializes a cached "last found" descriptor: first checks the current selection (without
+        /// clearing a previously found descriptor), and only falls back to scanning enabled top-level
+        /// scene objects when nothing is selected and no descriptor was found before.
+        /// Designed for window menu items; OnGUI should keep using <see cref="GetCurrentOrLastAvatarDescriptor"/>.
+        /// </summary>
+        public static VRCAvatarDescriptor InitializeLatestAvatarDescriptor(ref VRCAvatarDescriptor lastFound)
+        {
+            var selected = FindAvatarDescriptor(Selection.activeGameObject);
+            if (selected != null)
+            {
+                lastFound = selected;
+                return lastFound;
+            }
+
+            if (lastFound == null)
+                lastFound = SearchAvatarDescriptorInScene();
+
+            return lastFound;
+        }
+
+        public static VRCAvatarDescriptor SearchAvatarDescriptorInScene()
+        {
+            var scene = SceneManager.GetActiveScene();
+            if (!scene.IsValid())
+                return null;
+
+            var rootGameObjects = scene.GetRootGameObjects();
+            for (int i = 0; i < rootGameObjects.Length; i++)
+            {
+                var root = rootGameObjects[i];
+                if (root == null || !root.activeSelf)
+                    continue;
+                if (root.TryGetComponent(out VRCAvatarDescriptor descriptor))
+                    return descriptor;
+            }
+            return null;
         }
     }
 }
