@@ -549,7 +549,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>Compute the widths of the leading path &amp; property columns based on the width of their widest content.</summary>
-        private static (float pathWidth, float propertyWidth) BuildBindingColumnWidths(List<BindingRow> rows)
+        private static (float pathWidth, float propertyWidth) BuildBindingColumnWidths(Transform avatarRoot, List<BindingRow> rows)
         {
             float pathWidth = PathColumnWidthMin;
             float propertyWidth = PropColumnWidthMin;
@@ -558,7 +558,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var pathSize = GUI.skin.label.CalcSize(GetPathContent(row.path));
                 pathWidth = Mathf.Max(pathWidth, Mathf.Clamp(pathSize.x + ColumnTextPadding, PathColumnWidthMin, PathColumnWidthMax));
 
-                var propertySize = GUI.skin.label.CalcSize(new GUIContent(row.propertyName));
+                // use the displayed label (a constraint source row shows the source transform's name,
+                // everything else shows the raw property name) so the column is wide enough for it
+                var propertyLabel = GetPropertyLabel(avatarRoot, row) ?? row.propertyName;
+                var propertySize = GUI.skin.label.CalcSize(new GUIContent(propertyLabel));
                 propertyWidth = Mathf.Max(propertyWidth, Mathf.Clamp(propertySize.x + ColumnTextPadding, PropColumnWidthMin, PropColumnWidthMax));
             }
             return (pathWidth, propertyWidth);
@@ -568,6 +571,43 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static GUIContent GetPathContent(string path)
         {
             return new GUIContent(path.Length > 0 ? path : "(root)");
+        }
+
+        /// <summary>
+        /// The label shown in the property cell for a constraint source-slot row: the transform's own name
+        /// (safe even if it contains slashes) + the sub-property (e.g. "Head" for Sources.source2.Head where
+        /// the transform is named "Head"). Null when the row is not a resolvable constraint source slot.
+        /// </summary>
+        private static string GetPropertyLabel(Transform avatarRoot, BindingRow row)
+        {
+            if (ResolveBindingTarget(avatarRoot, row) is not VRC.Dynamics.VRCConstraintBase constraint)
+                return null;
+            if (!TryGetConstraintSourceSlot(row.bindType, row.propertyName, out var sourceSlot))
+                return null;
+            var sourceTransform = GetConstraintSourceTransform(constraint, sourceSlot);
+            if (sourceTransform == null || GetAvatarPathOfTransform(avatarRoot, sourceTransform) == null)
+                return null;
+            // everything after "Sources.source<i>" (the sub-property, e.g. "Weight")
+            var subStart = row.propertyName.IndexOf('.', "Sources.source".Length);
+            var subProperty = subStart >= 0 ? row.propertyName[(subStart + 1)..] : string.Empty;
+            return subProperty.Length > 0 ? $"{sourceTransform.name}.{subProperty}" : sourceTransform.name;
+        }
+
+        /// <summary>
+        /// The full avatar path to show in the tooltip of a constraint source-slot row, with the matching
+        /// replacement label (same rules as the property cell). Null when the row is not such a slot.
+        /// </summary>
+        private static string TryGetConstraintSourceTooltip(Transform avatarRoot, BindingRow row, out string label)
+        {
+            string path = null;
+            if (ResolveBindingTarget(avatarRoot, row) is VRC.Dynamics.VRCConstraintBase constraint &&
+                TryGetConstraintSourceSlot(row.bindType, row.propertyName, out var sourceSlot))
+            {
+                var sourceTransform = GetConstraintSourceTransform(constraint, sourceSlot);
+                path = sourceTransform == null ? null : GetAvatarPathOfTransform(avatarRoot, sourceTransform);
+            }
+            label = path != null ? GetPropertyLabel(avatarRoot, row) : null;
+            return path;
         }
 
         /// <summary>
@@ -612,7 +652,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private void DrawMultiToggleTable(MultiToggleInfo info, Transform avatarRoot)
         {
             var columnWidths = BuildColumnWidths(info.states);
-            var (pathWidth, propertyWidth) = BuildBindingColumnWidths(info.rows);
+            var (pathWidth, propertyWidth) = BuildBindingColumnWidths(avatarRoot, info.rows);
 
             float rowWidth = ColumnGrid.InnerIndent + pathWidth + propertyWidth + ColumnPadding * 2f;
             for (int i = 0; i < columnWidths.Count; i++)
@@ -674,8 +714,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 GUI.Label(pathCell, pathTooltip);
             }
 
+            // a source-slot curve of a VRC constraint shows the label with the source transform's name in
+            // place of the slot; the tooltip keeps the raw property + full path
+            var sourcePath = TryGetConstraintSourceTooltip(avatarRoot, row, out var sourceLabel);
+            var propertyLabel = sourceLabel ?? row.propertyName;
+            var propertyTooltip = sourceLabel != null ? $"{row.propertyName}{Environment.NewLine}{sourcePath}" : null;
+
             float x = cellRect.x + pathWidth + ColumnPadding;
-            GUI.Label(new Rect(x, cellRect.y, propertyWidth, cellRect.height), row.propertyName);
+            var propertyRect = new Rect(x, cellRect.y, propertyWidth, cellRect.height);
+            if (propertyTooltip != null)
+                GUI.Label(propertyRect, new GUIContent(propertyLabel, propertyTooltip));
+            else
+                GUI.Label(propertyRect, propertyLabel);
 
             x += propertyWidth + ColumnPadding;
             for (int i = 0; i < info.states.Count; i++)

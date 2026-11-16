@@ -142,6 +142,59 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             return int.TryParse(propertyName[materialSlotPropertyPrefix.Length..closeIndex], out _);
         }
 
+        private const string constraintSourcePropertyPrefix = "Sources.source";
+
+        /// <summary>Whether a binding's property targets a slot of a VRC constraint's source list (a
+        /// property of the form <c>Sources.source[i].<something></c>), returning the slot index when it does.</summary>
+        public static bool TryGetConstraintSourceSlot(System.Type bindType, string propertyName, out int sourceIndex)
+        {
+            sourceIndex = -1;
+            if (bindType == null || !typeof(VRC.Dynamics.VRCConstraintBase).IsAssignableFrom(bindType))
+                return false;
+            if (!propertyName.StartsWith(constraintSourcePropertyPrefix, StringComparison.Ordinal))
+                return false;
+            // the first '.' in the name is the one inside the prefix itself ("Sources.source<N>"),
+            // so search for the separator after "source<N>" (i.e. before the sub-property)
+            int dotIndex = propertyName.IndexOf('.', constraintSourcePropertyPrefix.Length);
+            if (dotIndex < 0)
+                return false;
+            if (!int.TryParse(propertyName[constraintSourcePropertyPrefix.Length..dotIndex], out sourceIndex))
+                return false;
+            return sourceIndex >= 0;
+        }
+
+        /// <summary>The root-relative path of a transform (<c>(root)</c> for the root itself), or null when
+        /// the transform is not under the root.</summary>
+        public static string GetAvatarPathOfTransform(Transform root, Transform transform)
+        {
+            if (root == null || transform == null)
+                return null;
+            if (root == transform)
+                return "(root)";
+
+            var segments = new List<string>();
+            var current = transform;
+            while (current != null && current != root)
+            {
+                segments.Add(current.name);
+                current = current.parent;
+            }
+            if (current != root)
+                return null; // transform is on another part of the scene tree
+
+            segments.Reverse();
+            return string.Join("/", segments);
+        }
+
+        /// <summary>The transform sitting in the given slot of the constraint's source list, or null when
+        /// the slot has no transform (including stale slot indices that exceed the current source count).</summary>
+        public static Transform GetConstraintSourceTransform(VRC.Dynamics.VRCConstraintBase constraint, int sourceIndex)
+        {
+            if (constraint == null || sourceIndex >= constraint.SourceCount)
+                return null;
+            return constraint.GetSource(sourceIndex).SourceTransform;
+        }
+
         /// <summary>
         /// The root of the git repo containing the given file or folder (the nearest folder with a .git entry,
         /// walking up the parents), or null when it is not inside one. When given, the scan never goes above
