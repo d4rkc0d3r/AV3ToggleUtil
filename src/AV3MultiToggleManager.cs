@@ -682,7 +682,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var columnRect = new Rect(x, cellRect.y, columnWidths[i], cellRect.height);
                 row.perState.TryGetValue(entry.clip.GetInstanceID(), out var cell);
 
-                if (row.isObjectReference)
+                if (!cell.hasValue)
+                {
+                    GUI.Label(columnRect, new GUIContent("—", $"No such curve in {entry.clip.name}"));
+                }
+                else if (row.isObjectReference)
                 {
                     // display only: the field shows the referenced asset, disabled so it can't write into the clip
                     using (new EditorGUI.DisabledScope(true))
@@ -692,21 +696,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
                 else if (row.isBool)
                 {
-                    if (cell.hasValue)
-                    {
-                        SetRectTooltip(columnRect, $"Toggle '{row.propertyName}' in '{entry.name}' — writes the curve value of {entry.clip.name}");
-                        var newValue = EditorGUI.Toggle(columnRect, cell.boolValue);
-                        if (GUI.changed)
-                            SetClipCellValue(entry.clip, row, newValue ? 1f : 0f);
-                    }
-                    else
-                    {
-                        GUI.Label(columnRect, new GUIContent("—", $"No such curve in {entry.clip.name}"));
-                    }
+                    SetRectTooltip(columnRect, $"Toggle '{row.propertyName}' in '{entry.name}'");
+                    var newValue = EditorGUI.Toggle(columnRect, cell.boolValue);
+                    if (GUI.changed)
+                        SetClipCellValue(entry.clip, row, newValue ? 1f : 0f);
                 }
-                else if (cell.hasValue)
+                else
                 {
-                    SetRectTooltip(columnRect, $"Edit '{row.propertyName}' in '{entry.name}' — writes the curve value of {entry.clip.name}");
+                    SetRectTooltip(columnRect, $"Edit '{row.propertyName}' in '{entry.name}'");
                     var text = EditorGUI.DelayedTextField(columnRect, cell.display ?? "");
                     if (text != cell.display)
                     {
@@ -715,10 +712,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         else
                             GUI.FocusControl(null); // invalid number: clear the field so it shows the real value again
                     }
-                }
-                else
-                {
-                    GUI.Label(columnRect, new GUIContent("—", $"No such curve in {entry.clip.name}"));
                 }
 
                 x += columnWidths[i] + ColumnPadding;
