@@ -717,6 +717,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var av = GetCurrentOrLastAvatarDescriptor(ref lastFoundAvatarDescriptor);
             var controller = av == null ? null : GetFxAnimatorController(av);
 
+            // scanned before the header row: the Git Status label in it depends on the selection
+            var toggles = controller == null ? null : FindMultiToggles(controller);
+            MultiToggleInfo selectedInfo = null;
+            if (toggles != null && toggles.Count > 0)
+            {
+                if (selectedToggleIndex < 0 || selectedToggleIndex >= toggles.Count)
+                    selectedToggleIndex = 0;
+                selectedInfo = toggles[selectedToggleIndex].info;
+            }
+
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.LabelField("Avatar", GUILayout.Width(46));
@@ -730,6 +740,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     EditorGUILayout.ObjectField(controller, typeof(AnimatorController), true);
                 }
+                GUILayout.Space(8);
+                DrawGitStatusLabel(GetMultiToggleGitAssets(controller, selectedInfo));
             }
 
             if (av == null)
@@ -744,28 +756,23 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return;
             }
 
+            if (toggles.Count == 0)
+            {
+                EditorGUILayout.HelpBox($"No multi toggles found in controller '{controller.name}'.\n" +
+                    "A multi toggle state machine has a transition for each of its states pointing at it (an any-state transition) " +
+                    "with a single int parameter == condition (all on the same parameter, different values per state). " +
+                    "The states must have no transitions going out of them, and each state's motion must be a single animation clip " +
+                    "(no blend tree) whose curves are all effectively constant.\n" +
+                    "A 1d blend tree directly assigned as a state's motion also counts, when automatic thresholds are off, " +
+                    "it has 2+ clip children (no nested trees) at strictly increasing integer thresholds, and every child clip's curves " +
+                    "are all effectively constant.", MessageType.Info);
+                return;
+            }
+
             using (new EditorGUILayout.VerticalScope())
             {
                 using var scroll = new EditorGUILayout.ScrollViewScope(scrollPos);
                 scrollPos = scroll.scrollPosition;
-
-                var toggles = FindMultiToggles(controller);
-
-                if (toggles.Count == 0)
-                {
-                    EditorGUILayout.HelpBox($"No multi toggles found in controller '{controller.name}'.\n" +
-                        "A multi toggle state machine has a transition for each of its states pointing at it (an any-state transition) " +
-                        "with a single int parameter == condition (all on the same parameter, different values per state). " +
-                        "The states must have no transitions going out of them, and each state's motion must be a single animation clip " +
-                        "(no blend tree) whose curves are all effectively constant.\n" +
-                        "A 1d blend tree directly assigned as a state's motion also counts, when automatic thresholds are off, " +
-                        "it has 2+ clip children (no nested trees) at strictly increasing integer thresholds, and every child clip's curves " +
-                        "are all effectively constant.", MessageType.Info);
-                    return;
-                }
-
-                if (selectedToggleIndex < 0 || selectedToggleIndex >= toggles.Count)
-                    selectedToggleIndex = 0;
 
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
@@ -777,7 +784,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     selectedToggleIndex = EditorGUILayout.Popup("Toggle", selectedToggleIndex, options);
                 }
 
-                var (_, info) = toggles[selectedToggleIndex];
+                var info = selectedInfo;
 
                 EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
@@ -788,6 +795,34 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     DrawMultiToggleTable(info, av.transform);
                 }
             }
+        }
+
+        /// <summary>The project-root-relative paths & git repos of the multi toggle's controller & clips.</summary>
+        private static List<(string displayName, string assetPath, string repoRoot)> GetMultiToggleGitAssets(AnimatorController controller, MultiToggleInfo info)
+        {
+            var assets = new List<(string displayName, string assetPath, string repoRoot)>();
+            if (controller != null)
+            {
+                var (path, repoRoot) = ResolveAssetRepoInfo(AssetDatabase.GetAssetPath(controller));
+                assets.Add((controller.name, path, repoRoot));
+            }
+            if (info == null)
+                return assets;
+
+            void AddClip(AnimationClip clip)
+            {
+                if (clip == null || assets.Any(a => a.assetPath == AssetDatabase.GetAssetPath(clip)))
+                    return;
+                var assetPath = AssetDatabase.GetAssetPath(clip);
+                if (string.IsNullOrEmpty(assetPath))
+                    return;
+                var (path, repoRoot) = ResolveAssetRepoInfo(assetPath);
+                assets.Add((clip.name, path, repoRoot));
+            }
+
+            foreach (var entry in info.states)
+                AddClip(entry.clip);
+            return assets;
         }
 
         [MenuItem("Tools/d4rkpl4y3r/AV3 Toggle Util/Multi Toggle Manager")]

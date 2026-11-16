@@ -2089,6 +2089,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     EditorGUILayout.ObjectField(av, typeof(VRCAvatarDescriptor), true);
                     EditorGUILayout.ObjectField(av != null ? av.expressionParameters : null, typeof(VRCExpressionParameters), false);
                 }
+                if (av != null)
+                {
+                    GUILayout.Space(8);
+                    DrawGitStatusLabel(GetAvatarAnimationGitAssets(av, GetAllControllers(av)));
+                }
             }
 
             if (av == null)

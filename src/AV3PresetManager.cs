@@ -1910,6 +1910,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     EditorGUILayout.ObjectField(controller, typeof(AnimatorController), true);
                 }
+                if (av != null && controller != null)
+                {
+                    GUILayout.Space(8);
+                    DrawGitStatusLabel(GetAvatarAnimationGitAssets(av, new[] { controller }));
+                }
             }
 
             if (av == null)

@@ -8,6 +8,7 @@ using VRC.SDK3.Avatars.ScriptableObjects;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
 
 namespace d4rkpl4y3r.AV3ToggleUtil.Util
 {
@@ -120,6 +121,112 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             return binding.type.GetField(binding.propertyName,
                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
                 ?.FieldType == typeof(bool);
+        }
+
+        /// <summary>
+        /// The root of the git repo containing the given file or folder (the nearest folder with a .git entry,
+        /// walking up the parents), or null when it is not inside one. When given, the scan never goes above
+        /// <paramref name="stopRoot"/>.
+        /// </summary>
+        public static string GetGitRepoRoot(string path, string stopRoot = null)
+        {
+            if (string.IsNullOrEmpty(path))
+                return null;
+            // start at the folder containing the file (the path may be a file itself)
+            var directory = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(path)) ?? Path.GetPathRoot(Path.GetFullPath(path)));
+            var stop = string.IsNullOrEmpty(stopRoot) ? null : Path.GetFullPath(stopRoot);
+            while (directory != null)
+            {
+                if (directory.EnumerateFileSystemInfos(".git").Any())
+                    return directory.FullName;
+                if (stop != null && string.Equals(directory.FullName, stop, StringComparison.OrdinalIgnoreCase))
+                    return null;
+                directory = directory.Parent;
+            }
+            return null;
+        }
+
+        public static string ProjectRootPath()
+        {
+            return Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath;
+        }
+
+        /// <summary>
+        /// The project-root-relative path (Assets/... or Packages/...) of an asset path plus the root of
+        /// the git repo it lives in (never above the project root), null when it isn't in one.
+        /// </summary>
+        public static (string assetPath, string repoRoot) ResolveAssetRepoInfo(string assetPath)
+        {
+            if (string.IsNullOrEmpty(assetPath))
+                return (string.Empty, null);
+            if (!assetPath.StartsWith("Assets/", StringComparison.Ordinal) && !assetPath.StartsWith("Packages/", StringComparison.Ordinal))
+                assetPath = "Assets/" + assetPath;
+            var projectRoot = ProjectRootPath();
+            return (assetPath, GetGitRepoRoot(Path.Combine(projectRoot, assetPath), projectRoot));
+        }
+
+        /// <summary>The animation assets relevant for git tracking of an avatar: controllers, expression parameters &amp; expressions menu.</summary>
+        public static List<(string displayName, string assetPath, string repoRoot)> GetAvatarAnimationGitAssets(VRCAvatarDescriptor av, IEnumerable<AnimatorController> controllers)
+        {
+            var results = new List<(string displayName, string assetPath, string repoRoot)>();
+            if (av == null)
+                return results;
+
+            void Add(string displayName, string assetPath)
+            {
+                if (string.IsNullOrEmpty(assetPath) || results.Any(r => r.assetPath == assetPath))
+                    return;
+                var (path, repoRoot) = ResolveAssetRepoInfo(assetPath);
+                results.Add((displayName, path, repoRoot));
+            }
+
+            if (controllers != null)
+                foreach (var controller in controllers)
+                    if (controller != null)
+                        Add(controller.name, AssetDatabase.GetAssetPath(controller));
+            Add(av.expressionParameters?.name, AssetDatabase.GetAssetPath(av.expressionParameters));
+            Add(av.expressionsMenu?.name, AssetDatabase.GetAssetPath(av.expressionsMenu));
+            return results;
+        }
+
+        /// <summary>Tooltip message & severity for the git repo (if any) the given assets live in. Empty message when there are none.</summary>
+        public static (string message, bool isWarning) GetGitRepoStatusMessage(IReadOnlyList<(string displayName, string assetPath, string repoRoot)> assets)
+        {
+            if (assets == null || assets.Count == 0)
+                return (string.Empty, false);
+            var projectRoot = ProjectRootPath();
+            // repos rooted at the project root keep their full path, anything else is shown relative to it
+            string RepoLabel(string repoRoot)
+            {
+                if (string.Equals(repoRoot, projectRoot, StringComparison.OrdinalIgnoreCase))
+                    return repoRoot;
+                return repoRoot.Length > projectRoot.Length && repoRoot.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase)
+                    ? repoRoot.Substring(projectRoot.Length).TrimStart('\\', '/')
+                    : repoRoot;
+            }
+
+            var tracked = assets.Where(a => a.repoRoot != null).ToList();
+            if (tracked.Count == assets.Count)
+            {
+                if (tracked.Select(a => a.repoRoot).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1)
+                    return ("In git repo: " + RepoLabel(tracked[0].repoRoot), false);
+                return ("Assets are spread across multiple git repos:\n" +
+                    string.Join("\n", assets.Select(a => $"- {a.displayName}: {RepoLabel(a.repoRoot)}")), true);
+            }
+
+            var untracked = assets.Where(a => a.repoRoot == null).ToList();
+            return ("Assets not in a git repo:\n" +
+                string.Join("\n", untracked.Select(a => $"- {a.displayName}")), true);
+        }
+
+        /// <summary>An inline "Git Status" label with an info/warning icon; the repo details go into its tooltip.</summary>
+        public static void DrawGitStatusLabel(IReadOnlyList<(string displayName, string assetPath, string repoRoot)> assets)
+        {
+            var (message, isWarning) = GetGitRepoStatusMessage(assets);
+            if (string.IsNullOrEmpty(message))
+                return;
+            var icon = EditorGUIUtility.IconContent(isWarning ? "console.warnicon.sml" : "console.infoicon.sml");
+            GUILayout.Label(new GUIContent("Git Status", icon.image, message), GUILayout.ExpandWidth(false));
         }
 
         public static void CollectComponentBindings(IEnumerable<AnimationClip> clips, VRCAvatarDescriptor av, Dictionary<Component, HashSet<string>> componentPropertyMap)
