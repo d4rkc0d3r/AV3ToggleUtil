@@ -760,8 +760,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 else if (row.isBool)
                 {
                     SetRectTooltip(columnRect, $"Toggle '{row.propertyName}' in '{entry.name}'");
+                    using var changeScope = new EditorGUI.ChangeCheckScope();
                     var newValue = EditorGUI.Toggle(columnRect, cell.boolValue);
-                    if (GUI.changed)
+                    if (changeScope.changed)
                         SetClipCellValue(entry.clip, row, newValue ? 1f : 0f);
                 }
                 else
