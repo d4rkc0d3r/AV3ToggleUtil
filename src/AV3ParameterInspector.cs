@@ -676,7 +676,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!IsParameterWrittenByPhysBone(selectedParameter, physBone.parameter))
                     continue;
 
-                writers.Add(new ComponentParameterWriter("PhysBone", GetTransformPath(physBone.transform, root), physBone.parameter));
+                writers.Add(new ComponentParameterWriter("PhysBone", GetTransformPath(root, physBone.transform), physBone.parameter));
             }
 
             foreach (var contactReceiver in root.GetComponentsInChildren<VRCContactReceiver>(true))
@@ -687,7 +687,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (!IsSameParameter(selectedParameter, contactReceiver.parameter))
                     continue;
 
-                writers.Add(new ComponentParameterWriter("Contact", GetTransformPath(contactReceiver.transform, root), contactReceiver.parameter));
+                writers.Add(new ComponentParameterWriter("Contact", GetTransformPath(root, contactReceiver.transform), contactReceiver.parameter));
             }
 
             return writers
@@ -695,12 +695,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 .ThenBy(x => x.path, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.configuredParameter, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-        }
-
-        private static string GetTransformPath(Transform transform, Transform root)
-        {
-            var path = AnimationUtility.CalculateTransformPath(transform, root);
-            return string.IsNullOrEmpty(path) ? "(Root)" : path;
         }
 
         private static bool RenameTransitionConditions(AnimatorTransitionBase transition, string oldParameter, string newParameter)

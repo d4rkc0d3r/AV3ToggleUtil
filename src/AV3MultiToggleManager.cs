@@ -585,7 +585,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (!TryGetConstraintSourceSlot(row.bindType, row.propertyName, out var sourceSlot))
                 return null;
             var sourceTransform = GetConstraintSourceTransform(constraint, sourceSlot);
-            if (sourceTransform == null || GetAvatarPathOfTransform(avatarRoot, sourceTransform) == null)
+            if (sourceTransform == null || GetTransformPath(avatarRoot, sourceTransform) == null)
                 return null;
             // everything after "Sources.source<i>" (the sub-property, e.g. "Weight")
             var subStart = row.propertyName.IndexOf('.', "Sources.source".Length);
@@ -604,7 +604,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 TryGetConstraintSourceSlot(row.bindType, row.propertyName, out var sourceSlot))
             {
                 var sourceTransform = GetConstraintSourceTransform(constraint, sourceSlot);
-                path = sourceTransform == null ? null : GetAvatarPathOfTransform(avatarRoot, sourceTransform);
+                path = sourceTransform == null ? null : GetTransformPath(avatarRoot, sourceTransform);
             }
             label = path != null ? GetPropertyLabel(avatarRoot, row) : null;
             return path;

@@ -164,26 +164,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         }
 
         /// <summary>The root-relative path of a transform (<c>(root)</c> for the root itself), or null when
-        /// the transform is not under the root.</summary>
-        public static string GetAvatarPathOfTransform(Transform root, Transform transform)
+        /// either transform is null or the transform is not under the root.
+        /// (For binding paths - where empty string means root - use AnimationUtility.CalculateTransformPath directly.)</summary>
+        public static string GetTransformPath(Transform root, Transform transform)
         {
             if (root == null || transform == null)
                 return null;
-            if (root == transform)
-                return "(root)";
-
-            var segments = new List<string>();
-            var current = transform;
-            while (current != null && current != root)
-            {
-                segments.Add(current.name);
-                current = current.parent;
-            }
-            if (current != root)
-                return null; // transform is on another part of the scene tree
-
-            segments.Reverse();
-            return string.Join("/", segments);
+            var path = AnimationUtility.CalculateTransformPath(transform, root);
+            return string.IsNullOrEmpty(path) ? "(root)" : path;
         }
 
         /// <summary>The transform sitting in the given slot of the constraint's source list, or null when
