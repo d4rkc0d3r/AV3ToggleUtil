@@ -462,8 +462,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         // Widths of the table columns (kept in consts for easy tweaking)
-        private const float ColumnWidthMin = 80f;
-        private const float ColumnWidthMax = 120f;
+        // the state columns hold editable fields, so they're a bit wider than plain text would need
+        private const float ColumnWidthMin = 90f;
+        private const float ColumnWidthMax = 130f;
         private const float ColumnTextPadding = 6f;
         private const float PathColumnWidthMin = 200f;
         private const float PathColumnWidthMax = 300f;
@@ -636,12 +637,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             for (int i = 0; i < info.rows.Count; i++)
             {
                 var rowRect = GetTableRowRect(rowWidth);
-                DrawBindingRow(info.rows[i], info.states, columnWidths, pathWidth, propertyWidth, avatarRoot, rowRect);
+                DrawBindingRow(info, info.rows[i], columnWidths, pathWidth, propertyWidth, avatarRoot, rowRect);
             }
         }
 
-        /// <summary>Draw every cell of one binding row at its calculated x &amp; width inside the row rect.</summary>
-        private void DrawBindingRow(BindingRow row, List<MultiToggleStateEntry> states, List<float> columnWidths,
+        /// <summary>Draw every cell of one binding row at its calculated x &amp; width inside the row rect. Bool &amp; float cells are editable and write straight into the underlying clip's (constant) animation curves.</summary>
+        private void DrawBindingRow(MultiToggleInfo info, BindingRow row, List<float> columnWidths,
             float pathWidth, float propertyWidth, Transform avatarRoot, Rect rowRect)
         {
             var cellRect = GetTableCellRect(rowRect);
@@ -675,10 +676,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             GUI.Label(new Rect(x, cellRect.y, propertyWidth, cellRect.height), row.propertyName);
 
             x += propertyWidth + ColumnPadding;
-            for (int i = 0; i < states.Count; i++)
+            for (int i = 0; i < info.states.Count; i++)
             {
+                var entry = info.states[i];
                 var columnRect = new Rect(x, cellRect.y, columnWidths[i], cellRect.height);
-                row.perState.TryGetValue(states[i].clip.GetInstanceID(), out var cell);
+                row.perState.TryGetValue(entry.clip.GetInstanceID(), out var cell);
 
                 if (row.isObjectReference)
                 {
@@ -690,19 +692,94 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
                 else if (row.isBool)
                 {
-                    // display only: the 0/1 flag as a disabled checkbox
-                    using (new EditorGUI.DisabledScope(true))
+                    if (cell.hasValue)
                     {
-                        EditorGUI.Toggle(columnRect, cell.hasValue ? cell.boolValue : false);
+                        SetRectTooltip(columnRect, $"Toggle '{row.propertyName}' in '{entry.name}' — writes the curve value of {entry.clip.name}");
+                        var newValue = EditorGUI.Toggle(columnRect, cell.boolValue);
+                        if (GUI.changed)
+                            SetClipCellValue(entry.clip, row, newValue ? 1f : 0f);
+                    }
+                    else
+                    {
+                        GUI.Label(columnRect, new GUIContent("—", $"No such curve in {entry.clip.name}"));
+                    }
+                }
+                else if (cell.hasValue)
+                {
+                    SetRectTooltip(columnRect, $"Edit '{row.propertyName}' in '{entry.name}' — writes the curve value of {entry.clip.name}");
+                    var text = EditorGUI.DelayedTextField(columnRect, cell.display ?? "");
+                    if (text != cell.display)
+                    {
+                        if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+                            SetClipCellValue(entry.clip, row, parsed);
+                        else
+                            GUI.FocusControl(null); // invalid number: clear the field so it shows the real value again
                     }
                 }
                 else
                 {
-                    GUI.Label(columnRect, cell.hasValue && cell.display != null ? cell.display : "—");
+                    GUI.Label(columnRect, new GUIContent("—", $"No such curve in {entry.clip.name}"));
                 }
 
                 x += columnWidths[i] + ColumnPadding;
             }
+        }
+
+        /// <summary>Draw a tooltip over the given rect: an empty label carrying the tooltip is drawn on top of the control,
+        /// since a control's own GUIContent tooltip only shows on its (empty) label and stays invisible otherwise.</summary>
+        private static void SetRectTooltip(Rect controlRect, string tooltip)
+        {
+            if (string.IsNullOrEmpty(tooltip))
+                return;
+            GUI.Label(controlRect, new GUIContent("", tooltip));
+        }
+
+        /// <summary>
+        /// Write a new value into the clip's curve for the row's binding, keeping all keys, their times and
+        /// tangents (the curve just becomes a flat line at the new value). Each write is one undo group.
+        /// </summary>
+        private void SetClipCellValue(AnimationClip clip, BindingRow row, float value)
+        {
+            var bindings = AnimationUtility.GetCurveBindings(clip);
+            EditorCurveBinding binding = default;
+            for (int i = 0; i < bindings.Length; i++)
+            {
+                if (bindings[i].path == row.path
+                    && bindings[i].propertyName == row.propertyName
+                    && bindings[i].type == row.bindType)
+                {
+                    binding = bindings[i];
+                    break;
+                }
+            }
+            if (binding.path == null)
+            {
+                Debug.LogWarning($"[AV3 Toggle Multi] No matching curve binding '{row.propertyName}' in {clip.name}");
+                return;
+            }
+
+            var curve = AnimationUtility.GetEditorCurve(clip, binding);
+            if (curve == null)
+            {
+                Debug.LogWarning($"[AV3 Toggle Multi] Couldn't read the '{row.propertyName}' curve of {clip.name}");
+                return;
+            }
+
+            // copy the keys, flatten them, then hand back a fresh curve so the undo snapshot stays valid
+            var keys = curve.keys;
+            var newKeys = new UnityEngine.Keyframe[keys.Length];
+            for (int k = 0; k < keys.Length; k++)
+            {
+                var key = keys[k];
+                key.value = value;
+                newKeys[k] = key;
+            }
+            var newCurve = new AnimationCurve(newKeys);
+
+            Undo.RecordObject(clip, "Multi Toggle Manager: Set Curve Value");
+            AnimationUtility.SetEditorCurve(clip, binding, newCurve);
+            EditorUtility.SetDirty(clip);
+            Repaint();
         }
 
         private static string FormatValue(float value)
