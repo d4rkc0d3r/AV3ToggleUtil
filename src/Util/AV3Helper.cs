@@ -123,6 +123,25 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 ?.FieldType == typeof(bool);
         }
 
+        private const string materialSlotPropertyPrefix = "m_Materials.Array.data[";
+
+        /// <summary>Whether a binding swaps a material in one of a (skinned mesh) renderer's material slots
+        /// (the property name is of the form <c>m_Materials.Array.data[i]</c> where i is the slot index).</summary>
+        public static bool IsMaterialSwapBinding(EditorCurveBinding binding)
+        {
+            if (binding.type == null || !typeof(Renderer).IsAssignableFrom(binding.type))
+                return false;
+
+            // property format: m_Materials.Array.data[<int>]
+            var propertyName = binding.propertyName;
+            if (!propertyName.StartsWith(materialSlotPropertyPrefix, StringComparison.Ordinal))
+                return false;
+            int closeIndex = propertyName.IndexOf(']');
+            if (closeIndex < materialSlotPropertyPrefix.Length || closeIndex < propertyName.Length - 1)
+                return false;
+            return int.TryParse(propertyName[materialSlotPropertyPrefix.Length..closeIndex], out _);
+        }
+
         /// <summary>
         /// The root of the git repo containing the given file or folder (the nearest folder with a .git entry,
         /// walking up the parents), or null when it is not inside one. When given, the scan never goes above

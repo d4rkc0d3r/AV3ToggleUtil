@@ -61,6 +61,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public System.Type bindType;
             public string propertyName;
             public bool isObjectReference;
+            public bool isMaterialSwap; // material slot swap on a renderer -> editable material field
             public bool isBool; // boolean-ish binding (see AV3Helper.IsBoolBinding) -> rendered as a checkbox
             public readonly Dictionary<int, BindingCell> perState = new Dictionary<int, BindingCell>(); // state instance id -> cell
         }
@@ -389,6 +390,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         bindType = binding.type,
                         propertyName = binding.propertyName,
                         isObjectReference = true,
+                        isMaterialSwap = IsMaterialSwapBinding(binding),
                     });
                 }
 
@@ -688,10 +690,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
                 else if (row.isObjectReference)
                 {
-                    // display only: the field shows the referenced asset, disabled so it can't write into the clip
-                    using (new EditorGUI.DisabledScope(true))
+                    if (row.isMaterialSwap)
                     {
-                        EditorGUI.ObjectField(columnRect, cell.reference, typeof(UnityEngine.Object), false);
+                        // material swap binding: editable material field, writes the object reference curve into the clip
+                        SetRectTooltip(columnRect, $"Change '{row.propertyName}' in '{entry.name}'");
+                        var material = EditorGUI.ObjectField(columnRect, cell.reference as Material, typeof(Material), false);
+                        if (material != cell.reference)
+                            SetClipObjectReferenceValue(entry.clip, row, material);
+                    }
+                    else
+                    {
+                        // display only: the field shows the referenced asset, disabled so it can't write into the clip
+                        using (new EditorGUI.DisabledScope(true))
+                        {
+                            EditorGUI.ObjectField(columnRect, cell.reference, typeof(UnityEngine.Object), false);
+                        }
                     }
                 }
                 else if (row.isBool)
@@ -771,6 +784,51 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             Undo.RecordObject(clip, "Multi Toggle Manager: Set Curve Value");
             AnimationUtility.SetEditorCurve(clip, binding, newCurve);
+            EditorUtility.SetDirty(clip);
+            Repaint();
+        }
+
+        /// <summary>
+        /// Write a new reference into the clip's object reference curve for the row's binding, keeping all
+        /// existing key times. Each write is one undo group.
+        /// </summary>
+        private void SetClipObjectReferenceValue(AnimationClip clip, BindingRow row, UnityEngine.Object value)
+        {
+            var bindings = AnimationUtility.GetObjectReferenceCurveBindings(clip);
+            EditorCurveBinding binding = default;
+            for (int i = 0; i < bindings.Length; i++)
+            {
+                if (bindings[i].path == row.path
+                    && bindings[i].propertyName == row.propertyName
+                    && bindings[i].type == row.bindType)
+                {
+                    binding = bindings[i];
+                    break;
+                }
+            }
+            if (binding.path == null)
+            {
+                Debug.LogWarning($"[AV3 Toggle Multi] No matching object reference binding '{row.propertyName}' in {clip.name}");
+                return;
+            }
+
+            var keyframes = AnimationUtility.GetObjectReferenceCurve(clip, binding);
+            if (keyframes == null)
+            {
+                Debug.LogWarning($"[AV3 Toggle Multi] Couldn't read the object reference curve '{row.propertyName}' of {clip.name}");
+                return;
+            }
+
+            var newKeyframes = new ObjectReferenceKeyframe[keyframes.Length];
+            for (int k = 0; k < keyframes.Length; k++)
+            {
+                var keyframe = keyframes[k];
+                keyframe.value = value;
+                newKeyframes[k] = keyframe;
+            }
+
+            Undo.RecordObject(clip, "Multi Toggle Manager: Set Material");
+            AnimationUtility.SetObjectReferenceCurve(clip, binding, newKeyframes);
             EditorUtility.SetDirty(clip);
             Repaint();
         }
