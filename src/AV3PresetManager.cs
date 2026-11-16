@@ -577,7 +577,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             float spacing = 70f; // the FXLayerVP Presets machine lays out its states 70px apart
             if (children.Length >= 2)
             {
-                float step = (children[children.Length - 1].position.y - children[0].position.y) / (children.Length - 1);
+                float step = (children[^1].position.y - children[0].position.y) / (children.Length - 1);
                 if (step > 0f)
                     spacing = step;
             }
@@ -994,7 +994,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             float spacing = 70f;
             if (laidOut.Length >= 2)
             {
-                float step = (laidOut[laidOut.Length - 1].position.y - laidOut[0].position.y) / (laidOut.Length - 1);
+                float step = (laidOut[^1].position.y - laidOut[0].position.y) / (laidOut.Length - 1);
                 if (step > 0f)
                     spacing = step;
             }
@@ -1041,16 +1041,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static string GetParameterDisplayName(string parameterName)
         {
             string name = parameterName;
-            if (name.StartsWith("Toggle", System.StringComparison.Ordinal))
-                name = name.Substring("Toggle".Length);
-            if (name.EndsWith("Int", System.StringComparison.Ordinal) && name.Length > "Int".Length)
-                name = name.Substring(0, name.Length - "Int".Length);
-            else if (name.EndsWith("Float", System.StringComparison.Ordinal) && name.Length > "Float".Length)
-                name = name.Substring(0, name.Length - "Float".Length);
-            else if (name.EndsWith("Left", System.StringComparison.Ordinal) && name.Length > "Left".Length)
-                name = name.Substring(0, name.Length - "Left".Length) + "L";
-            else if (name.EndsWith("Right", System.StringComparison.Ordinal) && name.Length > "Right".Length)
-                name = name.Substring(0, name.Length - "Right".Length) + "R";
+            if (name.StartsWith("Toggle", StringComparison.Ordinal))
+                name = name["Toggle".Length..];
+            if (name.EndsWith("Int", StringComparison.Ordinal) && name.Length > "Int".Length)
+                name = name[..^"Int".Length];
+            else if (name.EndsWith("Float", StringComparison.Ordinal) && name.Length > "Float".Length)
+                name = name[..^"Float".Length];
+            else if (name.EndsWith("Left", StringComparison.Ordinal) && name.Length > "Left".Length)
+                name = name[..^"Left".Length] + "L";
+            else if (name.EndsWith("Right", StringComparison.Ordinal) && name.Length > "Right".Length)
+                name = name[..^"Right".Length] + "R";
 
             // split camel humps into words: an uppercase letter starts a new word after a lowercase letter,
             // and runs of capitals end when the next letter is lowercase (so "VRCParameter" -> "VRC Parameter")
@@ -1061,7 +1061,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (i > 0 && char.IsUpper(c) && ((char.IsLower(name[i - 1]) && !char.IsLower(c)) || (i + 1 < name.Length && char.IsLower(name[i + 1]) && char.IsUpper(name[i - 1]))))
                     words.Add(string.Concat(c));
                 else if (i > 0 && words.Count > 0)
-                    words[words.Count - 1] = words[words.Count - 1] + c;
+                    words[^1] = words[^1] + c;
                 else
                     words.Add(string.Concat(c));
             }
