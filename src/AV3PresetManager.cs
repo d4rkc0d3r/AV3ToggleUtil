@@ -31,26 +31,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private VRCAvatarDescriptor lastFoundAvatarDescriptor;
 
-        // Not-yet-applied edits of the states' parameter driver set values (kept in memory until applied or discarded)
-        private readonly List<PendingChange> pendingChanges = new List<PendingChange>();
-        private int pendingChangesControllerId = -1; // controller the pending changes belong to (-1 if none), used to clear stale entries
-
-        // a pending "add a whole new preset row" (a brand new state), triggered by the + in the table's bottom row
-        private bool addRowPending = false;
-        private string pendingAddRowName = "";
-        private string pendingAddRowCopyFrom = ""; // if set, copy the driver values of the row with this state name into the new state
-        private int pendingAddRowId = -1;
-
-        // queued deletions (cell / column / row), applied on Apply like the value edits
-        private readonly List<PendingDeletion> pendingDeletions = new List<PendingDeletion>();
+        // name typed into the table's bottom "add row", and the existing row whose set operations to copy
+        private string newRowName = "";
+        private string newRowCopyFrom = ""; // if set, copy the driver values of the row with this state name into the new state
 
         // name typed into the trailing "add param" column's input (header row); the + buttons in its rows add a set operation for it
         private string newParamInput = "";
 
-        // the preset currently displayed (set in OnGUI, used by Apply to target the right machine / preset parameter)
+        // the preset currently displayed (set in OnGUI, used to target the table's actions at the right machine)
         private AnimatorController currentController;
         private AnimatorStateMachine currentStateMachine;
-        private PresetInfo currentPreset;
 
         private readonly struct PresetStateEntry
         {
@@ -98,34 +88,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public float destMax;
             public StateMachineBehaviour driverBehaviour; // the VRCAvatarParameterDriver this operation lives in
             public int operationIndex; // index of the operation within that driver's own parameter list
-        }
-
-        /// <summary>An edit of a set-mode driver value, kept in memory until it gets applied to the driver (or discarded).</summary>
-        private struct PendingChange
-        {
-            public AnimatorState state;
-            public string parameterName;
-            public StateMachineBehaviour driverBehaviour; // the VRCAvatarParameterDriver the set operation is in (null if a new cell is pending)
-            public int operationIndex; // index of the set operation within that driver's own parameter list (-1 if a new cell)
-            public float originalValue;
-            public float newValue;
-        }
-
-        /// <summary>
-        /// A queued deletion: a single driver operation (a row + column combination),
-        /// a whole parameter column (the parameter from every state's drivers),
-        /// or a whole row (the state itself + its entry transition + expression menu entry).
-        /// Nothing is mutated until ApplyPendingChanges runs (Discard just throws the queue away).
-        /// </summary>
-        private struct PendingDeletion
-        {
-            public int kind; // 0: one operation of a state's driver, 1: a whole parameter column, 2: a whole row (state)
-            public AnimatorState state; // the owning state (kind 0 & 2) - the state may already be destroyed for a queued row deletion
-            public StateMachineBehaviour driverBehaviour; // the VRCAvatarParameterDriver (kind 0)
-            public int operationIndex; // index within the driver's own parameter list (kind 0)
-            public string parameterName; // the parameter (kind 0 & 1), also the row's state name for kind 2
-            public VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType operation; // the operation (kind 0)
-            public int presetId; // the row's preset id (kind 2)
         }
 
         private class PresetInfo
@@ -425,8 +387,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return results;
         }
 
-        private static readonly List<DriverColumn> EmptyDriverColumns = new List<DriverColumn>();
-
         // Widths of the preset states table columns (kept in consts for easy tweaking)
         private const float ColumnWidthMin = 40f; // min width of a driver parameter column
         private const float ColumnWidthMax = 90f; // max width of a driver parameter column
@@ -463,9 +423,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// <summary>Draw the preset states as a table: preset id, state name, then one column per parameter the states' drivers set.</summary>
         private void DrawPresetStates(PresetInfo preset)
         {
-            // pending column deletions & row deletions are reflected live: those columns / rows aren't drawn until Apply
-            var columns = FilterDrawnColumns(preset);
-            var rows = FilterDrawnStates(preset);
+            var columns = preset.driverColumns;
+            var rows = preset.states;
             var columnWidths = BuildDriverColumnWidths(columns);
 
             // One layout rect per row, sized for all columns; the cells are then drawn at their calculated x & width inside it
@@ -523,67 +482,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             foreach (var entry in rows)
             {
                 var rowRect = GetTableRowRect(rowWidth);
-                DrawPresetStateRow(entry, columns, columnWidths, rowRect);
+                DrawPresetStateRow(preset, entry, columns, columnWidths, rowRect);
             }
 
             // a bottom row to add a whole new preset state (id +, name input; parameter columns stay empty)
             DrawAddPresetRow(preset, rowWidth);
         }
 
-        /// <summary>The table's columns, minus the ones queued for deletion (all columns when nothing is queued).</summary>
-        private List<DriverColumn> FilterDrawnColumns(PresetInfo preset)
-        {
-            var columns = preset.driverColumns ?? EmptyDriverColumns;
-            bool any = false;
-            for (int i = 0; i < columns.Count; i++)
-            {
-                if (IsPendingDeletion(1, null, null, -1, columns[i].name))
-                {
-                    any = true;
-                    break;
-                }
-            }
-            if (!any)
-                return columns;
-
-            var kept = new List<DriverColumn>(columns.Count);
-            foreach (var column in columns)
-            {
-                if (!IsPendingDeletion(1, null, null, -1, column.name))
-                    kept.Add(column);
-            }
-            return kept;
-        }
-
-        /// <summary>The table's rows, minus the states queued for deletion (all rows when nothing is queued).</summary>
-        private List<PresetStateEntry> FilterDrawnStates(PresetInfo preset)
-        {
-            var states = preset.states;
-            bool any = false;
-            for (int i = 0; i < states.Count; i++)
-            {
-                if (IsPendingDeletion(2, states[i].state, null, -1, null))
-                {
-                    any = true;
-                    break;
-                }
-            }
-            if (!any)
-                return states;
-
-            var kept = new List<PresetStateEntry>(states.Count);
-            foreach (var entry in states)
-            {
-                if (!IsPendingDeletion(2, entry.state, null, -1, null))
-                    kept.Add(entry);
-            }
-            return kept;
-        }
-
         /// <summary>
-        /// Draw the table's bottom "add row": a + button (disabled until a name is entered), the new state's name
-        /// input, and a "copy from..." dropdown to its right. The new state's driver set-operations are copied
-        /// from the row of the selected state. The parameter columns stay empty.
+        /// Draw the table's bottom "add row": a + button (disabled until a name is entered) that immediately
+        /// creates the new state, the new state's name input, and a "copy from..." dropdown to its right. The
+        /// new state's driver set-operations are copied from the row of the selected state.
         /// </summary>
         private void DrawAddPresetRow(PresetInfo preset, float rowWidth)
         {
@@ -597,44 +506,39 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var copyRect = new Rect(nameRect.xMax + ColumnPadding, cellRect.y, Mathf.Min(NameColumnWidth, Mathf.Max(0f, copyMaxWidth)), cellRect.height);
 
             int nextId = ComputeNextPresetId(preset);
-            bool hasName = !string.IsNullOrEmpty(pendingAddRowName);
-            var idLabel = addRowPending ? $"id = {pendingAddRowId}" : "+";
-            var idContent = new GUIContent(idLabel, $"Add a preset state with id {nextId}");
+            bool hasName = !string.IsNullOrEmpty(newRowName);
+            string copyNote = string.IsNullOrEmpty(newRowCopyFrom) ? "" : $", copying set operations from '{newRowCopyFrom}'";
+            var createContent = new GUIContent("+", $"Add a preset state with id {nextId}{copyNote}");
 
             using (new EditorGUI.DisabledScope(!hasName))
             {
-                if (GUI.Button(idRect, idContent))
+                if (GUI.Button(idRect, createContent))
                 {
-                    pendingAddRowId = nextId;
-                    addRowPending = true;
+                    ApplyAddRow(lastFoundAvatarDescriptor, currentController, preset.stateMachine, preset, newRowName, newRowCopyFrom, nextId);
+                    newRowName = "";
+                    newRowCopyFrom = "";
                 }
             }
 
             SetRectTooltip(nameRect, "New preset state name");
-            var newName = EditorGUI.TextField(nameRect, pendingAddRowName ?? "");
-            if (newName != pendingAddRowName)
-            {
-                pendingAddRowName = newName;
-                if (string.IsNullOrEmpty(pendingAddRowName))
-                    addRowPending = false; // clearing the name cancels the pending add
-            }
+            var newName = EditorGUI.TextField(nameRect, newRowName ?? "");
+            if (newName != newRowName)
+                newRowName = newName;
 
             // 'copy from' dropdown: the button shows the selected state (or the 'copy from...' placeholder),
             // the menu lists the placeholder + every existing state; each item stores the exact state name (no index mapping)
-            string copyShown = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? "copy from..." : pendingAddRowCopyFrom;
+            string copyShown = string.IsNullOrEmpty(newRowCopyFrom) ? "copy from..." : newRowCopyFrom;
             if (GUI.Button(copyRect, copyShown, EditorStyles.popup))
             {
                 var copyMenu = new GenericMenu();
-                copyMenu.AddItem(new GUIContent("copy from..."), string.IsNullOrEmpty(pendingAddRowCopyFrom), () => pendingAddRowCopyFrom = "");
+                copyMenu.AddItem(new GUIContent("copy from..."), string.IsNullOrEmpty(newRowCopyFrom), () => newRowCopyFrom = "");
                 foreach (var stateEntry in preset.states)
                 {
                     string stateName = stateEntry.state.name; // captured per item, the callbacks run after OnGUI finishes
-                    copyMenu.AddItem(new GUIContent(stateName), string.Equals(pendingAddRowCopyFrom, stateName, StringComparison.Ordinal), () => pendingAddRowCopyFrom = stateName);
+                    copyMenu.AddItem(new GUIContent(stateName), string.Equals(newRowCopyFrom, stateName, StringComparison.Ordinal), () => newRowCopyFrom = stateName);
                 }
                 copyMenu.ShowAsContext();
             }
-
-            // the parameter columns (including the trailing "add param" column) are left empty for a pending "add row"
         }
 
         private static int ComputeNextPresetId(PresetInfo presets)
@@ -903,49 +807,37 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 var cell = cells[i];
                 string label = $"Delete '{column.name}' from '{state.name}'";
                 menu.AddItem(new GUIContent(label,
-                        $"Queues a deletion of just the '{column.name}' operation ({i + 1}/{cells.Count}) from '{state.name}' - press Apply in the pending changes box to confirm (Discard cancels)"),
+                        $"Removes just the '{column.name}' operation ({i + 1}/{cells.Count}) from '{state.name}' immediately (undoable with Ctrl+Z)"),
                     false, () => RemoveDriverOperation(state, cell, column.name));
             }
             menu.ShowAsContext();
         }
 
-        /// <summary>Queue a deletion of a single driver operation (row + column combination).</summary>
+        /// <summary>Remove a single driver operation (row + column combination) immediately, with undo (the operation is re-resolved by name, so a stale table can't remove the wrong one).</summary>
         private void RemoveDriverOperation(AnimatorState state, DriverSetInfo cell, string parameterName)
         {
             if (cell.driverBehaviour == null
                 || !(cell.driverBehaviour is VRC.SDKBase.VRC_AvatarParameterDriver driver)
-                || driver.parameters == null
-                || cell.operationIndex < 0 || cell.operationIndex >= driver.parameters.Count)
+                || driver.parameters == null)
                 return;
 
-            if (!string.Equals(driver.parameters[cell.operationIndex].name, parameterName, StringComparison.Ordinal))
-                return; // the cell went stale since the table was scanned
-
-            if (AlreadyPendingCellDeletion(state, cell.driverBehaviour, cell.operationIndex))
-                return; // already queued for deletion
-
-            // a queued deletion of an earlier operation would shift this pending value edit's stored operation index
-            var driverParameters = driver.parameters;
-            for (int i = 0; i < cell.operationIndex; i++)
+            var parameters = driver.parameters;
+            int index = -1;
+            for (int i = 0; i < parameters.Count; i++)
             {
-                if (HasPendingValueEdit(state, cell.driverBehaviour, i))
+                if (parameters[i] != null && string.Equals(parameters[i].name, parameterName, StringComparison.Ordinal))
                 {
-                    EditorUtility.DisplayDialog("d4rk Preset Manager",
-                        $"'" + state.name + "' has a pending value edit on '" + (driverParameters[i] != null ? driverParameters[i].name : "?") +
-                        "'. Apply or discard it first, then delete '" + parameterName + "' from '" + state.name + "'.",
-                        "OK");
-                    return;
+                    index = i;
+                    break;
                 }
             }
+            if (index < 0)
+                return; // the driver changed since the table was scanned - no such operation
 
-            AddPendingDeletion(new PendingDeletion
-            {
-                kind = 0,
-                state = state,
-                driverBehaviour = cell.driverBehaviour,
-                operationIndex = cell.operationIndex,
-                parameterName = parameterName, // already validated to match the driver's operation name above
-            });
+            Undo.RecordObject(driver, "Preset Manager: Delete Driver Operation");
+            parameters.RemoveAt(index);
+            EditorUtility.SetDirty(driver);
+            Repaint();
         }
 
         /// <summary>Right-click context menu on a header parameter name: removes that parameter's operations from every state (the whole column).</summary>
@@ -953,23 +845,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var menu = new GenericMenu();
             menu.AddItem(new GUIContent($"Delete '{column.name}' from all states",
-                    $"Queues a deletion of every '{column.name}' operation from the drivers of all {preset.states.Count} states - press Apply in the pending changes box to confirm (Discard cancels)"),
+                    $"Removes every '{column.name}' operation from the drivers of all {preset.states.Count} states immediately (undoable with Ctrl+Z)"),
                 false, () => RemoveColumnFromAllStates(preset, column));
             menu.ShowAsContext();
         }
 
-        /// <summary>Queue a deletion of a whole parameter column (the parameter from every state's drivers).</summary>
+        /// <summary>Remove a whole parameter column (the parameter from every state's drivers) immediately, with undo.</summary>
         private void RemoveColumnFromAllStates(PresetInfo preset, DriverColumn column)
         {
-            // queued deletions (cell first, then column) of the same parameter are dropped
-            for (int i = pendingDeletions.Count - 1; i >= 0; i--)
-            {
-                var d = pendingDeletions[i];
-                if (d.kind != 2 && string.Equals(d.parameterName, column.name, StringComparison.Ordinal))
-                    pendingDeletions.RemoveAt(i);
-            }
-
-            // deleting an earlier operation in a driver would shift any pending value edit's stored operation index
+            // collect the drivers that contain the parameter, record them all up-front, then remove
+            var doomed = new List<VRC.SDKBase.VRC_AvatarParameterDriver>();
             foreach (var entry in preset.states)
             {
                 var state = entry.state;
@@ -977,155 +862,104 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     continue;
 
                 var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
-                foreach (var behaviour in behaviours)
+                for (int b = 0; b < behaviours.Length; b++)
                 {
-                    if (!(behaviour is VRC.SDKBase.VRC_AvatarParameterDriver driver) || driver.parameters == null)
+                    if (!(behaviours[b] is VRC.SDKBase.VRC_AvatarParameterDriver driver) || driver.parameters == null)
                         continue;
 
+                    bool has = false;
                     var parameters = driver.parameters;
                     for (int i = 0; i < parameters.Count; i++)
                     {
-                        if (parameters[i] == null || !string.Equals(parameters[i].name, column.name, StringComparison.Ordinal))
-                            continue;
-
-                        for (int p = 0; p < i; p++)
+                        if (parameters[i] != null && string.Equals(parameters[i].name, column.name, StringComparison.Ordinal))
                         {
-                            if (HasPendingValueEdit(state, behaviour, p))
-                            {
-                                EditorUtility.DisplayDialog("d4rk Preset Manager",
-                                    $"'" + state.name + "' has a pending value edit on '" + (parameters[p] != null ? parameters[p].name : "?") +
-                                    "'. Apply or discard it first, then delete '" + column.name + "' from all states.",
-                                    "OK");
-                                return;
-                            }
+                            has = true;
+                            break;
                         }
-                        break; // a state's driver keeps at most one operation per parameter
                     }
+                    if (has)
+                        doomed.Add(driver);
                 }
             }
 
-            AddPendingDeletion(new PendingDeletion { kind = 1, parameterName = column.name });
+            if (doomed.Count == 0)
+                return;
+
+            const string undoName = "Preset Manager: Delete Parameter Column";
+            foreach (var driver in doomed)
+            {
+                Undo.RecordObject(driver, undoName);
+                var parameters = driver.parameters;
+                for (int i = parameters.Count - 1; i >= 0; i--)
+                {
+                    if (parameters[i] != null && string.Equals(parameters[i].name, column.name, StringComparison.Ordinal))
+                        parameters.RemoveAt(i);
+                }
+                EditorUtility.SetDirty(driver);
+            }
+            Repaint();
         }
 
         /// <summary>Right-click context menu on a row's state name: deletes the whole row (the state itself) from the machine.</summary>
-        private void ShowDeleteStateMenu(PresetStateEntry entry)
+        private void ShowDeleteStateMenu(PresetInfo preset, PresetStateEntry entry)
         {
             var menu = new GenericMenu();
             string warning = entry.isDefault
                 ? " This state is the machine's default state - the remaining states take its place afterwards."
                 : "";
             menu.AddItem(new GUIContent($"Delete state '{entry.state.name}'",
-                    $"Queues a deletion of the state, its entry transition, its driver operations and its expression menu entry from the machine - press Apply in the pending changes box to confirm (Discard cancels).{warning}"),
-                false, () => DeletePresetState(entry));
+                    $"Deletes the state, its entry transition, its driver operations and its expression menu entry from the machine immediately (undoable with Ctrl+Z).{warning}"),
+                false, () => DeletePresetState(preset, entry));
             menu.ShowAsContext();
         }
 
-        /// <summary>Queue a deletion of a whole row (state + its entry transition + expression menu entry).</summary>
-        private void DeletePresetState(PresetStateEntry entry)
+        /// <summary>Delete the state (row) from the machine immediately: removes its entry transition & state node,
+        /// fixes the default state, re-lays out the machine & drops the matching expression menu entry. Undoable.</summary>
+        private void DeletePresetState(PresetInfo preset, PresetStateEntry entry)
         {
             var state = entry.state;
-            if (state == null)
+            var sm = currentStateMachine;
+            if (state == null || sm == null || currentController == null)
                 return;
 
-            if (AlreadyPendingRowDeletion(state))
-                return; // already queued for deletion
+            string stateName = state.name; // captured before the state gets destroyed
 
-            string stateName = state.name; // captured now, the state still exists
+            const string undoName = "Preset Manager: Delete Preset State";
+            Undo.RecordObject(currentController, undoName);
+            Undo.RecordObject(sm, undoName);
 
-            // value edits and cell deletions of the deleted state go away with it
-            for (int i = pendingChanges.Count - 1; i >= 0; i--)
+            var entryTransitions = sm.entryTransitions ?? Array.Empty<AnimatorTransition>();
+            for (int i = 0; i < entryTransitions.Length; i++)
             {
-                if (pendingChanges[i].state == state)
-                    pendingChanges.RemoveAt(i);
+                if (entryTransitions[i] != null && entryTransitions[i].destinationState == state)
+                {
+                    sm.RemoveEntryTransition(entryTransitions[i]);
+                    break;
+                }
             }
 
-            for (int i = pendingDeletions.Count - 1; i >= 0; i--)
+            sm.RemoveState(state);
+
+            if (sm.defaultState == state)
             {
-                var d = pendingDeletions[i];
-                if (d.kind == 0 && d.state == state)
-                    pendingDeletions.RemoveAt(i);
+                var remaining = sm.states ?? Array.Empty<ChildAnimatorState>();
+                for (int i = 0; i < remaining.Length; i++)
+                {
+                    if (remaining[i].state != null)
+                    {
+                        sm.defaultState = remaining[i].state;
+                        break;
+                    }
+                }
             }
 
-            AddPendingDeletion(new PendingDeletion
-            {
-                kind = 2,
-                state = state,
-                parameterName = stateName,
-                presetId = entry.isDefault ? int.MinValue : entry.presetId,
-            });
-        }
+            ReLayoutPresetStates(sm);
+            RemovePresetMenuEntry(lastFoundAvatarDescriptor?.expressionsMenu, preset.presetParameter, stateName,
+                entry.isDefault ? int.MinValue : entry.presetId);
 
-        /// <summary>Add a deletion to the pending queue (deduped).</summary>
-        private void AddPendingDeletion(PendingDeletion deletion)
-        {
-            if (IsPendingDeletion(deletion.kind, deletion.state, deletion.driverBehaviour, deletion.operationIndex, deletion.parameterName))
-                return;
-
-            pendingDeletions.Add(deletion);
+            EditorUtility.SetDirty(currentController);
+            EditorUtility.SetDirty(sm);
             Repaint();
-        }
-
-        /// <summary>True when an identical deletion is already in the queue.</summary>
-        private bool IsPendingDeletion(int kind, AnimatorState state, StateMachineBehaviour driverBehaviour, int operationIndex, string parameterName)
-        {
-            foreach (var d in pendingDeletions)
-            {
-                if (d.kind != kind)
-                    continue;
-                if (kind == 0 && d.state == state && d.driverBehaviour == driverBehaviour && d.operationIndex == operationIndex)
-                    return true;
-                if (kind == 1 && string.Equals(d.parameterName, parameterName, StringComparison.Ordinal))
-                    return true;
-                if (kind == 2 && d.state == state)
-                    return true;
-            }
-            return false;
-        }
-
-        /// <summary>True when the given single driver operation is already queued for deletion.</summary>
-        private bool AlreadyPendingCellDeletion(AnimatorState state, StateMachineBehaviour driver, int operationIndex)
-        {
-            return IsPendingDeletion(0, state, driver, operationIndex, null);
-        }
-
-        /// <summary>True when a whole row (state) is already queued for deletion.</summary>
-        private bool AlreadyPendingRowDeletion(AnimatorState state)
-        {
-            return IsPendingDeletion(2, state, null, -1, null);
-        }
-
-        /// <summary>True when the given cell (driver operation) has a pending value edit in the queue.</summary>
-        private bool HasPendingValueEdit(AnimatorState state, StateMachineBehaviour driver, int operationIndex)
-        {
-            return pendingChanges.Exists(c => c.state == state && c.driverBehaviour == driver && c.operationIndex == operationIndex);
-        }
-
-        /// <summary>True when every one of the cell's driver operations is queued for deletion.</summary>
-        private bool IsCellPendingDeletion(AnimatorState state, List<DriverSetInfo> cells)
-        {
-            for (int i = 0; i < cells.Count; i++)
-            {
-                if (IsPendingDeletion(0, state, cells[i].driverBehaviour, cells[i].operationIndex, null))
-                    return true;
-            }
-            return false;
-        }
-
-        /// <summary>Remove queued deletions of the given kind from the pending queue (used by the table's restore buttons).</summary>
-        private void RemovePendingDeletion(int kind, AnimatorState state, StateMachineBehaviour driver, int operationIndex, string parameterName)
-        {
-            for (int i = pendingDeletions.Count - 1; i >= 0; i--)
-            {
-                var d = pendingDeletions[i];
-                if (d.kind != kind)
-                    continue;
-                if (kind == 0 && d.state == state && d.driverBehaviour == driver && d.operationIndex == operationIndex)
-                    pendingDeletions.RemoveAt(i);
-                else if (kind == 1 && string.Equals(d.parameterName, parameterName, StringComparison.Ordinal))
-                    pendingDeletions.RemoveAt(i);
-                else if (kind == 2 && d.state == state)
-                    pendingDeletions.RemoveAt(i);
-            }
         }
 
         /// <summary>Remove the preset menu control that matches the deleted state (a control of the preset parameter with the state's name/id).</summary>
@@ -1235,7 +1069,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>Draw every cell of one table row at its calculated x & width inside the row rect.</summary>
-        private void DrawPresetStateRow(PresetStateEntry entry, List<DriverColumn> columns, List<float> columnWidths, Rect rowRect)
+        private void DrawPresetStateRow(PresetInfo preset, PresetStateEntry entry, List<DriverColumn> columns, List<float> columnWidths, Rect rowRect)
         {
             var cellRect = GetTableCellRect(rowRect);
             string idText = entry.hasEntryTransition
@@ -1262,7 +1096,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (Event.current.type == EventType.ContextClick && nameRect.Contains(Event.current.mousePosition))
             {
                 Event.current.Use();
-                ShowDeleteStateMenu(entry);
+                ShowDeleteStateMenu(preset, entry);
             }
 
             x += NameColumnWidth + ColumnPadding;
@@ -1274,7 +1108,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 x += columnWidths[i] + ColumnPadding;
             }
 
-            // trailing "add param" column: + adds a pending set operation for the header input's parameter on this state.
+            // trailing "add param" column: + adds a set operation for the header input's parameter on this state.
             // the input resolves to a controller parameter by exact name, or when it fuzzy-matches exactly one parameter.
             string resolvedParam = ResolveNewParam(newParamInput);
             using (new EditorGUI.DisabledScope(resolvedParam == null))
@@ -1284,7 +1118,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     ? GetFuzzyParamTooltip(newParamInput)
                     : $"Add a set operation for '{resolvedParam}' on '{entry.state.name}'");
                 if (GUI.Button(newParamCellRect, newParamContent))
-                    SetPendingValue(default(DriverSetInfo), resolvedParam, entry.state, 0f);
+                    AddSetOperation(entry.state, resolvedParam, 0f);
             }
         }
 
@@ -1391,40 +1225,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (!hasCells)
             {
                 // no driver for this parameter on this state (also all of the default state's cells):
-                // a pending "add" shows an editable cell, otherwise a "+" button starts a new set operation
-                var newCell = default(DriverSetInfo); // null driverBehaviour marks a pending "add"
-                if (HasPendingChange(newCell, column.name, state))
-                {
-                    float addedValue = GetPendingValue(newCell, column.name, state);
-                    var addedLine = FormatDriverCell(new DriverSetInfo
-                    {
-                        operation = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
-                        value = addedValue,
-                    }, isBool);
-                    string tooltip = "New set operation (pending)" + Environment.NewLine + addedLine;
-                    DrawSetCell(cellRect, isBool, addedValue, tooltip, newCell, column.name, state);
-                    return;
-                }
-
+                // the + button adds a new set operation to the state's driver
                 var addTooltip = $"Add a set operation for '{column.name}' on '{state.name}'";
                 var addContent = new GUIContent("+", addTooltip);
                 if (GUI.Button(cellRect, addContent))
-                    SetPendingValue(newCell, column.name, state, 0f);
-                return;
-            }
-
-            // a cell whose operations are all queued for deletion renders back to the empty state:
-            // pressing the + removes the queued deletions, restoring the cell to its current value
-            if (IsCellPendingDeletion(state, cells))
-            {
-                var restoreTooltip = $"Restore '{column.name}' on '{state.name}'";
-                var restoreContent = new GUIContent("+", restoreTooltip);
-                if (GUI.Button(cellRect, restoreContent))
-                {
-                    for (int i = 0; i < cells.Count; i++)
-                        RemovePendingDeletion(0, state, cells[i].driverBehaviour, cells[i].operationIndex, null);
-                    Repaint();
-                }
+                    AddSetOperation(state, column.name, 0f);
                 return;
             }
 
@@ -1446,25 +1251,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     break;
                 }
             }
-            bool editable = editableCellIndex >= 0;
 
-            // build the display lines with the effective (pending-overridden) value applied
+            // build the display lines for every operation in the cell
             var lines = new List<string>();
-            bool hasChange = false;
-            var editableCell = cells[editableCellIndex];
-            bool hasPending = HasPendingChange(editableCell, column.name, state);
             for (int i = 0; i < cells.Count; i++)
-            {
-                var cell = cells[i];
-                if (i == editableCellIndex && hasPending)
-                {
-                    cell.value = GetPendingValue(editableCell, column.name, state);
-                    hasChange = true;
-                }
-                lines.Add(FormatDriverCell(cell, isBool));
-            }
+                lines.Add(FormatDriverCell(cells[i], isBool));
 
-            if (!editable)
+            if (editableCellIndex < 0)
             {
                 // no set-mode value: the whole cell is display only
                 string joined = string.Join(", ", lines);
@@ -1473,15 +1266,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return;
             }
 
-            // editable cell: the field/checkbox shows the effective value of the first set-mode driver
-            float effectiveValue = hasPending
-                ? GetPendingValue(editableCell, column.name, state)
-                : editableCell.value;
-            string cellTooltip = "Only the set-mode value is editable" + Environment.NewLine
-                + (hasChange ? "value changed (pending)" + Environment.NewLine : "")
-                + string.Join(Environment.NewLine, lines);
+            // editable cell: the field/checkbox shows the value of the first set-mode driver
+            var editableCell = cells[editableCellIndex];
+            string cellTooltip = "Only the set-mode value is editable" + Environment.NewLine + string.Join(Environment.NewLine, lines);
 
-            DrawSetCell(cellRect, isBool, effectiveValue, cellTooltip, editableCell, column.name, state);
+            DrawSetCell(cellRect, isBool, editableCell.value, cellTooltip, editableCell, column.name, state);
         }
 
         /// <summary>Draw a tooltip over the given rect: an empty label carrying the tooltip is drawn on top of the control,
@@ -1493,25 +1282,25 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             GUI.Label(controlRect, new GUIContent("", tooltip));
         }
 
-        /// <summary>Draw a set-mode driver value as an editable checkbox (bool) or delayed text field (numeric); edits are recorded as pending changes.</summary>
-        private void DrawSetCell(Rect cellRect, bool isBool, float effectiveValue, string tooltip, DriverSetInfo originalCell, string parameterName, AnimatorState state)
+        /// <summary>Draw a set-mode driver value as an editable checkbox (bool) or delayed text field (numeric); edits are written to the driver immediately.</summary>
+        private void DrawSetCell(Rect cellRect, bool isBool, float value, string tooltip, DriverSetInfo originalCell, string parameterName, AnimatorState state)
         {
             if (isBool)
             {
                 SetRectTooltip(cellRect, tooltip);
-                bool newValue = EditorGUI.Toggle(cellRect, effectiveValue != 0f);
+                bool newValue = EditorGUI.Toggle(cellRect, value != 0f);
                 if (GUI.changed)
-                    SetPendingValue(originalCell, parameterName, state, newValue ? 1f : 0f);
+                    SetDriverValue(state, originalCell, parameterName, newValue ? 1f : 0f);
                 return;
             }
 
             SetRectTooltip(cellRect, tooltip);
-            string displayed = FormatDriverValue(effectiveValue);
+            string displayed = FormatDriverValue(value);
             string committed = EditorGUI.DelayedTextField(cellRect, displayed);
             if (GUI.changed)
             {
                 if (float.TryParse(committed, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed))
-                    SetPendingValue(originalCell, parameterName, state, parsed);
+                    SetDriverValue(state, originalCell, parameterName, parsed);
                 else
                     GUI.FocusControl(null); // invalid input, cancel the edit so the field resets
             }
@@ -1527,65 +1316,87 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        /// <summary>True if the given cell (or a matching pending "add") has a pending change; a cell with a null driverBehaviour identifies a pending add.</summary>
-        private bool HasPendingChange(DriverSetInfo cell, string parameterName, AnimatorState state)
+        /// <summary>Write a set-mode value to the state's driver immediately, resolving the parameter (operation) by name
+        /// in case the table's scan is stale, with undo support.</summary>
+        private void SetDriverValue(AnimatorState state, DriverSetInfo cell, string parameterName, float value)
         {
-            return pendingChanges.Exists(c => IsSameCell(c, cell, parameterName, state));
-        }
+            if (cell.driverBehaviour == null)
+                return;
 
-        private float GetPendingValue(DriverSetInfo cell, string parameterName, AnimatorState state)
-        {
-            foreach (var change in pendingChanges)
+            var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
+            VRC.SDKBase.VRC_AvatarParameterDriver driver = null;
+            for (int i = 0; i < behaviours.Length; i++)
             {
-                if (IsSameCell(change, cell, parameterName, state))
-                    return change.newValue;
-            }
-            return 0f; // unreachable: only called when HasPendingChange is true
-        }
-
-        private static bool IsSameCell(PendingChange change, DriverSetInfo cell, string parameterName, AnimatorState state)
-        {
-            // pending adds keep a null driverBehaviour, existing cells reference their driver
-            return change.state == state
-                && change.parameterName == parameterName
-                && change.driverBehaviour == cell.driverBehaviour
-                && (cell.driverBehaviour == null || change.operationIndex == cell.operationIndex);
-        }
-
-        /// <summary>Record (or clear, when the value matches the driver's original value) a pending edit of a set-mode driver value.</summary>
-        private void SetPendingValue(DriverSetInfo cell, string parameterName, AnimatorState state, float value)
-        {
-            bool isNewCell = cell.driverBehaviour == null;
-            bool found = false;
-            for (int i = 0; i < pendingChanges.Count; i++)
-            {
-                var existing = pendingChanges[i];
-                if (IsSameCell(existing, cell, parameterName, state))
+                if (behaviours[i] == cell.driverBehaviour)
                 {
-                    found = true;
-                    if (value == existing.originalValue && !isNewCell)
-                        pendingChanges.RemoveAt(i); // back to the original value -> nothing left to apply (new cells stay, the user still has to edit them)
-                    else
-                    {
-                        existing.newValue = value;
-                        pendingChanges[i] = existing; // the List indexer returns a copy, so write the struct back
-                    }
+                    driver = behaviours[i] as VRC.SDKBase.VRC_AvatarParameterDriver;
                     break;
                 }
             }
+            if (driver == null || driver.parameters == null)
+                return; // the driver was destroyed since the table was scanned
 
-            if (!found && (isNewCell || value != cell.value))
+            VRC.SDKBase.VRC_AvatarParameterDriver.Parameter target = null;
+            var parameters = driver.parameters;
+            for (int i = 0; i < parameters.Count; i++)
             {
-                pendingChanges.Add(new PendingChange
+                if (parameters[i] != null && string.Equals(parameters[i].name, parameterName, StringComparison.Ordinal))
                 {
-                    state = state,
-                    parameterName = parameterName,
-                    driverBehaviour = cell.driverBehaviour,
-                    operationIndex = isNewCell ? -1 : cell.operationIndex,
-                    originalValue = cell.value,
-                    newValue = value,
-                });
+                    target = parameters[i];
+                    break;
+                }
             }
+            if (target == null)
+                return; // the operation was removed since the table was scanned
+
+            Undo.RecordObject(driver, "Preset Manager: Set Driver Value");
+            target.value = value;
+            EditorUtility.SetDirty(driver);
+            Repaint();
+        }
+
+        /// <summary>Add a new set operation to the state's parameter driver immediately (creating a driver on the state if it has none), with undo support. No-op when the state already sets the parameter.</summary>
+        private void AddSetOperation(AnimatorState state, string parameterName, float value)
+        {
+            if (state == null || string.IsNullOrEmpty(parameterName))
+                return;
+
+            const string undoName = "Preset Manager: Add Driver Operation";
+            var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
+            VRC.SDKBase.VRC_AvatarParameterDriver driver = null;
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                if (behaviours[i] is VRC.SDKBase.VRC_AvatarParameterDriver existing)
+                    driver = existing;
+            }
+
+            if (driver == null)
+            {
+                Undo.RecordObject(state, undoName);
+                // VRC_AvatarParameterDriver is abstract; AddStateMachineBehaviour creates the concrete
+                // VRCAvatarParameterDriver and attaches it to the state (undo via the state itself)
+                driver = (VRC.SDKBase.VRC_AvatarParameterDriver)state.AddStateMachineBehaviour(typeof(VRCAvatarParameterDriver));
+            }
+
+            if (driver.parameters == null)
+                return;
+
+            // a state's driver keeps at most one operation per parameter; don't duplicate it
+            for (int i = 0; i < driver.parameters.Count; i++)
+            {
+                if (driver.parameters[i] != null && string.Equals(driver.parameters[i].name, parameterName, StringComparison.Ordinal))
+                    return;
+            }
+
+            Undo.RecordObject(driver, undoName);
+            driver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
+            {
+                name = parameterName,
+                type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
+                value = value,
+            });
+            EditorUtility.SetDirty(driver);
+            Repaint();
         }
 
         private static string FormatDriverCell(DriverSetInfo cell, bool isBool)
@@ -1610,286 +1421,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static string FormatDriverValue(float value)
         {
             return (float)Mathf.RoundToInt(value) == value ? Mathf.RoundToInt(value).ToString() : value.ToString("0.###");
-        }
-
-        /// <summary>Format a pending change row (without the state name, the changes are grouped per state), e.g. 'param  0 -> 1' (bools shown as true/false). New cells are prefixed with 'add'.</summary>
-        private string FormatPendingChangeDisplay(PendingChange change)
-        {
-            bool isBool = IsBoolParameter(change.parameterName);
-            string Format(float v) => isBool ? (v != 0f ? "true" : "false") : FormatDriverValue(v);
-            if (change.driverBehaviour == null)
-                return $"add  {change.parameterName}  {Format(change.newValue)}";
-            return $"{change.parameterName}  {Format(change.originalValue)} -> {Format(change.newValue)}";
-        }
-
-        /// <summary>Apply the queued deletions (single operations, whole columns, whole rows) to the machine &amp; its drivers, with undo support.</summary>
-        private void ApplyPendingDeletions(AnimatorStateMachine sm, PresetInfo preset)
-        {
-            if (sm == null || currentController == null || preset == null)
-                return;
-
-            // bucket the queued deletions and collect the states doomed by queued row deletions
-            var cellDeletions = new List<PendingDeletion>();
-            var columnDeletions = new List<PendingDeletion>();
-            var rowDeletions = new List<PendingDeletion>();
-            var doomedStates = new List<AnimatorState>();
-            foreach (var d in pendingDeletions)
-            {
-                switch (d.kind)
-                {
-                    case 0:
-                        cellDeletions.Add(d);
-                        break;
-                    case 1:
-                        columnDeletions.Add(d);
-                        break;
-                    case 2:
-                        rowDeletions.Add(d);
-                        if (d.state != null && !doomedStates.Contains(d.state))
-                            doomedStates.Add(d.state);
-                        break;
-                }
-            }
-
-            const string undoName = "Apply Preset Deletions";
-
-            // (1) remove the queued driver operations: whole columns from every surviving state's drivers,
-            // plus the individually queued cells of that state's driver (resolved by parameter name, so index shifts don't matter)
-            foreach (var entry in preset.states)
-            {
-                var state = entry.state;
-                if (state == null || doomedStates.Contains(state))
-                    continue;
-
-                var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
-                foreach (var behaviour in behaviours)
-                {
-                    if (!(behaviour is VRC.SDKBase.VRC_AvatarParameterDriver driver) || driver.parameters == null)
-                        continue;
-
-                    var toRemove = new List<string>();
-                    foreach (var col in columnDeletions)
-                    {
-                        if (col.parameterName != null && !toRemove.Contains(col.parameterName))
-                            toRemove.Add(col.parameterName);
-                    }
-                    foreach (var cell in cellDeletions)
-                    {
-                        if (cell.state != state || cell.driverBehaviour != behaviour || cell.parameterName == null)
-                            continue;
-                        if (!toRemove.Contains(cell.parameterName))
-                            toRemove.Add(cell.parameterName);
-                    }
-
-                    if (toRemove.Count == 0)
-                        continue;
-
-                    Undo.RecordObject(driver, undoName);
-                    var parameters = driver.parameters;
-                    for (int i = parameters.Count - 1; i >= 0; i--)
-                    {
-                        if (parameters[i] != null && toRemove.Contains(parameters[i].name))
-                            parameters.RemoveAt(i);
-                    }
-                    EditorUtility.SetDirty(driver);
-                }
-            }
-
-            // (2) remove the doomed states: their entry transition + state node, fix the default state,
-            // re-lay out the machine & drop the matching expression menu entries
-            if (rowDeletions.Count > 0)
-            {
-                Undo.RecordObject(currentController, undoName);
-                Undo.RecordObject(sm, undoName);
-
-                foreach (var row in rowDeletions)
-                {
-                    var state = row.state;
-                    if (state == null)
-                        continue;
-
-                    var entryTransitions = sm.entryTransitions ?? Array.Empty<AnimatorTransition>();
-                    for (int i = 0; i < entryTransitions.Length; i++)
-                    {
-                        if (entryTransitions[i] != null && entryTransitions[i].destinationState == state)
-                        {
-                            sm.RemoveEntryTransition(entryTransitions[i]);
-                            break;
-                        }
-                    }
-
-                    sm.RemoveState(state);
-
-                    if (sm.defaultState == state)
-                    {
-                        var remaining = sm.states ?? Array.Empty<ChildAnimatorState>();
-                        AnimatorState newDefault = null;
-                        for (int i = 0; i < remaining.Length; i++)
-                        {
-                            if (remaining[i].state != null)
-                            {
-                                newDefault = remaining[i].state;
-                                break;
-                            }
-                        }
-                        sm.defaultState = newDefault;
-                    }
-                }
-
-                ReLayoutPresetStates(sm);
-
-                string presetParameter = preset.presetParameter;
-                var presetMenu = lastFoundAvatarDescriptor != null ? lastFoundAvatarDescriptor.expressionsMenu : null;
-                foreach (var row in rowDeletions)
-                {
-                    if (row.state == null)
-                        continue;
-                    RemovePresetMenuEntry(presetMenu, presetParameter, row.parameterName, row.presetId);
-                }
-
-                EditorUtility.SetDirty(currentController);
-                EditorUtility.SetDirty(sm);
-            }
-        }
-
-        /// <summary>Format a queued deletion for the pending changes box.</summary>
-        private string FormatPendingDeletionDisplay(PendingDeletion deletion)
-        {
-            switch (deletion.kind)
-            {
-                case 0:
-                    return deletion.state != null
-                        ? $"Delete '{deletion.parameterName}' from '{deletion.state.name}'"
-                        : $"Delete '{deletion.parameterName}'";
-                case 1:
-                    return $"Delete '{deletion.parameterName}' from all states";
-                default:
-                    return deletion.state != null
-                        ? $"Delete state '{deletion.state.name}'"
-                        : $"Delete state '{deletion.parameterName}'";
-            }
-        }
-
-        /// <summary>Write the pending changes back to the states' parameter drivers (with undo support), then clear them.</summary>
-        private void ApplyPendingChanges()
-        {
-            // a pending "add row" is applied first (it needs the machine & preset, not a state's drivers)
-            if (addRowPending && !string.IsNullOrEmpty(pendingAddRowName)
-                && currentController != null && currentStateMachine != null && currentPreset != null)
-            {
-                ApplyAddRow(lastFoundAvatarDescriptor, currentController, currentStateMachine, currentPreset, pendingAddRowName, pendingAddRowCopyFrom, pendingAddRowId);
-                addRowPending = false;
-                pendingAddRowName = "";
-                pendingAddRowCopyFrom = "";
-            }
-
-            // queued deletions mutate the machine & drivers - apply them first so the re-scanned table
-            // reflects the final state (currentPreset is invalidated below when any deletion was applied)
-            bool appliedDeletions = false;
-            if (currentStateMachine != null && currentPreset != null && pendingDeletions.Count > 0)
-            {
-                ApplyPendingDeletions(currentStateMachine, currentPreset);
-                pendingDeletions.Clear();
-                appliedDeletions = true;
-            }
-
-            if (pendingChanges.Count == 0)
-            {
-                if (appliedDeletions)
-                    currentPreset = null;
-                Repaint();
-                return;
-            }
-
-            // group the changes per state so each state's drivers are only walked once
-            var statesWithChanges = new List<AnimatorState>();
-            foreach (var change in pendingChanges)
-            {
-                if (!statesWithChanges.Contains(change.state))
-                    statesWithChanges.Add(change.state);
-            }
-
-            foreach (var state in statesWithChanges)
-            {
-                var behaviours = state.behaviours ?? Array.Empty<StateMachineBehaviour>();
-                // driver to append new-cell parameters to for this state: an existing driver if any,
-                // otherwise the single driver created on the first new-cell change (shared by all of them)
-                VRC.SDKBase.VRC_AvatarParameterDriver newCellDriver = null;
-                foreach (var behaviour in behaviours)
-                {
-                    if (behaviour is VRC.SDKBase.VRC_AvatarParameterDriver existing)
-                    {
-                        newCellDriver = existing;
-                        break;
-                    }
-                }
-
-                foreach (var change in pendingChanges)
-                {
-                    if (change.state != state)
-                        continue;
-
-                    // cellIndex points at the target parameter in the exact scan order the table cells were collected
-                    // (behaviours in order, each driver's parameters in order)
-                    if (change.driverBehaviour == null)
-                    {
-                        // new cell: add a set operation to the state's driver (creating the driver behaviour if the state has none)
-                        if (newCellDriver == null)
-                        {
-                            // VRC_AvatarParameterDriver is abstract; AddStateMachineBehaviour creates the concrete
-                            // VRCAvatarParameterDriver and attaches it to the state (undo via the state itself)
-                            Undo.RecordObject(state, "Apply Preset Driver Values");
-                            newCellDriver = (VRC.SDKBase.VRC_AvatarParameterDriver)state.AddStateMachineBehaviour(typeof(VRCAvatarParameterDriver));
-                        }
-
-                        Undo.RecordObject(newCellDriver, "Apply Preset Driver Values");
-                        newCellDriver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
-                        {
-                            name = change.parameterName,
-                            type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set,
-                            value = change.newValue,
-                        });
-                        EditorUtility.SetDirty(newCellDriver);
-                        continue;
-                    }
-
-                    // the pending change remembers the exact driver behaviour; the operation itself is re-resolved by name
-                    // (its index may have shifted since the table was scanned because of pending deletions)
-                    VRC.SDKBase.VRC_AvatarParameterDriver driver = null;
-                    foreach (var behaviour in behaviours)
-                    {
-                        if (behaviour == change.driverBehaviour)
-                            driver = behaviour as VRC.SDKBase.VRC_AvatarParameterDriver;
-                    }
-
-                    VRC.SDKBase.VRC_AvatarParameterDriver.Parameter target = null;
-                    if (driver != null && driver.parameters != null)
-                    {
-                        for (int p = 0; p < driver.parameters.Count; p++)
-                        {
-                            if (driver.parameters[p] != null && string.Equals(driver.parameters[p].name, change.parameterName, StringComparison.Ordinal))
-                            {
-                                target = driver.parameters[p];
-                                break;
-                            }
-                        }
-                    }
-
-                    if (target == null || !string.Equals(target.name, change.parameterName, StringComparison.Ordinal))
-                        continue; // the driver changed since the table was scanned; the stale change is dropped
-
-                    Undo.RecordObject(driver, "Apply Preset Driver Values");
-                    target.value = change.newValue;
-                    EditorUtility.SetDirty(driver);
-                }
-            }
-
-            pendingChanges.Clear();
-
-            if (appliedDeletions)
-                currentPreset = null; // force the table to re-scan the machine (its states/columns changed)
-
-            Repaint();
         }
 
         private void OnGUI()
@@ -1936,18 +1467,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 var presets = FindPresetStateMachines(controller);
 
-                // clear stale pending changes when the controller changed
-                int controllerId = controller.GetInstanceID();
-                if (pendingChangesControllerId != controllerId)
-                {
-                    pendingChanges.Clear();
-                    pendingDeletions.Clear();
-                    pendingChangesControllerId = controllerId;
-                    addRowPending = false;
-                    pendingAddRowName = "";
-                    pendingAddRowCopyFrom = "";
-                }
-
                 if (presets.Count == 0)
                 {
                     EditorGUILayout.HelpBox($"No preset state machines found in controller '{controller.name}'.\n" +
@@ -1969,14 +1488,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 var (_, _, preset) = presets[selectedPresetIndex];
 
-                // clear the cached analysis when the displayed machine changes (e.g. a pending deletion was undone in the
-                // animation window) so the table re-scans the machine instead of showing its stale states/columns
-                if (currentPreset != null && currentPreset.stateMachine != preset.stateMachine)
-                    currentPreset = null;
-
                 currentController = controller;
                 currentStateMachine = preset.stateMachine;
-                currentPreset = preset;
 
                 EditorGUILayout.Space(8);
                 using (new EditorGUILayout.VerticalScope("box"))
@@ -1984,87 +1497,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     EditorGUILayout.LabelField($"Preset States  (parameter: {preset.presetParameter}, {preset.states.Count} states)", EditorStyles.boldLabel);
 
                     DrawPresetStates(preset);
-                }
-
-                EditorGUILayout.Space(8);
-                using (new EditorGUILayout.VerticalScope("box"))
-                {
-                    int totalPending = pendingChanges.Count + (addRowPending ? 1 : 0) + pendingDeletions.Count;
-                    EditorGUILayout.LabelField($"Pending Changes  ({totalPending})", EditorStyles.boldLabel);
-
-                    // same 30px content indent the table uses
-                    void IndentedRow(float indent, Action drawContent)
-                    {
-                        using (new EditorGUILayout.HorizontalScope())
-                        {
-                            GUILayout.Space(indent);
-                            drawContent();
-                        }
-                    }
-
-                    if (totalPending == 0)
-                    {
-                        IndentedRow(ColumnGrid.InnerIndent, () =>
-                            EditorGUILayout.HelpBox("No pending changes. Edit a set-mode value in the table above.", MessageType.None));
-                    }
-                    else
-                    {
-                        if (addRowPending)
-                        {
-                            string basedOn = string.IsNullOrEmpty(pendingAddRowCopyFrom) ? "" : $" based on '{pendingAddRowCopyFrom}'";
-                            IndentedRow(ColumnGrid.InnerIndent, () =>
-                                EditorGUILayout.LabelField($"Add preset '{pendingAddRowName}' with id {pendingAddRowId}{basedOn}", EditorStyles.miniLabel));
-                        }
-
-                        // group the pending changes per state (keeping the original order of first edit)
-                        var statesWithChanges = new List<AnimatorState>();
-                        foreach (var change in pendingChanges)
-                        {
-                            if (!statesWithChanges.Contains(change.state))
-                                statesWithChanges.Add(change.state);
-                        }
-
-                        for (int i = 0; i < statesWithChanges.Count; i++)
-                        {
-                            var state = statesWithChanges[i];
-                            IndentedRow(ColumnGrid.InnerIndent, () =>
-                                EditorGUILayout.LabelField(state.name, EditorStyles.boldLabel));
-
-                            foreach (var change in pendingChanges)
-                            {
-                                if (change.state != state)
-                                    continue;
-
-                                IndentedRow(ColumnGrid.InnerIndent + ColumnGrid.InnerIndent / 3f, () =>
-                                    EditorGUILayout.LabelField(FormatPendingChangeDisplay(change), EditorStyles.miniLabel));
-                            }
-                        }
-
-                        // the queued deletions (single operations / whole columns / whole rows)
-                        foreach (var deletion in pendingDeletions)
-                        {
-                            IndentedRow(ColumnGrid.InnerIndent, () =>
-                                EditorGUILayout.LabelField(FormatPendingDeletionDisplay(deletion), EditorStyles.miniLabel));
-                        }
-
-                        EditorGUILayout.Space(2);
-                        IndentedRow(ColumnGrid.InnerIndent, () =>
-                        {
-                            using (new EditorGUILayout.HorizontalScope())
-                            {
-                                if (GUILayout.Button("Apply", GUILayout.Width(80)))
-                                    ApplyPendingChanges();
-                                if (GUILayout.Button("Discard", GUILayout.Width(80)))
-                                {
-                                    pendingChanges.Clear();
-                                    pendingDeletions.Clear();
-                                    addRowPending = false;
-                                    pendingAddRowName = "";
-                                    pendingAddRowCopyFrom = "";
-                                }
-                            }
-                        });
-                    }
                 }
             }
         }
