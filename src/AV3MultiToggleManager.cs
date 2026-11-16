@@ -907,8 +907,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     EditorGUILayout.LabelField("Multi Toggle", EditorStyles.boldLabel);
                     var options = toggles.Select(t =>
                         t.info.kind == ToggleKind.StateMachine
-                            ? $"[SM] {t.path}  [param: {t.info.toggleParameter}, {t.info.states.Count} states]"
-                            : $"[BT] {t.path}  [param: {t.info.toggleParameter}, {t.info.states.Count} clips]").ToArray();
+                            ? $"[SM] {t.path.Replace('/', '_')}  [param: {t.info.toggleParameter}, {t.info.states.Count} states]"
+                            : $"[BT] {t.path.Replace('/', '_')}  [param: {t.info.toggleParameter}, {t.info.states.Count} clips]").ToArray();
                     selectedToggleIndex = EditorGUILayout.Popup("Toggle", selectedToggleIndex, options);
                 }
 
