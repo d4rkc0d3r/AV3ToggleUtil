@@ -170,6 +170,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             state.Text = formattedText;
                             state.HasUserInput = false;
+                            GUI.FocusControl(null);
                         }
                     }
 
@@ -188,6 +189,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 state.Text = FormatConditionText(negated);
                             else
                                 state.Text = negatedText;
+                            GUI.FocusControl(null);
                         }
                     }
 
@@ -201,6 +203,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         if (GUILayout.Button(new GUIContent("Normalize", normalizeTooltip)))
                         {
                             state.Text = FormatConditionText(parsed);
+                            GUI.FocusControl(null);
                             state.HasUserInput = true;
                         }
                     }
