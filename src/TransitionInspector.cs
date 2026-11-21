@@ -1151,8 +1151,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 var a = transitions[0];
                 var b = transitions[i];
+                // The exit time value is irrelevant while exit time is disabled - only
+                // compare it when at least one transition uses it.
                 any = a.hasExitTime != b.hasExitTime
-                    || a.exitTime != b.exitTime
+                    || a.hasExitTime && a.exitTime != b.exitTime
                     || a.hasFixedDuration != b.hasFixedDuration
                     || a.duration != b.duration
                     || a.offset != b.offset
