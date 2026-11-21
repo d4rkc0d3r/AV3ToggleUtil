@@ -56,7 +56,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     var settingsMixed = AnyMixedValue(transitions);
                     var hasExit = AnyMatches(transitions, t => t.isExit);
                     var canonical = GetCanonicalExpression(transitions, out _);
-                    var knownParams = GetKnownParameterNames(transitions);
+                    var knownParams = GetKnownParameterInfo(transitions);
                     DrawConditionEditor(stateKey, group, transitions, canonical, settingsMixed, hasExit, knownParams);
 
                     // Apply (inside DrawConditionEditor) may remove transitions mid-frame;
@@ -107,7 +107,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private void DrawConditionEditor(string headerText, KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, List<AnimatorStateTransition> transitions, BoolExpression canonical, bool settingsMixed, bool hasExitTransition, IEnumerable<string> knownParameterNames)
+        private void DrawConditionEditor(string headerText, KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, List<AnimatorStateTransition> transitions, BoolExpression canonical, bool settingsMixed, bool hasExitTransition, ParameterInfo parameterInfo)
         {
             var formattedText = FormatConditionText(canonical);
             if (!conditionFieldStates.TryGetValue(headerText, out var state))
@@ -122,7 +122,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             // Snapshot before any button can mutate the text this frame.
             var preButtonText = state.Text;
-            var parseOk = BoolExpression.TryParse(state.Text, knownParameterNames, out var parsed, out var parseError);
+            var knownNames = parameterInfo?.Names;
+            var parseOk = BoolExpression.TryParse(state.Text, knownNames, out var parsed, out var parseError);
             var editable = !settingsMixed && !hasExitTransition;
             var differs = parseOk && canonical.Differs(parsed);
             // The structured layout is the default; the raw text box is a manual fallback
@@ -161,14 +162,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 // If the draft drifted from the stored clause drafts (e.g. the user edited
                 // it in text mode before toggling back), rebuild them from the parsed draft.
                 if (state.Text != BuildDraftText(state.VisualClauses))
-                    state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames);
-                newClauses = DrawVisualConditions(state.VisualClauses);
+                    state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownNames);
+                newClauses = DrawVisualConditions(state.VisualClauses, parameterInfo);
                 if (!parseOk)
                     EditorGUILayout.HelpBox(parseError, MessageType.Error);
                 else if (!editable)
                     GUILayout.Label(tooltip, EditorStyles.miniLabel);
-                else if (differs)
-                    GUILayout.Label("Currently: " + canonical.ToDisplayString(), EditorStyles.miniLabel);
             }
             GUI.contentColor = prevContentColor;
             GUI.enabled = wasEnabled;
@@ -176,7 +175,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // Buttons are only drawn when the field is editable; each is individually
             // disabled (via DisabledScope) when there's nothing for it to do.
             if (editable)
-                DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownParameterNames);
+                DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownNames);
 
             // IMGUI draws the fields before the buttons in the same frame/event, so on the
             // frame a button is clicked the field values still hold the PRE-click data.
@@ -275,17 +274,200 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     ? "Switch to the structured condition layout"
                     : "Switch to the raw text box - one field holding the full expression, mainly useful for debugging";
                 if (GUILayout.Button(new GUIContent(toggleLabel, toggleTooltip)))
+                {
                     state.UseTextMode = !state.UseTextMode;
+                    // The focused control from the old layout (e.g. a threshold field)
+                    // no longer exists next frame; drop focus so IMGUI doesn't try to
+                    // feed input into a gone control.
+                    GUI.FocusControl(null);
+                }
             }
+        }
+
+        // ---- Term editor helpers (structured layout) ----
+
+        private static readonly string[] BoolOpLabels = { "true", "false" };
+        private static readonly string[] CompareOpLabels = { "Greater", "Less", "Equals", "NotEqual" };
+        private static readonly BoolTermOp[] CompareOpValues =
+        {
+            BoolTermOp.Greater, BoolTermOp.Less, BoolTermOp.Equals, BoolTermOp.NotEquals
+        };
+        private static readonly System.Globalization.CultureInfo Invariant = System.Globalization.CultureInfo.InvariantCulture;
+
+        private class TermEdit
+        {
+            public bool Structured;
+            public int ParamIndex;
+            public BoolTermOp Op;
+            public string Threshold;
+            public bool ThresholdValid;
+        }
+
+        /// <summary>
+        /// Breaks a draft term string into its display parts. Terms that parse cleanly
+        /// against the known parameter names (or a half-typed comparison, e.g.
+        /// "PoolSpawn > 0.") map to structured controls; anything else (unknown
+        /// parameter, garbage) falls back to raw text.
+        /// </summary>
+        private static TermEdit ParseTermForEdit(string term, string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        {
+            // No known parameter list (unresolvable controller) = plain raw text fields.
+            if (names == null || names.Length == 0)
+                return new TermEdit { Structured = false };
+
+            var trimmed = term == null ? string.Empty : term.Trim();
+            bool isEmpty = trimmed.Length == 0;
+
+            if (!isEmpty && BoolExpression.TryParse(trimmed, names, out var expr, out _)
+                && expr.Clauses.Count == 1 && expr.Clauses[0].Count == 1)
+            {
+                var t = expr.Clauses[0][0];
+                var idx = System.Array.IndexOf(names, t.Parameter);
+                if (idx >= 0)
+                    return new TermEdit { Structured = true, ParamIndex = idx, Op = t.Op, Threshold = BoolTerm.FormatThreshold(t.Threshold), ThresholdValid = true };
+            }
+
+            // Longest-prefix parameter match: the typed text starting with a full
+            // parameter name (e.g. "Pool Spawn > 0.5") wins; otherwise a unique
+            // start-of-name prefix ("Pool " -> "Pool Spawn") is auto-completed so
+            // partially typed conditions keep their structured display.
+            var not = !isEmpty && trimmed.StartsWith("!");
+            var scan = not ? trimmed.Substring(1).Trim() : trimmed;
+            string best = null;
+            string completion = null;
+            for (var i = 0; i < names.Length; i++)
+            {
+                if (names[i].Length == 0)
+                    continue;
+                if (scan.StartsWith(names[i], System.StringComparison.Ordinal))
+                {
+                    if (best == null || names[i].Length > best.Length)
+                        best = names[i];
+                }
+                else if (names[i].StartsWith(scan, System.StringComparison.Ordinal))
+                    completion = completion == null ? names[i] : null; // null = ambiguous
+            }
+            var paramToUse = best ?? completion;
+            if (paramToUse == null)
+                return new TermEdit { Structured = false };
+            var paramLength = best != null ? best.Length : scan.Length;
+
+            var result = new TermEdit { Structured = true, ParamIndex = System.Array.IndexOf(names, paramToUse) };
+            var rest = scan.Substring(paramLength).Trim();
+            if (rest.Length == 0)
+            {
+                result.Op = not ? BoolTermOp.IfNot : BoolTermOp.If;
+                result.Threshold = BoolTerm.FormatThreshold(0f);
+                result.ThresholdValid = true;
+            }
+            else if (!not)
+            {
+                string token;
+                if (rest.StartsWith("!=")) { token = "!="; result.Op = BoolTermOp.NotEquals; }
+                else if (rest.StartsWith(">")) { token = ">"; result.Op = BoolTermOp.Greater; }
+                else if (rest.StartsWith("<")) { token = "<"; result.Op = BoolTermOp.Less; }
+                else if (rest.StartsWith("=")) { token = "="; result.Op = BoolTermOp.Equals; }
+                else return new TermEdit { Structured = false };
+                result.Threshold = rest.Substring(token.Length).Trim();
+                result.ThresholdValid = TryParseThreshold(result.Threshold, out _);
+            }
+            else
+                return new TermEdit { Structured = false };
+            return result;
+        }
+
+        /// <summary>Rebuilds the draft term string from the term editor's display parts.</summary>
+        private static string BuildTermDraft(string param, BoolTermOp op, string threshold)
+        {
+            switch (op)
+            {
+                case BoolTermOp.If: return param;
+                case BoolTermOp.IfNot: return "!" + param;
+                case BoolTermOp.Equals: return param + " = " + threshold;
+                case BoolTermOp.NotEquals: return param + " != " + threshold;
+                case BoolTermOp.Greater: return param + " > " + threshold;
+                case BoolTermOp.Less: return param + " < " + threshold;
+                default: return string.Empty;
+            }
+        }
+
+        private static bool TryParseThreshold(string s, out float value)
+            => float.TryParse(s, System.Globalization.NumberStyles.Float, Invariant, out value);
+
+        private static bool IsBoolOrTrigger(string name, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        {
+            AnimatorControllerParameterType t;
+            return name != null && types.TryGetValue(name, out t)
+                && (t == AnimatorControllerParameterType.Bool || t == AnimatorControllerParameterType.Trigger);
+        }
+
+        /// <summary>
+        /// Draws one structured term: parameter popup (fills the row), op popup and
+        /// threshold field (fixed width), and returns the draft term string they produce.
+        /// Op options depend on the parameter's type - Bool/Trigger only get if / if not,
+        /// as in Unity itself.
+        /// </summary>
+        private static string DrawStructuredTerm(TermEdit edit, string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        {
+            var boolish = IsBoolOrTrigger(names[edit.ParamIndex], types);
+
+            // Parameter popup (the only element that stretches).
+            var newParamIndex = EditorGUILayout.Popup(edit.ParamIndex, names);
+            var newParam = names[newParamIndex];
+            var newBoolish = IsBoolOrTrigger(newParam, types);
+
+            // Op popup, fixed width. The current op's label is carried over to the NEW
+            // parameter's option set if it appears there (e.g. "if not" survives a
+            // bool-to-bool change, ">" survives bool->float); otherwise the first
+            // option is shown.
+            var currentLabel = boolish ? BoolOpLabels[GetOpIndex(edit.Op, boolish)] : CompareOpLabels[GetOpIndex(edit.Op, boolish)];
+            var labels = newBoolish ? BoolOpLabels : CompareOpLabels;
+            var idx = System.Array.IndexOf(labels, currentLabel);
+            var newOpIndex = EditorGUILayout.Popup(idx >= 0 ? idx : 0, labels, GUILayout.Width(75f));
+            var chosenOp = newBoolish ? (newOpIndex == 1 ? BoolTermOp.IfNot : BoolTermOp.If) : CompareOpValues[newOpIndex];
+
+            // Threshold: raw text field, fixed width, only relevant for comparison ops.
+            // Kept at the same width for bool ops (disabled, greyed) so rows line up.
+            if (newBoolish || chosenOp == BoolTermOp.If || chosenOp == BoolTermOp.IfNot)
+            {
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    EditorGUILayout.TextField(string.Empty, GUILayout.Width(70f));
+                }
+            }
+            else
+            {
+                var wasColor = GUI.contentColor;
+                if (!edit.ThresholdValid)
+                    GUI.contentColor = new Color(1f, 0.36f, 0.36f);
+                var newThreshold = EditorGUILayout.TextField(edit.Threshold, GUILayout.Width(70f));
+                GUI.contentColor = wasColor;
+                return BuildTermDraft(newParam, chosenOp, newThreshold);
+            }
+
+            return BuildTermDraft(newParam, chosenOp, string.Empty);
+        }
+
+        private static int GetOpIndex(BoolTermOp op, bool boolish)
+        {
+            if (boolish)
+                return op == BoolTermOp.IfNot ? 1 : 0;
+            for (var i = 0; i < CompareOpValues.Length; i++)
+            {
+                if (CompareOpValues[i] == op)
+                    return i;
+            }
+            return 0;
         }
 
         /// <summary>
         /// Draws the structured condition layout: OR-joined boxes, each an AND group of
-        /// raw-text term fields, with per-term and per-group remove buttons. Returns the
-        /// edited term strings; blank terms and empty groups are excluded from the
-        /// resulting expression by <see cref="BuildDraftText"/> at commit time.
+        /// term editors (parameter popup + op popup + threshold field), with per-term
+        /// and per-group remove buttons. Returns the edited term strings; blank terms and
+        /// empty groups are excluded from the resulting expression by
+        /// <see cref="BuildDraftText"/> at commit time.
         /// </summary>
-        private static List<List<string>> DrawVisualConditions(List<List<string>> clauses)
+        private static List<List<string>> DrawVisualConditions(List<List<string>> clauses, ParameterInfo parameterInfo)
         {
             clauses = clauses ?? new List<List<string>>();
             var newClauses = new List<List<string>>(clauses.Count);
@@ -337,7 +519,25 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                         newTerms.Add(string.Empty);
                                 }
 
-                                var term = EditorGUILayout.TextField(terms[j]);
+                                var edit = ParseTermForEdit(terms[j], parameterInfo?.Names, parameterInfo?.Types);
+                                // Unstructured terms keep their raw text unchanged; only
+                                // structured rows are rebuilt from the drawn controls.
+                                var term = terms[j] ?? string.Empty;
+                                if (!edit.Structured)
+                                {
+                                    EditorGUILayout.HelpBox(
+                                        "Could not read this condition as \"parameter operator threshold\".\n"
+                                        + (string.IsNullOrWhiteSpace(term)
+                                            ? "Type a parameter name, e.g. \"MyToggle\" or \"MyFloat > 0.5\"."
+                                            : "It is kept as-is in the expression; try re-typing it in raw text mode."),
+                                        MessageType.None);
+                                }
+                                else
+                                {
+                                    term = DrawStructuredTerm(edit, parameterInfo.Names, parameterInfo.Types);
+                                    GUILayout.FlexibleSpace(); // fill extra row width after the threshold field
+                                }
+
                                 if (GUILayout.Button(new GUIContent("\u2715", "Remove this condition"), GUILayout.Width(26f)))
                                     continue;
                                 newTerms.Add(term);
@@ -1005,7 +1205,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return AssetDatabase.LoadMainAssetAtPath(path) as AnimatorController;
         }
 
-        private static IEnumerable<string> GetKnownParameterNames(List<AnimatorStateTransition> transitions)
+        private class ParameterInfo
+        {
+            public string[] Names;
+            public Dictionary<string, AnimatorControllerParameterType> Types;
+        }
+
+        private static ParameterInfo GetKnownParameterInfo(List<AnimatorStateTransition> transitions)
         {
             var first = transitions.Find(t => t != null);
             if (first == null)
@@ -1017,9 +1223,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             var parameters = controller.parameters;
             var names = new string[parameters.Length];
+            var types = new Dictionary<string, AnimatorControllerParameterType>();
             for (var i = 0; i < parameters.Length; i++)
+            {
+                if (string.IsNullOrEmpty(parameters[i].name))
+                    continue;
                 names[i] = parameters[i].name;
-            return names;
+                types[parameters[i].name] = parameters[i].type;
+            }
+            names = names.Where(n => !string.IsNullOrEmpty(n)).ToArray();
+            return new ParameterInfo { Names = names, Types = types };
         }
 
         private static (string name, bool isAnyState) ResolveSourceState(AnimatorStateTransition transition, AnimatorController controller)
