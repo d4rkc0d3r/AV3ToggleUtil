@@ -20,6 +20,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             public string Text;
             public bool HasUserInput;
+            public bool UseTextMode; // false = structured layout (default); true = raw text box
+            public List<List<string>> VisualClauses; // draft terms per OR group for the structured layout; null until initialized
         }
 
         [MenuItem("Tools/d4rkpl4y3r/AV3 Toggle Util/Transition Inspector")]
@@ -110,7 +112,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var formattedText = FormatConditionText(canonical);
             if (!conditionFieldStates.TryGetValue(headerText, out var state))
             {
-                state = new ConditionFieldState { Text = formattedText };
+                state = new ConditionFieldState
+                {
+                    Text = formattedText,
+                    VisualClauses = BuildVisualClauses(canonical)
+                };
                 conditionFieldStates[headerText] = state;
             }
 
@@ -119,6 +125,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var parseOk = BoolExpression.TryParse(state.Text, knownParameterNames, out var parsed, out var parseError);
             var editable = !settingsMixed && !hasExitTransition;
             var differs = parseOk && canonical.Differs(parsed);
+            // The structured layout is the default; the raw text box is a manual fallback
+            // for debugging. A broken draft does NOT force the text box in - the term
+            // fields stay editable and show the error - so half-typed terms don't yank
+            // the user away from the structured layout.
+            var useText = state.UseTextMode;
 
             string tooltip = null;
             if (!parseOk)
@@ -135,89 +146,305 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var prevContentColor = GUI.contentColor;
             if (!parseOk)
                 GUI.contentColor = new Color(1f, 0.36f, 0.36f);
-            var fieldRect = EditorGUILayout.GetControlRect(true, 80f);
-            var newText = EditorGUI.TextArea(fieldRect, state.Text);
-            if (tooltip != null)
-                GUI.Label(fieldRect, new GUIContent("", tooltip));
+
+            List<List<string>> newClauses = null;
+            var newText = state.Text;
+            if (useText)
+            {
+                var fieldRect = EditorGUILayout.GetControlRect(true, 80f);
+                newText = EditorGUI.TextArea(fieldRect, state.Text);
+                if (tooltip != null)
+                    GUI.Label(fieldRect, new GUIContent("", tooltip));
+            }
+            else
+            {
+                // If the draft drifted from the stored clause drafts (e.g. the user edited
+                // it in text mode before toggling back), rebuild them from the parsed draft.
+                if (state.Text != BuildDraftText(state.VisualClauses))
+                    state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames);
+                newClauses = DrawVisualConditions(state.VisualClauses);
+                if (!parseOk)
+                    EditorGUILayout.HelpBox(parseError, MessageType.Error);
+                else if (!editable)
+                    GUILayout.Label(tooltip, EditorStyles.miniLabel);
+                else if (differs)
+                    GUILayout.Label("Currently: " + canonical.ToDisplayString(), EditorStyles.miniLabel);
+            }
             GUI.contentColor = prevContentColor;
             GUI.enabled = wasEnabled;
 
             // Buttons are only drawn when the field is editable; each is individually
             // disabled (via DisabledScope) when there's nothing for it to do.
             if (editable)
+                DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownParameterNames);
+
+            // IMGUI draws the fields before the buttons in the same frame/event, so on the
+            // frame a button is clicked the field values still hold the PRE-click data.
+            // Only write the fields' value back if a button didn't already change it this frame.
+            if (useText)
             {
+                if (state.Text == preButtonText && newText != state.Text)
+                {
+                    state.Text = newText;
+                    state.HasUserInput = true;
+                }
+            }
+            else if (state.Text == preButtonText)
+            {
+                state.VisualClauses = newClauses;
+                var builtText = BuildDraftText(newClauses);
+                if (builtText != state.Text)
+                {
+                    state.Text = builtText;
+                    state.HasUserInput = true;
+                }
+            }
+        }
+
+        private void DrawConditionButtons(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, ConditionFieldState state, BoolExpression parsed, bool parseOk, string parseError, bool differs, string formattedText, BoolExpression canonical, IEnumerable<string> knownParameterNames)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                var outerEnabled = GUI.enabled;
+
+                var canApply = parseOk && differs && !string.IsNullOrWhiteSpace(state.Text);
+                var applyTooltip = canApply
+                    ? null
+                    : !parseOk ? parseError
+                    : string.IsNullOrWhiteSpace(state.Text) ? "Nothing to apply - an empty expression removes all conditions from the current states"
+                    : "Nothing to apply - the expression matches the current states";
+                using (new EditorGUI.DisabledScope(!outerEnabled || !canApply))
+                {
+                    if (GUILayout.Button(new GUIContent("Apply", applyTooltip)))
+                        ApplyExpression(group, parsed);
+                }
+
+                var canRevert = differs;
+                using (new EditorGUI.DisabledScope(!outerEnabled || !canRevert))
+                {
+                    if (GUILayout.Button(new GUIContent("Revert",
+                        canRevert ? null : "Nothing to revert - the expression matches the current states")))
+                    {
+                        state.Text = formattedText;
+                        state.HasUserInput = false;
+                        state.VisualClauses = SyncVisualClauses(state.VisualClauses, canonical, knownParameterNames);
+                        GUI.FocusControl(null);
+                    }
+                }
+
+                var canNegate = parseOk && parsed != null && !parsed.IsEmpty;
+                var negateTooltip = !parseOk ? parseError
+                    : canNegate ? "Flip the expression (De Morgan)"
+                    : "Nothing to negate - give the expression at least one condition first";
+                using (new EditorGUI.DisabledScope(!outerEnabled || !canNegate))
+                {
+                    if (GUILayout.Button(new GUIContent("Negate", negateTooltip)))
+                    {
+                        // Raw text wrap; the parser's '!' handles flattening.
+                        var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
+                        state.HasUserInput = true;
+                        if (BoolExpression.TryParse(negatedText, knownParameterNames, out var negated, out _))
+                        {
+                            state.Text = FormatConditionText(negated);
+                            state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames);
+                        }
+                        else
+                            state.Text = negatedText;
+                        GUI.FocusControl(null);
+                    }
+                }
+
+                // parseOk implies parsed is non-null here.
+                var canNormalize = parseOk && !parsed.IsEmpty;
+                var normalizeTooltip = !parseOk ? parseError
+                    : canNormalize ? "Show the simplified canonical form (deduped, simplified, contradictions removed)"
+                    : "Nothing to normalize - the expression is empty";
+                using (new EditorGUI.DisabledScope(!outerEnabled || !canNormalize))
+                {
+                    if (GUILayout.Button(new GUIContent("Normalize", normalizeTooltip)))
+                    {
+                        state.Text = FormatConditionText(parsed);
+                        GUI.FocusControl(null);
+                        state.HasUserInput = true;
+                        state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames);
+                    }
+                }
+
+                var toggleLabel = state.UseTextMode ? "Structured" : "Raw text";
+                var toggleTooltip = state.UseTextMode
+                    ? "Switch to the structured condition layout"
+                    : "Switch to the raw text box - one field holding the full expression, mainly useful for debugging";
+                if (GUILayout.Button(new GUIContent(toggleLabel, toggleTooltip)))
+                    state.UseTextMode = !state.UseTextMode;
+            }
+        }
+
+        /// <summary>
+        /// Draws the structured condition layout: OR-joined boxes, each an AND group of
+        /// raw-text term fields, with per-term and per-group remove buttons. Returns the
+        /// edited term strings; blank terms and empty groups are excluded from the
+        /// resulting expression by <see cref="BuildDraftText"/> at commit time.
+        /// </summary>
+        private static List<List<string>> DrawVisualConditions(List<List<string>> clauses)
+        {
+            clauses = clauses ?? new List<List<string>>();
+            var newClauses = new List<List<string>>(clauses.Count);
+
+            for (var i = 0; i < clauses.Count; i++)
+            {
+                var terms = clauses[i];
+                var removeClause = false;
+                var newTerms = new List<string>(terms.Count);
+
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    var outerEnabled = GUI.enabled;
+                    // An empty label (not a Space) so the first row's indent matches the
+                    // OR labels' control geometry exactly, keeping the boxes aligned.
+                    GUILayout.Label(
+                        i > 0 ? new GUIContent("OR", "Any of these groups can trigger the transition") : new GUIContent(string.Empty),
+                        EditorStyles.miniLabel,
+                        GUILayout.Width(22f));
 
-                    var canApply = parseOk && differs && !string.IsNullOrWhiteSpace(state.Text);
-                    var applyTooltip = canApply
-                        ? null
-                        : !parseOk ? parseError
-                        : string.IsNullOrWhiteSpace(state.Text) ? "Nothing to apply - an empty expression removes all conditions from the current states"
-                        : "Nothing to apply - the expression matches the current states";
-                    using (new EditorGUI.DisabledScope(!outerEnabled || !canApply))
+                    using (new EditorGUILayout.VerticalScope("box"))
                     {
-                        if (GUILayout.Button(new GUIContent("Apply", applyTooltip)))
-                            ApplyExpression(group, parsed);
-                    }
-
-                    var canRevert = differs;
-                    using (new EditorGUI.DisabledScope(!outerEnabled || !canRevert))
-                    {
-                        if (GUILayout.Button(new GUIContent("Revert",
-                            canRevert ? null : "Nothing to revert - the expression matches the current states")))
+                        // The AND header row is only worth drawing with 2+ conditions; a
+                        // single-condition group has no group-level remove button either,
+                        // since removing that one condition already drops the whole group.
+                        if (terms.Count > 1)
                         {
-                            state.Text = formattedText;
-                            state.HasUserInput = false;
-                            GUI.FocusControl(null);
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                GUILayout.Label("AND", EditorStyles.miniLabel, GUILayout.Width(26f));
+                                GUILayout.FlexibleSpace();
+                                if (GUILayout.Button(new GUIContent("\u2715", "Remove this OR group"), GUILayout.Width(26f)))
+                                    removeClause = true;
+                            }
                         }
-                    }
 
-                    var canNegate = parseOk && parsed != null && !parsed.IsEmpty;
-                    var negateTooltip = !parseOk ? parseError
-                        : canNegate ? "Flip the expression (De Morgan)"
-                        : "Nothing to negate - give the expression at least one condition first";
-                    using (new EditorGUI.DisabledScope(!outerEnabled || !canNegate))
-                    {
-                        if (GUILayout.Button(new GUIContent("Negate", negateTooltip)))
+                        for (var j = 0; j < terms.Count; j++)
                         {
-                            // Raw text wrap; the parser's '!' handles flattening.
-                            var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
-                            state.HasUserInput = true;
-                            if (BoolExpression.TryParse(negatedText, knownParameterNames, out var negated, out _))
-                                state.Text = FormatConditionText(negated);
-                            else
-                                state.Text = negatedText;
-                            GUI.FocusControl(null);
-                        }
-                    }
+                            using (new EditorGUILayout.HorizontalScope())
+                            {
+                                // The add button lives in the row of the last condition,
+                                // in the indent column the AND label would occupy. The indent
+                                // is reserved with the button's own style + width constraints
+                                // in every row, so the fields line up - GUILayout.Space would
+                                // not account for the button's margin/padding.
+                                var indentRect = GUILayoutUtility.GetRect(GUIContent.none, EditorStyles.miniButton, GUILayout.Width(30f));
+                                if (j == terms.Count - 1)
+                                {
+                                    if (GUI.Button(indentRect, new GUIContent("+", "Add condition"), EditorStyles.miniButton))
+                                        newTerms.Add(string.Empty);
+                                }
 
-                    // parseOk implies parsed is non-null here.
-                    var canNormalize = parseOk && !parsed.IsEmpty;
-                    var normalizeTooltip = !parseOk ? parseError
-                        : canNormalize ? "Show the simplified canonical form (deduped, simplified, contradictions removed)"
-                        : "Nothing to normalize - the expression is empty";
-                    using (new EditorGUI.DisabledScope(!outerEnabled || !canNormalize))
-                    {
-                        if (GUILayout.Button(new GUIContent("Normalize", normalizeTooltip)))
-                        {
-                            state.Text = FormatConditionText(parsed);
-                            GUI.FocusControl(null);
-                            state.HasUserInput = true;
+                                var term = EditorGUILayout.TextField(terms[j]);
+                                if (GUILayout.Button(new GUIContent("\u2715", "Remove this condition"), GUILayout.Width(26f)))
+                                    continue;
+                                newTerms.Add(term);
+                            }
                         }
                     }
                 }
+
+                // A group whose conditions were all removed is dropped along with it,
+                // so the layout matches the draft text (empty groups are not part of it).
+                if (!removeClause && newTerms.Count > 0)
+                    newClauses.Add(newTerms);
             }
 
-            // IMGUI draws the text area before the buttons in the same frame/event, so on the
-            // frame a button is clicked `newText` still holds the PRE-click text. Only write
-            // the field's value back if a button didn't already change it this frame.
-            if (state.Text == preButtonText && newText != state.Text)
+            if (clauses.Count == 0)
             {
-                state.Text = newText;
-                state.HasUserInput = true;
+                using (new EditorGUILayout.VerticalScope("box"))
+                    GUILayout.Label("(no conditions - fires unconditionally)", EditorStyles.miniLabel);
             }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(22f);
+                if (GUILayout.Button(new GUIContent("+ Condition group"), EditorStyles.miniButton))
+                    newClauses.Add(new List<string> { string.Empty });
+                GUILayout.FlexibleSpace();
+            }
+
+            return newClauses;
+        }
+
+        /// <summary>Converts a parsed expression into structured draft term strings.</summary>
+        private static List<List<string>> BuildVisualClauses(BoolExpression expr)
+        {
+            var result = new List<List<string>>();
+            if (expr == null)
+                return result;
+            for (var i = 0; i < expr.Clauses.Count; i++)
+            {
+                var row = new List<string>(expr.Clauses[i].Count);
+                for (var j = 0; j < expr.Clauses[i].Count; j++)
+                    row.Add(expr.Clauses[i][j].ToString());
+                result.Add(row);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Rebuilds the raw draft text from the structured term strings. Whitespace terms
+        /// and fully empty groups are skipped, so removing every condition of a group
+        /// drops the group out of the expression (it can still be filled in later).
+        /// </summary>
+        private static string BuildDraftText(List<List<string>> clauses)
+        {
+            if (clauses == null)
+                return string.Empty;
+            var lines = new List<string>();
+            for (var i = 0; i < clauses.Count; i++)
+            {
+                var line = string.Empty;
+                for (var j = 0; j < clauses[i].Count; j++)
+                {
+                    var s = clauses[i][j];
+                    if (string.IsNullOrWhiteSpace(s))
+                        continue;
+                    line += line.Length == 0 ? s : " & " + s;
+                }
+                if (line.Length > 0)
+                    lines.Add(line);
+            }
+            return lines.Count == 0 ? string.Empty : string.Join("\n| ", lines);
+        }
+
+        /// <summary>
+        /// Rebuilds the structured draft from a parsed expression, keeping an old user
+        /// string at the same position when it still parses to the same term. When the
+        /// expression is empty (e.g. a term broke parsing while the user was typing), the
+        /// old row structure is kept and any term that is missing from the parse result is
+        /// shown as raw text, so a half-typed condition is never wiped from the fields.
+        /// </summary>
+        private static List<List<string>> SyncVisualClauses(List<List<string>> old, BoolExpression expr, IEnumerable<string> knownParameterNames)
+        {
+            if (expr == null || expr.IsEmpty)
+            {
+                // Keep the rows the user had; blank terms stay blank.
+                if (old != null)
+                    return old;
+                return new List<List<string>>();
+            }
+            var result = new List<List<string>>(expr.Clauses.Count);
+            for (var i = 0; i < expr.Clauses.Count; i++)
+            {
+                var row = new List<string>(expr.Clauses[i].Count);
+                for (var j = 0; j < expr.Clauses[i].Count; j++)
+                {
+                    var term = expr.Clauses[i][j];
+                    var text = term.ToString();
+                    if (old != null && i < old.Count && j < old[i].Count
+                        && BoolExpression.TryParse(old[i][j], knownParameterNames, out var single, out _)
+                        && single.Clauses.Count == 1 && single.Clauses[0].Count == 1
+                        && single.Clauses[0][0].Equals(term))
+                        text = old[i][j];
+                    row.Add(text);
+                }
+                result.Add(row);
+            }
+            return result;
         }
 
         /// <summary>
