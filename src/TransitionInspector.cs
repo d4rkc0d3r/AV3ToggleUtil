@@ -388,6 +388,27 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 && (t == AnimatorControllerParameterType.Bool || t == AnimatorControllerParameterType.Trigger);
         }
 
+        /// <summary>
+        /// Produces a default valid condition draft for a freshly added (empty) term,
+        /// using the first available parameter and a valid default op ("true" for bools,
+        /// "Equals 0" for int/float/trigger).
+        /// </summary>
+        private static string BuildNewTermDraft(string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        {
+            if (names == null || names.Length == 0)
+                return string.Empty;
+
+            for (var i = 0; i < names.Length; i++)
+            {
+                if (string.IsNullOrEmpty(names[i]))
+                    continue;
+
+                var isBool = IsBoolOrTrigger(names[i], types);
+                return BuildTermDraft(names[i], isBool ? BoolTermOp.If : BoolTermOp.Equals, isBool ? string.Empty : BoolTerm.FormatThreshold(0f));
+            }
+            return string.Empty;
+        }
+
         /// <summary>Draws one structured term and returns the draft term string it produces.</summary>
         private static string DrawStructuredTerm(TermEdit edit, string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
         {
@@ -446,6 +467,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             {
                 var terms = clauses[i];
                 var removeClause = false;
+                var addTermRequested = false;
                 var newTerms = new List<string>(terms.Count);
 
                 using (new EditorGUILayout.HorizontalScope())
@@ -477,6 +499,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
+                                // The add button of the last row (below) only sets a flag; the
+                                // new term is appended after the row loop so it lands at the END
+                                // of the group (appending during the loop would put it first, and
+                                // it would not be drawn until the next repaint regardless).
                                 // The add button lives in the row of the last condition,
                                 // in the indent column the AND label would occupy. The indent
                                 // is reserved with the button's own style + width constraints
@@ -486,11 +512,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 if (j == terms.Count - 1)
                                 {
                                     if (GUI.Button(indentRect, new GUIContent("+", "Add condition"), EditorStyles.miniButton))
-                                        newTerms.Add(string.Empty);
+                                        addTermRequested = true;
                                 }
 
-                                var edit = ParseTermForEdit(terms[j], parameterInfo?.Names, parameterInfo?.Types);
                                 var term = terms[j] ?? string.Empty;
+                                // A brand-new condition row (added as an empty string by the
+                                // "+" buttons) cannot be read as a structured term, so it
+                                // shows a "could not read" help box instead of fields. Seed
+                                // an empty last row with a valid parameter + op right away
+                                // so the dropdowns are usable immediately.
+                                if (j == terms.Count - 1 && string.IsNullOrEmpty(term))
+                                    term = BuildNewTermDraft(parameterInfo?.Names, parameterInfo?.Types);
+                                var edit = ParseTermForEdit(term, parameterInfo?.Names, parameterInfo?.Types);
                                 if (!edit.Structured)
                                 {
                                     EditorGUILayout.HelpBox(
@@ -511,6 +544,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 newTerms.Add(term);
                             }
                         }
+
+                        // Seed the fresh condition with a valid parameter + op so it appears
+                        // (next repaint) as structured fields ready to edit, not an empty one.
+                        if (addTermRequested)
+                            newTerms.Add(BuildNewTermDraft(parameterInfo?.Names, parameterInfo?.Types));
                     }
                 }
 
