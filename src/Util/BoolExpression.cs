@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using UnityEngine;
 
 namespace d4rkpl4y3r.AV3ToggleUtil.Util
 {
@@ -99,12 +100,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         /// at a term position the longest known name wins over plain identifier scanning.
         /// </summary>
         public static bool TryParse(string text, IEnumerable<string> knownParameterNames, out BoolExpression result, out string error)
+            => TryParse(text, knownParameterNames, null, out result, out error);
+
+        /// <summary>
+        /// Like the name-only overload but additionally given the parameters' types. For
+        /// Int parameters, negating Greater/Less IS representable (by shifting the threshold
+        /// by 1), so negation succeeds where the name-only parse would refuse it.
+        /// </summary>
+        public static bool TryParse(string text, IEnumerable<string> knownParameterNames, Dictionary<string, AnimatorControllerParameterType> parameterTypes, out BoolExpression result, out string error)
         {
             var expr = new BoolExpression();
             try
             {
                 if (!string.IsNullOrWhiteSpace(text))
-                    new Parser(text, knownParameterNames).ParseInto(expr);
+                    new Parser(text, knownParameterNames, parameterTypes).ParseInto(expr);
             }
             catch (ParseException e)
             {
@@ -389,10 +398,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             private readonly string _text;
             private int _pos;
             private readonly HashSet<string> _knownTokens;
+            private readonly Dictionary<string, AnimatorControllerParameterType> _parameterTypes;
 
-            public Parser(string text, IEnumerable<string> knownTokens = null)
+            public Parser(string text, IEnumerable<string> knownTokens = null, Dictionary<string, AnimatorControllerParameterType> parameterTypes = null)
             {
                 _text = text;
+                _parameterTypes = parameterTypes;
                 if (knownTokens != null)
                 {
                     _knownTokens = new HashSet<string>();
@@ -463,7 +474,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                         // !(a & b) == !a | !b : each negated term becomes its own OR clause.
                         var negated = new List<List<BoolTerm>>();
                         for (var i = 0; i < inner[0].Count; i++)
-                            negated.Add(new List<BoolTerm> { Negate(inner[0][i]) });
+                            negated.Add(new List<BoolTerm> { Negate(inner[0][i], _parameterTypes) });
                         return negated;
                     }
                     // !(a | b) == !a & !b : all negated terms form one AND clause.
@@ -471,33 +482,45 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                     for (var i = 0; i < inner.Count; i++)
                     {
                         for (var j = 0; j < inner[i].Count; j++)
-                            clause.Add(Negate(inner[i][j]));
+                            clause.Add(Negate(inner[i][j], _parameterTypes));
                     }
                     return new List<List<BoolTerm>> { clause };
                 }
                 return ParsePrimary();
             }
 
-            private static BoolTerm Negate(BoolTerm term)
+private static BoolTerm Negate(BoolTerm term, Dictionary<string, AnimatorControllerParameterType> types)
+        {
+            switch (term.Op)
             {
-                switch (term.Op)
-                {
-                    case BoolTermOp.If:
-                        return new BoolTerm(term.Parameter, BoolTermOp.IfNot);
-                    case BoolTermOp.IfNot:
-                        return new BoolTerm(term.Parameter, BoolTermOp.If);
-                    case BoolTermOp.Equals:
-                        return new BoolTerm(term.Parameter, BoolTermOp.NotEquals, term.Threshold);
-                    case BoolTermOp.NotEquals:
-                        return new BoolTerm(term.Parameter, BoolTermOp.Equals, term.Threshold);
-                    case BoolTermOp.Greater:
-                        throw new ParseException("Cannot negate '>' - the inverted form is not representable");
-                    case BoolTermOp.Less:
-                        throw new ParseException("Cannot negate '<' - the inverted form is not representable");
-                    default:
-                        throw new ParseException("Cannot negate this condition");
-                }
+                case BoolTermOp.If:
+                    return new BoolTerm(term.Parameter, BoolTermOp.IfNot);
+                case BoolTermOp.IfNot:
+                    return new BoolTerm(term.Parameter, BoolTermOp.If);
+                case BoolTermOp.Equals:
+                    return new BoolTerm(term.Parameter, BoolTermOp.NotEquals, term.Threshold);
+                case BoolTermOp.NotEquals:
+                    return new BoolTerm(term.Parameter, BoolTermOp.Equals, term.Threshold);
+                // Int parameters are discrete, so the inverted comparison IS representable:
+                // !(x > t) == x <= t == x < t+1;   !(x < t) == x >= t == x > t-1.
+                case BoolTermOp.Greater:
+                    if (IsInt(types, term.Parameter))
+                        return new BoolTerm(term.Parameter, BoolTermOp.Less, term.Threshold + 1f);
+                    throw new ParseException("Cannot negate '>' - the inverted form is not representable for this parameter type");
+                case BoolTermOp.Less:
+                    if (IsInt(types, term.Parameter))
+                        return new BoolTerm(term.Parameter, BoolTermOp.Greater, term.Threshold - 1f);
+                    throw new ParseException("Cannot negate '<' - the inverted form is not representable for this parameter type");
+                default:
+                    throw new ParseException("Cannot negate this condition");
             }
+        }
+
+        private static bool IsInt(Dictionary<string, AnimatorControllerParameterType> types, string parameter)
+            => types != null
+            && parameter != null
+            && types.TryGetValue(parameter, out var t)
+            && t == AnimatorControllerParameterType.Int;
 
             private List<List<BoolTerm>> ParsePrimary()
             {

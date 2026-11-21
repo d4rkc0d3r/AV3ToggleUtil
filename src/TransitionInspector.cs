@@ -123,7 +123,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // Snapshot before any button can mutate the text this frame.
             var preButtonText = state.Text;
             var knownNames = parameterInfo?.Names;
-            var parseOk = BoolExpression.TryParse(state.Text, knownNames, out var parsed, out var parseError);
+            var knownTypes = parameterInfo?.Types;
+            var parseOk = BoolExpression.TryParse(state.Text, knownNames, knownTypes, out var parsed, out var parseError);
             var editable = !settingsMixed && !hasExitTransition;
             var differs = parseOk && canonical.Differs(parsed);
             // The structured layout is the default; the raw text box is a manual fallback
@@ -162,7 +163,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 // If the draft drifted from the stored clause drafts (e.g. the user edited
                 // it in text mode before toggling back), rebuild them from the parsed draft.
                 if (state.Text != BuildDraftText(state.VisualClauses))
-                    state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownNames);
+                    state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownNames, knownTypes);
                 newClauses = DrawVisualConditions(state.VisualClauses, parameterInfo);
                 if (!parseOk)
                     EditorGUILayout.HelpBox(parseError, MessageType.Error);
@@ -175,7 +176,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // Buttons are only drawn when the field is editable; each is individually
             // disabled (via DisabledScope) when there's nothing for it to do.
             if (editable)
-                DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownNames);
+                DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownNames, knownTypes);
 
             // IMGUI draws the fields before the buttons in the same frame/event, so on the
             // frame a button is clicked the field values still hold the PRE-click data.
@@ -200,7 +201,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private void DrawConditionButtons(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, ConditionFieldState state, BoolExpression parsed, bool parseOk, string parseError, bool differs, string formattedText, BoolExpression canonical, IEnumerable<string> knownParameterNames)
+        private void DrawConditionButtons(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, ConditionFieldState state, BoolExpression parsed, bool parseOk, string parseError, bool differs, string formattedText, BoolExpression canonical, IEnumerable<string> knownParameterNames, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> parameterTypes)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -226,17 +227,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         state.Text = formattedText;
                         state.HasUserInput = false;
-                        state.VisualClauses = SyncVisualClauses(state.VisualClauses, canonical, knownParameterNames);
+                        state.VisualClauses = SyncVisualClauses(state.VisualClauses, canonical, knownParameterNames, parameterTypes);
                         GUI.FocusControl(null);
                     }
                 }
 
-                // Pre-check the negation: conditions with Greater/Less have no inverted
-                // form in the grammar, so negating them would leave unparsable text.
-                // Disable the button whenever the result would not parse.
+                // Pre-check the negation: conditions whose inverted form is not representable
+                // (float Greater/Less) would leave unparsable text - disable whenever the
+                // result would not parse. Int Greater/Less IS representable (threshold shift).
                 string negatePreviewError = null;
-                var canNegate = parseOk && parsed != null && !parsed.IsEmpty
-                    && BoolExpression.TryParse("!(" + state.Text.Replace("\n", " ") + ")", knownParameterNames, out _, out negatePreviewError);
+                var negatable = parseOk && parsed != null && !parsed.IsEmpty;
+                var canNegate = negatable
+                    && BoolExpression.TryParse("!(" + state.Text.Replace("\n", " ") + ")", knownParameterNames, parameterTypes, out _, out negatePreviewError);
                 var negateTooltip = !parseOk ? parseError
                     : parsed == null || parsed.IsEmpty
                         ? "Nothing to negate - give the expression at least one condition first"
@@ -248,11 +250,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         // Raw text wrap; the parser's '!' handles flattening.
                         var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
-                        if (BoolExpression.TryParse(negatedText, knownParameterNames, out var negated, out _))
+                        if (BoolExpression.TryParse(negatedText, knownParameterNames, parameterTypes, out var negated, out _))
                         {
                             state.HasUserInput = true;
                             state.Text = FormatConditionText(negated);
-                            state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames);
+                            state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames, parameterTypes);
                         }
                         // Otherwise (an earlier button changed the text this frame and the
                         // new negation no longer parses) leave the text untouched.
@@ -272,7 +274,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         state.Text = FormatConditionText(parsed);
                         GUI.FocusControl(null);
                         state.HasUserInput = true;
-                        state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames);
+                        state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
                     }
                 }
 
@@ -325,7 +327,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var trimmed = term == null ? string.Empty : term.Trim();
             bool isEmpty = trimmed.Length == 0;
 
-            if (!isEmpty && BoolExpression.TryParse(trimmed, names, out var expr, out _)
+            if (!isEmpty && BoolExpression.TryParse(trimmed, names, types, out var expr, out _)
                 && expr.Clauses.Count == 1 && expr.Clauses[0].Count == 1)
             {
                 var t = expr.Clauses[0][0];
@@ -625,7 +627,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// old row structure is kept and any term that is missing from the parse result is
         /// shown as raw text, so a half-typed condition is never wiped from the fields.
         /// </summary>
-        private static List<List<string>> SyncVisualClauses(List<List<string>> old, BoolExpression expr, IEnumerable<string> knownParameterNames)
+        private static List<List<string>> SyncVisualClauses(List<List<string>> old, BoolExpression expr, IEnumerable<string> knownParameterNames, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> parameterTypes)
         {
             if (expr == null || expr.IsEmpty)
             {
@@ -643,7 +645,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     var term = expr.Clauses[i][j];
                     var text = term.ToString();
                     if (old != null && i < old.Count && j < old[i].Count
-                        && BoolExpression.TryParse(old[i][j], knownParameterNames, out var single, out _)
+                        && BoolExpression.TryParse(old[i][j], knownParameterNames, parameterTypes, out var single, out _)
                         && single.Clauses.Count == 1 && single.Clauses[0].Count == 1
                         && single.Clauses[0][0].Equals(term))
                         text = old[i][j];
