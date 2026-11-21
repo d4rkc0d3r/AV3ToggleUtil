@@ -231,24 +231,31 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
 
-                var canNegate = parseOk && parsed != null && !parsed.IsEmpty;
+                // Pre-check the negation: conditions with Greater/Less have no inverted
+                // form in the grammar, so negating them would leave unparsable text.
+                // Disable the button whenever the result would not parse.
+                string negatePreviewError = null;
+                var canNegate = parseOk && parsed != null && !parsed.IsEmpty
+                    && BoolExpression.TryParse("!(" + state.Text.Replace("\n", " ") + ")", knownParameterNames, out _, out negatePreviewError);
                 var negateTooltip = !parseOk ? parseError
-                    : canNegate ? "Flip the expression (De Morgan)"
-                    : "Nothing to negate - give the expression at least one condition first";
+                    : parsed == null || parsed.IsEmpty
+                        ? "Nothing to negate - give the expression at least one condition first"
+                        : canNegate ? "Flip the expression (De Morgan)"
+                        : "Cannot negate - " + negatePreviewError;
                 using (new EditorGUI.DisabledScope(!outerEnabled || !canNegate))
                 {
                     if (GUILayout.Button(new GUIContent("Negate", negateTooltip)))
                     {
                         // Raw text wrap; the parser's '!' handles flattening.
                         var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
-                        state.HasUserInput = true;
                         if (BoolExpression.TryParse(negatedText, knownParameterNames, out var negated, out _))
                         {
+                            state.HasUserInput = true;
                             state.Text = FormatConditionText(negated);
                             state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames);
                         }
-                        else
-                            state.Text = negatedText;
+                        // Otherwise (an earlier button changed the text this frame and the
+                        // new negation no longer parses) leave the text untouched.
                         GUI.FocusControl(null);
                     }
                 }
