@@ -19,7 +19,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private class ConditionFieldState
         {
             public string Text;
-            public bool HasUserInput;
             public bool UseTextMode; // false = structured layout (default); true = raw text box
             public List<List<string>> VisualClauses; // null until initialized
         }
@@ -53,11 +52,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     GUILayout.Label(headerText, EditorStyles.boldLabel);
 
                     // Multiple transitions from the same source to the same target act as OR; each condition inside a single transition acts as AND
-                    var settingsMixed = AnyMixedValue(transitions);
-                    var hasExit = AnyMatches(transitions, t => t.isExit);
-                    var canonical = GetCanonicalExpression(transitions, out _);
-                    var knownParams = GetKnownParameterInfo(transitions);
-                    DrawConditionEditor(stateKey, group, transitions, canonical, settingsMixed, hasExit, knownParams);
+                    DrawConditionEditor(stateKey, group);
 
                     // Apply (inside DrawConditionEditor) may remove transitions mid-frame;
                     // drop any destroyed ones before the Settings rows iterate this list.
@@ -93,31 +88,36 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             for (var i = 0; i < visibleHeaders.Count; i++)
                 activeGroupHeaders.Add(visibleHeaders[i]);
 
-            var conditionKeys = new List<string>(conditionFieldStates.Keys);
-            for (var i = 0; i < conditionKeys.Count; i++)
+            PruneKeys(conditionFieldStates);
+            PruneKeys(foldoutStates);
+        }
+
+        private void PruneKeys<T>(Dictionary<string, T> dict)
+        {
+            var keys = new List<string>(dict.Keys);
+            for (var i = 0; i < keys.Count; i++)
             {
-                if (!activeGroupHeaders.Contains(conditionKeys[i]))
-                    conditionFieldStates.Remove(conditionKeys[i]);
-            }
-            var foldoutKeys = new List<string>(foldoutStates.Keys);
-            for (var i = 0; i < foldoutKeys.Count; i++)
-            {
-                if (!activeGroupHeaders.Contains(foldoutKeys[i]))
-                    foldoutStates.Remove(foldoutKeys[i]);
+                if (!activeGroupHeaders.Contains(keys[i]))
+                    dict.Remove(keys[i]);
             }
         }
 
-        private void DrawConditionEditor(string headerText, KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, List<AnimatorStateTransition> transitions, BoolExpression canonical, bool settingsMixed, bool hasExitTransition, ParameterInfo parameterInfo)
+        private void DrawConditionEditor(string stateKey, KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group)
         {
+            var transitions = group.Value;
+            var canonical = GetCanonicalExpression(transitions, out _);
+            var settingsMixed = AnyMixedValue(transitions);
+            var hasExitTransition = AnyMatches(transitions, t => t.isExit);
+            var parameterInfo = GetKnownParameterInfo(transitions);
             var formattedText = FormatConditionText(canonical);
-            if (!conditionFieldStates.TryGetValue(headerText, out var state))
+            if (!conditionFieldStates.TryGetValue(stateKey, out var state))
             {
                 state = new ConditionFieldState
                 {
                     Text = formattedText,
                     VisualClauses = BuildVisualClauses(canonical)
                 };
-                conditionFieldStates[headerText] = state;
+                conditionFieldStates[stateKey] = state;
             }
 
             var preButtonText = state.Text; // snapshot before any button can mutate it this frame
@@ -181,20 +181,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (useText)
             {
                 if (state.Text == preButtonText && newText != state.Text)
-                {
                     state.Text = newText;
-                    state.HasUserInput = true;
-                }
             }
             else if (state.Text == preButtonText)
             {
                 state.VisualClauses = newClauses;
                 var builtText = BuildDraftText(newClauses);
                 if (builtText != state.Text)
-                {
                     state.Text = builtText;
-                    state.HasUserInput = true;
-                }
             }
         }
 
@@ -223,7 +217,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         canRevert ? null : "Nothing to revert - the expression matches the current states")))
                     {
                         state.Text = formattedText;
-                        state.HasUserInput = false;
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, canonical, knownParameterNames, parameterTypes);
                         GUI.FocusControl(null);
                     }
@@ -249,7 +242,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
                         if (BoolExpression.TryParse(negatedText, knownParameterNames, parameterTypes, out var negated, out _))
                         {
-                            state.HasUserInput = true;
                             state.Text = FormatConditionText(negated);
                             state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames, parameterTypes);
                         }
@@ -268,7 +260,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         state.Text = FormatConditionText(parsed);
                         GUI.FocusControl(null);
-                        state.HasUserInput = true;
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
                     }
                 }
@@ -565,7 +556,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             if (clauses == null)
                 return string.Empty;
-            var lines = new List<string>();
+            var lines = new List<string>(clauses.Count);
             for (var i = 0; i < clauses.Count; i++)
             {
                 var line = string.Empty;
@@ -579,7 +570,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (line.Length > 0)
                     lines.Add(line);
             }
-            return lines.Count == 0 ? string.Empty : string.Join("\n| ", lines);
+            return JoinClauseLines(lines);
+        }
+
+        private static string JoinClauseLines(IEnumerable<string> lines)
+        {
+            var kept = new List<string>();
+            foreach (var line in lines)
+            {
+                if (line.Length > 0)
+                    kept.Add(line);
+            }
+            return kept.Count > 0 ? string.Join("\n| ", kept) : string.Empty;
         }
 
         /// <summary>
@@ -633,47 +635,40 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             for (var i = 0; i < count; i++)
             {
                 var terms = clauses[i];
-                var first = true;
                 var line = string.Empty;
                 for (var j = 0; j < terms.Count; j++)
                 {
-                    line += first ? terms[j].ToString() : " & " + terms[j];
-                    first = false;
+                    line += line.Length == 0 ? terms[j].ToString() : " & " + terms[j];
                 }
                 lines[i] = line;
             }
-            return count == 1 ? lines[0] : string.Join("\n| ", lines);
+            return JoinClauseLines(lines);
         }
 
         private static bool TryGetSourceLocation(AnimatorStateTransition transition, out AnimatorState sourceState, out AnimatorStateMachine sourceMachine)
         {
+            sourceState = null;
+            sourceMachine = null;
             var path = AssetDatabase.GetAssetPath(transition);
             if (string.IsNullOrEmpty(path))
-            {
-                sourceState = null;
-                sourceMachine = null;
                 return false;
-            }
             var controller = AssetDatabase.LoadMainAssetAtPath(path) as AnimatorController;
             if (controller == null)
-            {
-                sourceState = null;
-                sourceMachine = null;
                 return false;
-            }
 
+            return FindSourceLocationInStateMachine(controller, transition, out sourceState, out sourceMachine);
+        }
+
+        private static bool FindSourceLocationInStateMachine(AnimatorController controller, AnimatorStateTransition transition, out AnimatorState sourceState, out AnimatorStateMachine sourceMachine)
+        {
+            sourceState = null;
+            sourceMachine = null;
             var layers = controller.layers;
             for (var li = 0; li < layers.Length; li++)
             {
-                var stateMachine = layers[li].stateMachine;
-                sourceState = null;
-                sourceMachine = null;
-                if (FindSourceLocationInStateMachine(stateMachine, transition, out sourceState, out sourceMachine))
+                if (FindSourceLocationInStateMachine(layers[li].stateMachine, transition, out sourceState, out sourceMachine))
                     return true;
             }
-
-            sourceState = null;
-            sourceMachine = null;
             return false;
         }
 
@@ -897,18 +892,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (use == null)
                 {
                     var template = transitions[0];
-                    if (sourceState != null)
-                    {
-                        use = key.Destination != null
+                    use = key.Destination != null
+                        ? (sourceState != null
                             ? sourceState.AddTransition(key.Destination)
-                            : sourceState.AddTransition(key.DestinationMachine);
-                    }
-                    else
-                    {
-                        use = key.Destination != null
-                            ? anyMachine.AddAnyStateTransition(key.Destination)
-                            : anyMachine.AddAnyStateTransition(key.DestinationMachine);
-                    }
+                            : anyMachine.AddAnyStateTransition(key.Destination))
+                        : (sourceState != null
+                            ? sourceState.AddTransition(key.DestinationMachine)
+                            : anyMachine.AddAnyStateTransition(key.DestinationMachine));
                     if (use == null)
                         return;
                     // Clone settings from the first existing transition, then restore the destination
