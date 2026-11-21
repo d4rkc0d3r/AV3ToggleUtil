@@ -1117,6 +1117,360 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return true;
         }
 
+        // only eligible for inversion when the param file declares it bool and every controller declares it bool/trigger
+        private static bool IsAnimatorParameterBool(AnimatorControllerParameterType type)
+        {
+            return type == AnimatorControllerParameterType.Bool || type == AnimatorControllerParameterType.Trigger;
+        }
+
+        private static bool InvertTransitionConditions(AnimatorTransitionBase transition, string parameterName)
+        {
+            if (transition == null || transition.conditions == null)
+                return false;
+
+            var conditions = transition.conditions;
+            var changed = false;
+            for (int i = 0; i < conditions.Length; i++)
+            {
+                if (!IsSameParameter(conditions[i].parameter, parameterName))
+                    continue;
+
+                conditions[i].mode = conditions[i].mode == AnimatorConditionMode.If
+                    ? AnimatorConditionMode.IfNot
+                    : AnimatorConditionMode.If;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                transition.conditions = conditions;
+                EditorUtility.SetDirty(transition);
+            }
+
+            return changed;
+        }
+
+        private static bool InvertInBehaviours(StateMachineBehaviour[] behaviours, string parameterName)
+        {
+            if (behaviours == null)
+                return false;
+
+            var changed = false;
+
+            for (int b = 0; b < behaviours.Length; b++)
+            {
+                if (!(behaviours[b] is VRCAvatarParameterDriver driver) || driver.parameters == null)
+                    continue;
+
+                var driverChanged = false;
+                for (int p = 0; p < driver.parameters.Count; p++)
+                {
+                    var parameter = driver.parameters[p];
+                    if (parameter == null)
+                        continue;
+
+                    var isTarget = IsSameParameter(parameter.name, parameterName);
+                    if (!isTarget)
+                        continue;
+
+                    switch (parameter.type)
+                    {
+                        case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set:
+                            // flip 0 <-> 1; other values are left untouched
+                            if (parameter.value == 0f || parameter.value == 1f)
+                            {
+                                parameter.value = parameter.value == 0f ? 1f : 0f;
+                                driverChanged = true;
+                            }
+                            break;
+                        case VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy:
+                            // a range-converting copy maps sourceMin->destMin; flipping destMin/destMax swaps the bool result
+                            if (parameter.convertRange)
+                            {
+                                var destMin = parameter.destMin;
+                                var destMax = parameter.destMax;
+                                if ((destMin == 0f && destMax == 1f) || (destMin == 1f && destMax == 0f))
+                                {
+                                    parameter.destMin = destMax;
+                                    parameter.destMax = destMin;
+                                    driverChanged = true;
+                                }
+                            }
+                            break;
+                    }
+                }
+
+                if (driverChanged)
+                {
+                    EditorUtility.SetDirty(driver);
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        private static bool InvertInStateMachine(AnimatorStateMachine stateMachine, string parameterName)
+        {
+            if (stateMachine == null)
+                return false;
+
+            var changed = false;
+
+            var anyStateTransitions = stateMachine.anyStateTransitions;
+            if (anyStateTransitions != null)
+            {
+                for (int i = 0; i < anyStateTransitions.Length; i++)
+                {
+                    if (InvertTransitionConditions(anyStateTransitions[i], parameterName))
+                        changed = true;
+                }
+            }
+
+            var entryTransitions = stateMachine.entryTransitions;
+            if (entryTransitions != null)
+            {
+                for (int i = 0; i < entryTransitions.Length; i++)
+                {
+                    if (InvertTransitionConditions(entryTransitions[i], parameterName))
+                        changed = true;
+                }
+            }
+
+            var states = stateMachine.states;
+            for (int i = 0; i < states.Length; i++)
+            {
+                var state = states[i].state;
+                if (state == null)
+                    continue;
+
+                var stateTransitions = state.transitions;
+                if (stateTransitions != null)
+                {
+                    for (int t = 0; t < stateTransitions.Length; t++)
+                    {
+                        if (InvertTransitionConditions(stateTransitions[t], parameterName))
+                            changed = true;
+                    }
+                }
+
+                if (InvertInBehaviours(state.behaviours, parameterName))
+                    changed = true;
+            }
+
+            var childStateMachines = stateMachine.stateMachines;
+            for (int i = 0; i < childStateMachines.Length; i++)
+            {
+                if (InvertInStateMachine(childStateMachines[i].stateMachine, parameterName))
+                    changed = true;
+            }
+
+            return changed;
+        }
+
+        private static bool InvertInAnimatorController(AnimatorController controller, string parameterName)
+        {
+            if (controller == null)
+                return false;
+
+            var changed = false;
+
+            // flip the controller parameter's own default (defaultBool) to stay consistent with the inverted logic
+            using var controllerSerialized = new SerializedObject(controller);
+            var controllerParameters = controllerSerialized.FindProperty("m_AnimatorParameters");
+            var parametersChanged = false;
+            for (int i = 0; i < controllerParameters.arraySize; i++)
+            {
+                var parameter = controllerParameters.GetArrayElementAtIndex(i);
+                if (!IsSameParameter(parameter.FindPropertyRelative("m_Name").stringValue, parameterName))
+                    continue;
+
+                var parameterType = (AnimatorControllerParameterType)parameter.FindPropertyRelative("m_Type").intValue;
+                if (parameterType != AnimatorControllerParameterType.Bool && parameterType != AnimatorControllerParameterType.Trigger)
+                    continue;
+
+                var defaultBool = parameter.FindPropertyRelative("m_DefaultBool");
+                defaultBool.boolValue = !defaultBool.boolValue;
+                parametersChanged = true;
+            }
+
+            if (parametersChanged)
+            {
+                controllerSerialized.ApplyModifiedProperties();
+                changed = true;
+            }
+
+            var controllerLayers = controller.layers;
+            if (controllerLayers != null)
+            {
+                for (int i = 0; i < controllerLayers.Length; i++)
+                {
+                    if (InvertInStateMachine(controllerLayers[i].stateMachine, parameterName))
+                        changed = true;
+                }
+            }
+
+            if (changed)
+                EditorUtility.SetDirty(controller);
+
+            return changed;
+        }
+
+        private bool InvertParameter(VRCAvatarDescriptor av, string parameterName)
+        {
+            if (av == null || string.IsNullOrEmpty(parameterName))
+                return false;
+
+            var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
+            if (vrcParameter == null || vrcParameter.valueType != VRCExpressionParameters.ValueType.Bool)
+                return false;
+
+            var changed = false;
+
+            // flip the param file default too so it stays consistent with the inverted controller logic
+            vrcParameter.defaultValue = vrcParameter.defaultValue == 0 ? 1 : 0;
+            changed = true;
+
+            foreach (var controller in GetAllControllers(av).Distinct())
+            {
+                if (InvertInAnimatorController(controller, parameterName))
+                    changed = true;
+            }
+
+            if (!changed)
+                return false;
+
+            EditorUtility.SetDirty(av);
+            ResetCaches();
+            return true;
+        }
+
+        // eligible only when the param file declares it bool and every controller declares it bool/trigger;
+        // blocked outright when a parameter driver uses it as a copy source
+        private static bool IsInvertAllowed(VRCAvatarDescriptor av, string parameterName, ScanResult scanResult)
+        {
+            var vrcParameter = GetVRCExpressionParameterInfo(av, parameterName);
+            if (vrcParameter == null || vrcParameter.valueType != VRCExpressionParameters.ValueType.Bool)
+                return false;
+
+            foreach (var usage in scanResult.stateUsages)
+            {
+                if (usage.parameterDriverSource)
+                    return false;
+            }
+
+            var infos = GetAnimatorControllerParameterInfos(av, parameterName);
+            for (int i = 0; i < infos.Count; i++)
+            {
+                if (!IsAnimatorParameterBool(infos[i].parameterType))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private (int states, int flippedSets, int unchangedSets, int flippedCopies, int unchangedCopies) CountInvertUsages(ScanResult scanResult)
+        {
+            var states = 0;
+            var flippedSets = 0;
+            var unchangedSets = 0;
+            var flippedCopies = 0;
+            var unchangedCopies = 0;
+
+            for (int i = 0; i < scanResult.stateUsages.Count; i++)
+            {
+                var usage = scanResult.stateUsages[i];
+                if (usage.transitionIn || usage.transitionOut)
+                    states++;
+
+                var behaviours = (usage.state != null ? usage.state.behaviours : usage.stateMachine?.behaviours) ?? Array.Empty<StateMachineBehaviour>();
+                for (int b = 0; b < behaviours.Length; b++)
+                {
+                    if (!(behaviours[b] is VRCAvatarParameterDriver driver) || driver.parameters == null)
+                        continue;
+
+                    for (int p = 0; p < driver.parameters.Count; p++)
+                    {
+                        var parameter = driver.parameters[p];
+                        if (parameter == null || !IsSameParameter(parameter.name, selectedParameter))
+                            continue;
+
+                        if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set)
+                        {
+                            if (parameter.value == 0f || parameter.value == 1f)
+                                flippedSets++;
+                            else
+                                unchangedSets++;
+                        }
+                        else if (parameter.type == VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Copy)
+                        {
+                            var (destMin, destMax) = (parameter.destMin, parameter.destMax);
+                            if (parameter.convertRange && ((destMin == 0f && destMax == 1f) || (destMin == 1f && destMax == 0f)))
+                                flippedCopies++;
+                            else
+                                unchangedCopies++;
+                        }
+                    }
+                }
+            }
+
+            return (states, flippedSets, unchangedSets, flippedCopies, unchangedCopies);
+        }
+
+        private string BuildInvertTooltip(VRCAvatarDescriptor av, ScanResult scanResult)
+        {
+            var vrcParameter = GetVRCExpressionParameterInfo(av, selectedParameter);
+            if (vrcParameter == null || vrcParameter.valueType != VRCExpressionParameters.ValueType.Bool)
+                return "Only parameters declared as Bool in the expression parameters are invertible.";
+
+            var blocked = false;
+            var builder = new StringBuilder("Invert the boolean at every usage point: If <-> IfNot in transition conditions, 0 <-> 1 in parameter drivers, and the param file & controller default values.");
+
+            var infos = GetAnimatorControllerParameterInfos(av, selectedParameter);
+            for (int i = 0; i < infos.Count; i++)
+            {
+                if (!IsAnimatorParameterBool(infos[i].parameterType))
+                {
+                    builder.Append("\nBlocked: parameter is ").Append(infos[i].parameterType).Append(" in ").Append(infos[i].controllerName);
+                    blocked = true;
+                }
+            }
+
+            var (states, flippedSets, unchangedSets, flippedCopies, unchangedCopies) = CountInvertUsages(scanResult);
+
+            for (int i = 0; i < scanResult.stateUsages.Count; i++)
+            {
+                if (scanResult.stateUsages[i].parameterDriverSource)
+                {
+                    builder.Append("\nBlocked: used as a copy source by at least one parameter driver");
+                    blocked = true;
+                    break;
+                }
+            }
+
+            if (unchangedSets + unchangedCopies > 0)
+            {
+                builder.Append("\nNote: ").Append(unchangedSets + unchangedCopies)
+                    .Append(" driver entr(y/ies) with a non-bool value/range will be left unchanged");
+            }
+
+            if (blocked)
+                return builder.ToString();
+
+            builder.Append("\nAffects:")
+                .Append(" ").Append(states).Append(" state usage(s) in transition conditions (If <-> IfNot)");
+            if (flippedSets > 0)
+                builder.Append(", ").Append(flippedSets).Append(" driver Set(s) (0 <-> 1)");
+            if (flippedCopies > 0)
+                builder.Append(", ").Append(flippedCopies).Append(" driver Copy entr(y/ies) (swapped dest range)");
+
+            var componentWriters = GetComponentParameterWriters(av, selectedParameter);
+            if (componentWriters.Count > 0)
+                builder.Append("\nNote: written by Param Setters (PhysBone/Contact); they set the value and are not modified");
+
+            return builder.ToString();
+        }
+
         // a parameter is only "used" when its value is consumed; writes by parameter drivers alone don't count
         private static bool IsParameterUsedInControllers(ScanResult scanResult)
         {
@@ -2247,6 +2601,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
 
                 var parameterIsUsedInControllers = IsParameterUsedInControllers(cachedScanResult);
+                var invertAllowed = !isBuiltInParameter && IsInvertAllowed(av, selectedParameter, cachedScanResult);
+                var invertTooltip = isBuiltInParameter ? "VRChat built-in parameters cannot be inverted." : BuildInvertTooltip(av, cachedScanResult);
 
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
@@ -2269,6 +2625,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 removeMode = GUILayout.Toggle(removeMode, "Remove", GUI.skin.button, GUILayout.Width(100f));
                                 if (removeCc.changed && removeMode)
                                     GUI.FocusControl(null);
+                            }
+
+                            using (new EditorGUI.DisabledScope(!invertAllowed))
+                            {
+                                if (GUILayout.Button(new GUIContent("Invert", invertTooltip), GUI.skin.button, GUILayout.Width(100f)))
+                                {
+                                    if (InvertParameter(av, selectedParameter))
+                                    {
+                                        GUI.FocusControl(null);
+                                        Repaint();
+                                        return;
+                                    }
+                                }
                             }
                         }
                     }
@@ -2316,7 +2685,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         }
                     }
                 }
-                
+
                 using (new EditorGUILayout.VerticalScope("box"))
                 {
                     var componentWriters = GetComponentParameterWriters(av, selectedParameter);
