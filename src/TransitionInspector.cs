@@ -21,7 +21,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public string Text;
             public bool HasUserInput;
             public bool UseTextMode; // false = structured layout (default); true = raw text box
-            public List<List<string>> VisualClauses; // draft terms per OR group for the structured layout; null until initialized
+            public List<List<string>> VisualClauses; // null until initialized
         }
 
         [MenuItem("Tools/d4rkpl4y3r/AV3 Toggle Util/Transition Inspector")]
@@ -120,8 +120,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 conditionFieldStates[headerText] = state;
             }
 
-            // Snapshot before any button can mutate the text this frame.
-            var preButtonText = state.Text;
+            var preButtonText = state.Text; // snapshot before any button can mutate it this frame
             var knownNames = parameterInfo?.Names;
             var knownTypes = parameterInfo?.Types;
             var parseOk = BoolExpression.TryParse(state.Text, knownNames, knownTypes, out var parsed, out var parseError);
@@ -173,8 +172,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             GUI.contentColor = prevContentColor;
             GUI.enabled = wasEnabled;
 
-            // Buttons are only drawn when the field is editable; each is individually
-            // disabled (via DisabledScope) when there's nothing for it to do.
             if (editable)
                 DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownNames, knownTypes);
 
@@ -256,8 +253,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             state.Text = FormatConditionText(negated);
                             state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames, parameterTypes);
                         }
-                        // Otherwise (an earlier button changed the text this frame and the
-                        // new negation no longer parses) leave the text untouched.
                         GUI.FocusControl(null);
                     }
                 }
@@ -293,8 +288,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        // ---- Term editor helpers (structured layout) ----
-
         private static readonly string[] BoolOpLabels = { "true", "false" };
         private static readonly string[] CompareOpLabels = { "Greater", "Less", "Equals", "NotEqual" };
         private static readonly BoolTermOp[] CompareOpValues =
@@ -312,12 +305,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public bool ThresholdValid;
         }
 
-        /// <summary>
-        /// Breaks a draft term string into its display parts. Terms that parse cleanly
-        /// against the known parameter names (or a half-typed comparison, e.g.
-        /// "PoolSpawn > 0.") map to structured controls; anything else (unknown
-        /// parameter, garbage) falls back to raw text.
-        /// </summary>
+        /// <summary>Breaks a draft term string into display parts; falls back to raw text when it can't be read.</summary>
         private static TermEdit ParseTermForEdit(string term, string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
         {
             // No known parameter list (unresolvable controller) = plain raw text fields.
@@ -385,7 +373,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return result;
         }
 
-        /// <summary>Rebuilds the draft term string from the term editor's display parts.</summary>
         private static string BuildTermDraft(string param, BoolTermOp op, string threshold)
         {
             switch (op)
@@ -410,32 +397,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 && (t == AnimatorControllerParameterType.Bool || t == AnimatorControllerParameterType.Trigger);
         }
 
-        /// <summary>
-        /// Draws one structured term: parameter popup (fills the row), op popup and
-        /// threshold field (fixed width), and returns the draft term string they produce.
-        /// Op options depend on the parameter's type - Bool/Trigger only get if / if not,
-        /// as in Unity itself.
-        /// </summary>
+        /// <summary>Draws one structured term and returns the draft term string it produces.</summary>
         private static string DrawStructuredTerm(TermEdit edit, string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
         {
             var boolish = IsBoolOrTrigger(names[edit.ParamIndex], types);
 
-            // Parameter popup (the only element that stretches).
             var newParamIndex = EditorGUILayout.Popup(edit.ParamIndex, names);
             var newParam = names[newParamIndex];
             var newBoolish = IsBoolOrTrigger(newParam, types);
 
-            // Op popup, fixed width. The current op's label is carried over to the NEW
-            // parameter's option set if it appears there (e.g. "if not" survives a
-            // bool-to-bool change, ">" survives bool->float); otherwise the first
-            // option is shown.
+            // The current op's label is carried over to the new parameter's option set if it appears there; otherwise the first option is shown.
             var currentLabel = boolish ? BoolOpLabels[GetOpIndex(edit.Op, boolish)] : CompareOpLabels[GetOpIndex(edit.Op, boolish)];
             var labels = newBoolish ? BoolOpLabels : CompareOpLabels;
             var idx = System.Array.IndexOf(labels, currentLabel);
             var newOpIndex = EditorGUILayout.Popup(idx >= 0 ? idx : 0, labels, GUILayout.Width(75f));
             var chosenOp = newBoolish ? (newOpIndex == 1 ? BoolTermOp.IfNot : BoolTermOp.If) : CompareOpValues[newOpIndex];
 
-            // Threshold: raw text field, fixed width, only relevant for comparison ops.
             // Kept at the same width for bool ops (disabled, greyed) so rows line up.
             if (newBoolish || chosenOp == BoolTermOp.If || chosenOp == BoolTermOp.IfNot)
             {
@@ -469,13 +446,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return 0;
         }
 
-        /// <summary>
-        /// Draws the structured condition layout: OR-joined boxes, each an AND group of
-        /// term editors (parameter popup + op popup + threshold field), with per-term
-        /// and per-group remove buttons. Returns the edited term strings; blank terms and
-        /// empty groups are excluded from the resulting expression by
-        /// <see cref="BuildDraftText"/> at commit time.
-        /// </summary>
         private static List<List<string>> DrawVisualConditions(List<List<string>> clauses, ParameterInfo parameterInfo)
         {
             clauses = clauses ?? new List<List<string>>();
@@ -529,8 +499,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 }
 
                                 var edit = ParseTermForEdit(terms[j], parameterInfo?.Names, parameterInfo?.Types);
-                                // Unstructured terms keep their raw text unchanged; only
-                                // structured rows are rebuilt from the drawn controls.
                                 var term = terms[j] ?? string.Empty;
                                 if (!edit.Structured)
                                 {
@@ -578,7 +546,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return newClauses;
         }
 
-        /// <summary>Converts a parsed expression into structured draft term strings.</summary>
         private static List<List<string>> BuildVisualClauses(BoolExpression expr)
         {
             var result = new List<List<string>>();
@@ -594,11 +561,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             return result;
         }
 
-        /// <summary>
-        /// Rebuilds the raw draft text from the structured term strings. Whitespace terms
-        /// and fully empty groups are skipped, so removing every condition of a group
-        /// drops the group out of the expression (it can still be filled in later).
-        /// </summary>
         private static string BuildDraftText(List<List<string>> clauses)
         {
             if (clauses == null)
@@ -631,7 +593,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             if (expr == null || expr.IsEmpty)
             {
-                // Keep the rows the user had; blank terms stay blank.
                 if (old != null)
                     return old;
                 return new List<List<string>>();
@@ -663,8 +624,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// </summary>
         private static string FormatConditionText(BoolExpression expr)
         {
-            // Empty (not a label): the parser treats blank input as unconditional,
-            // which is the correct value for a group with no conditions.
             if (expr == null) return string.Empty;
             var clauses = expr.Clauses;
             var count = clauses.Count;
