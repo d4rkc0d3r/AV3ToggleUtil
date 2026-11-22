@@ -78,21 +78,181 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
     }
 
     /// <summary>
-    /// A boolean expression in DNF (disjunctive normal form): a list of AND clauses joined with OR.
-    /// Handles pure boolean logic only - no Unity types. Zero clauses means "unconditional" (always true).
+    /// Base class for the expression tree. And/Or nodes are flat n-ary: after
+    /// normalization an And never contains a nested And and an Or never contains a
+    /// nested Or, so child lists are compared as unordered sets.
+    /// </summary>
+    public abstract class BoolNode
+    {
+        internal abstract bool EqualsNode(BoolNode other);
+
+        /// <summary>
+        /// Appends the node's display text to <paramref name="sb"/>. <paramref name="outerPrecedence"/>
+        /// is -1 at the root, 0 inside an And (a " | " is looser than the surroundings), and 1
+        /// inside an Or (a " & " is tighter than the surroundings).
+        /// </summary>
+        internal abstract void AppendToDisplay(StringBuilder sb, int outerPrecedence);
+    }
+
+    public sealed class BoolAnd : BoolNode
+    {
+        public List<BoolNode> Children { get; }
+
+        public BoolAnd(List<BoolNode> children)
+        {
+            Children = children ?? new List<BoolNode>();
+        }
+
+        internal override bool EqualsNode(BoolNode other)
+            => other is BoolAnd a && ChildrenAllMatch(Children, a.Children);
+
+        internal override void AppendToDisplay(StringBuilder sb, int outerPrecedence)
+        {
+            // " & " binds tighter than " | " and a nested And is impossible
+            // (the normalizer flattens it), so an And never needs parens.
+            for (var i = 0; i < Children.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append(" & ");
+                Children[i].AppendToDisplay(sb, 0);
+            }
+        }
+
+        internal static bool ChildrenAllMatch(List<BoolNode> mine, List<BoolNode> theirs)
+        {
+            if (mine.Count != theirs.Count)
+                return false;
+            for (var i = 0; i < mine.Count; i++)
+            {
+                var found = false;
+                for (var j = 0; j < theirs.Count; j++)
+                {
+                    if (mine[i].EqualsNode(theirs[j]))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    return false;
+            }
+            return true;
+        }
+    }
+
+    public sealed class BoolOr : BoolNode
+    {
+        public List<BoolNode> Children { get; }
+
+        public BoolOr(List<BoolNode> children)
+        {
+            Children = children ?? new List<BoolNode>();
+        }
+
+        internal override bool EqualsNode(BoolNode other)
+            => other is BoolOr o && BoolAnd.ChildrenAllMatch(Children, o.Children);
+
+        internal override void AppendToDisplay(StringBuilder sb, int outerPrecedence)
+        {
+            // " | " binds looser, so an Or needs parens only when inside an And.
+            var group = outerPrecedence == 0;
+            if (group)
+                sb.Append('(');
+            for (var i = 0; i < Children.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append(" | ");
+                Children[i].AppendToDisplay(sb, 1);
+            }
+            if (group)
+                sb.Append(')');
+        }
+    }
+
+    public sealed class BoolNot : BoolNode
+    {
+        public BoolNode Child { get; }
+
+        public BoolNot(BoolNode child)
+        {
+            Child = child;
+        }
+
+        internal override bool EqualsNode(BoolNode other)
+            => other is BoolNot n && Child.EqualsNode(n.Child);
+
+        internal override void AppendToDisplay(StringBuilder sb, int outerPrecedence)
+        {
+            sb.Append('!');
+            if (Child is BoolTermLeaf)
+                Child.AppendToDisplay(sb, 0);
+            else
+            {
+                sb.Append('(');
+                Child.AppendToDisplay(sb, 0);
+                sb.Append(')');
+            }
+        }
+    }
+
+    public sealed class BoolConstant : BoolNode
+    {
+        public bool Value { get; }
+
+        public BoolConstant(bool value)
+        {
+            Value = value;
+        }
+
+        internal override bool EqualsNode(BoolNode other)
+            => other is BoolConstant c && Value == c.Value;
+
+        internal override void AppendToDisplay(StringBuilder sb, int outerPrecedence)
+            => sb.Append(Value ? "true" : "false");
+    }
+
+    public sealed class BoolTermLeaf : BoolNode
+    {
+        public BoolTerm Term { get; }
+
+        public BoolTermLeaf(BoolTerm term)
+        {
+            Term = term;
+        }
+
+        internal override bool EqualsNode(BoolNode other)
+            => other is BoolTermLeaf t && Term.Equals(t.Term);
+
+        internal override void AppendToDisplay(StringBuilder sb, int outerPrecedence)
+            => sb.Append(Term.ToString());
+    }
+
+    /// <summary>
+    /// A boolean expression stored as a tree of flat n-ary And/Or/Not nodes over
+    /// <see cref="BoolTermLeaf"/> leaves (plus <see cref="BoolConstant"/>). After
+    /// <see cref="Normalize"/> the tree is simplified: same-kind operators are flattened,
+    /// double negations removed, De Morgan applied so Not only ever sits directly on a
+    /// term, constants folded, duplicate children removed, and same-parameter term pairs
+    /// reduced (subsumption / contradiction). A null <see cref="Root"/> means
+    /// "unconditional" (always true).
     /// </summary>
     public sealed class BoolExpression
     {
-        public List<List<BoolTerm>> Clauses { get; } = new List<List<BoolTerm>>();
+        public BoolNode Root { get; set; }
 
-        public bool IsEmpty => Clauses.Count == 0;
+        public bool IsEmpty => Root == null;
+
+        /// <summary>The expression is impossible to satisfy (normalized to false).</summary>
+        public bool IsContradiction => Root is BoolConstant c && !c.Value;
+
+        private Dictionary<string, AnimatorControllerParameterType> _parameterTypes;
 
         /// <summary>
-        /// Parses user text into a normalized DNF expression.
+        /// Parses user text into a normalized tree expression.
         /// Empty/whitespace input succeeds with an empty (unconditional) expression.
         /// </summary>
         public static bool TryParse(string text, out BoolExpression result, out string error)
-            => TryParse(text, null, out result, out error);
+            => TryParse(text, null, null, out result, out error);
 
         /// <summary>
         /// Like <see cref="TryParse(string, out BoolExpression, out string)"/> but with a set of
@@ -109,11 +269,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         /// </summary>
         public static bool TryParse(string text, IEnumerable<string> knownParameterNames, Dictionary<string, AnimatorControllerParameterType> parameterTypes, out BoolExpression result, out string error)
         {
-            var expr = new BoolExpression();
+            var expr = new BoolExpression { _parameterTypes = parameterTypes };
             try
             {
-                if (!string.IsNullOrWhiteSpace(text))
-                    new Parser(text, knownParameterNames, parameterTypes).ParseInto(expr);
+                new Parser(text, knownParameterNames).ParseIntoRoot(expr);
             }
             catch (ParseException e)
             {
@@ -124,7 +283,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
             expr.Normalize();
 
-            if (expr.IsEmpty && !string.IsNullOrWhiteSpace(text))
+            if (expr.IsContradiction)
             {
                 result = null;
                 error = "Expression can never be true";
@@ -136,33 +295,199 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             return true;
         }
 
+        /// <summary>
+        /// Negates this expression in place (wraps the root in Not and re-normalizes).
+        /// On failure (a comparison that cannot be negated) Root is restored and the error is reported.
+        /// </summary>
+        public void Negate(out string error)
+        {
+            var prev = Root;
+            if (IsEmpty)
+                Root = new BoolConstant(false);
+            else if (IsContradiction)
+                Root = new BoolConstant(true);
+            else
+                Root = new BoolNot(Root);
+            try
+            {
+                Normalize();
+                error = null;
+            }
+            catch (ParseException e)
+            {
+                error = e.Message;
+                Root = prev; // keep the expression usable
+            }
+        }
+
+        /// <summary>Negates a copy of this expression without mutating it.</summary>
+        public static bool TryNegate(BoolExpression expr, out BoolExpression negated, out string error)
+        {
+            var copy = new BoolExpression();
+            if (expr != null)
+            {
+                copy.Root = expr.Root;
+                copy._parameterTypes = expr._parameterTypes;
+            }
+            copy.Negate(out error);
+            negated = error == null ? copy : null;
+            return error == null;
+        }
+
+        /// <summary>Adds every parameter referenced anywhere in the tree to <paramref name="set"/>.</summary>
+        public void CollectParameters(HashSet<string> set)
+        {
+            if (Root == null || set == null)
+                return;
+            CollectParametersR(Root, set);
+        }
+
+        private static void CollectParametersR(BoolNode node, HashSet<string> set)
+        {
+            if (node is BoolTermLeaf leaf && leaf.Term.Parameter != null)
+                set.Add(leaf.Term.Parameter);
+            else if (node is BoolAnd a)
+                foreach (var c in a.Children)
+                    CollectParametersR(c, set);
+            else if (node is BoolOr o)
+                foreach (var c in o.Children)
+                    CollectParametersR(c, set);
+            else if (node is BoolNot n)
+                CollectParametersR(n.Child, set);
+        }
+
+        /// <summary>True when the (normalized) expression is a single term.</summary>
+        public bool TryGetSingleTerm(out BoolTerm term)
+        {
+            term = default;
+            if (Root is BoolTermLeaf leaf)
+            {
+                term = leaf.Term;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Converts this expression to DNF (flat AND term lists) for use with Unity
+        /// transitions, which only support a flat AND of conditions per transition.
+        /// Distributes any And-over-Or structure so the result is a full DNF regardless
+        /// of how the (normalized) tree is shaped. A null Root returns an empty list
+        /// (unconditional); an unsatisfiable root throws.
+        /// </summary>
+        public List<List<BoolTerm>> ToDisjunctiveClauses()
+        {
+            var dnf = DnfOf(Root == null ? new BoolConstant(true) : Root);
+            if (dnf.Count == 0)
+                throw new InvalidOperationException("Cannot project an unsatisfiable expression to DNF");
+            if (dnf.Count == 1 && dnf[0].Count == 0) // tautology -> unconditional -> no clauses
+                return new List<List<BoolTerm>>();
+            return dnf;
+        }
+
+        // DNF (list of flat conjunctions) of <paramref name="node"/> itself.
+        // An empty result means unsatisfiable; a single empty list maps to true/unconditional.
+        private List<List<BoolTerm>> DnfOf(BoolNode node)
+        {
+            switch (node)
+            {
+                case BoolConstant c:
+                    return c.Value
+                        ? SingleClause() // true -> one empty conjunction
+                        : new List<List<BoolTerm>>(); // false -> unsatisfiable
+                case BoolTermLeaf leaf:
+                    return SingleClause(leaf.Term);
+                case BoolNot n:
+                    return DnfOfNot(n.Child);
+                case BoolOr or:
+                    return DnfConcat(or.Children);
+                case BoolAnd and:
+                    return DnfDistribute(and.Children);
+                default:
+                    throw new InvalidOperationException($"DNF projection failed for {node?.GetType().Name}");
+            }
+        }
+
+        // DNF of the negation of <paramref name="node"/>.
+        private List<List<BoolTerm>> DnfOfNot(BoolNode node)
+        {
+            switch (node)
+            {
+                case BoolConstant c:
+                    return DnfOf(new BoolConstant(!c.Value));
+                case BoolTermLeaf leaf:
+                    return SingleClause(NegateTerm(leaf).Term);
+                case BoolNot n:
+                    return DnfOf(n.Child); // double negation
+                case BoolAnd a:
+                {
+                    // !(a & b & ...) = !a | !b | ...
+                    var disjuncts = new List<BoolNode>(a.Children.Count);
+                    foreach (var child in a.Children)
+                        disjuncts.Add(new BoolNot(child));
+                    return DnfConcat(disjuncts);
+                }
+                case BoolOr o:
+                {
+                    // !(a | b | ...) = !a & !b & ...
+                    var conjuncts = new List<BoolNode>(o.Children.Count);
+                    foreach (var child in o.Children)
+                        conjuncts.Add(new BoolNot(child));
+                    return DnfDistribute(conjuncts);
+                }
+                default:
+                    throw new InvalidOperationException($"DNF projection failed for !({node?.GetType().Name})");
+            }
+        }
+
+        private static List<List<BoolTerm>> SingleClause(BoolTerm term)
+            => new List<List<BoolTerm>>() { new List<BoolTerm>() { term } };
+
+        private static List<List<BoolTerm>> SingleClause()
+            => new List<List<BoolTerm>>() { new List<BoolTerm>() };
+
+        // Union of the children's DNFs (an Or).
+        private List<List<BoolTerm>> DnfConcat(List<BoolNode> children)
+        {
+            var result = new List<List<BoolTerm>>();
+            for (var i = 0; i < children.Count; i++)
+            {
+                var childDnf = DnfOf(children[i]);
+                for (var j = 0; j < childDnf.Count; j++)
+                    result.Add(childDnf[j]);
+            }
+            return result;
+        }
+
+        // Cartesian product of the children's DNFs (an And): each resulting conjunction
+        // is one conjunction from every child, concatenated. A child whose DNF is empty
+        // (unsatisfiable) collapses the whole thing to empty.
+        private List<List<BoolTerm>> DnfDistribute(List<BoolNode> children)
+        {
+            var result = new List<List<BoolTerm>>() { new List<BoolTerm>() };
+            for (var i = 0; i < children.Count; i++)
+            {
+                var childDnf = DnfOf(children[i]);
+                var next = new List<List<BoolTerm>>();
+                for (var x = 0; x < result.Count; x++)
+                    for (var y = 0; y < childDnf.Count; y++)
+                    {
+                        var conj = new List<BoolTerm>(result[x].Count + childDnf[y].Count);
+                        conj.AddRange(result[x]);
+                        conj.AddRange(childDnf[y]);
+                        next.Add(conj);
+                    }
+                result = next;
+            }
+            return result;
+        }
+
         public string ToDisplayString()
         {
-            if (Clauses.Count == 0)
+            if (Root == null)
                 return "";
-
             var sb = new StringBuilder();
-            for (var i = 0; i < Clauses.Count; i++)
-            {
-                if (i > 0)
-                    sb.Append(" | ");
-                var clause = Clauses[i];
-                if (clause.Count > 1)
-                {
-                    sb.Append('(');
-                    for (var j = 0; j < clause.Count; j++)
-                    {
-                        if (j > 0)
-                            sb.Append(" & ");
-                        sb.Append(clause[j].ToString());
-                    }
-                    sb.Append(')');
-                }
-                else
-                {
-                    sb.Append(clause[0].ToString());
-                }
-            }
+            Root.AppendToDisplay(sb, -1);
             return sb.ToString();
         }
 
@@ -173,111 +498,229 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
         public bool IsSameExpression(BoolExpression other)
         {
-            if (other == null || Clauses.Count != other.Clauses.Count)
+            if (other == null)
                 return false;
-            for (var i = 0; i < Clauses.Count; i++)
+            if (Root == null || other.Root == null)
             {
-                var found = false;
-                for (var j = 0; j < other.Clauses.Count; j++)
-                {
-                    if (ClausesEqual(Clauses[i], other.Clauses[j]))
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found)
-                    return false;
+                var bothEmpty = Root == null && other.Root == null;
+                var bothTrue = Root is BoolConstant ca && ca.Value && other.Root is BoolConstant cb && cb.Value;
+                return bothEmpty || bothTrue;
             }
-            return true;
+            if (Root is BoolConstant c1 && other.Root is BoolConstant c2)
+                return c1.Value == c2.Value;
+            return Root.EqualsNode(other.Root);
         }
 
-        /// <summary>Deduplicates terms and clauses and drops clauses that contain a contradiction.</summary>
+        /// <summary>
+        /// Simplifies the tree (rewriting <see cref="Root"/> in place): flattens same-kind
+        /// And/Or, removes double negations, pushes Not down via De Morgan so it only sits
+        /// directly on a term, folds constants, removes duplicate children, and reduces
+        /// same-parameter term pairs (subsumption / contradiction). Does NOT perform
+        /// absorption.
+        /// </summary>
         public void Normalize()
         {
-            var normalized = new List<List<BoolTerm>>();
-            for (var i = 0; i < Clauses.Count; i++)
-            {
-                SimplifyClause(Clauses[i]);
-                if (Clauses[i].Count > 0 && !ContainsClause(normalized, Clauses[i]))
-                    normalized.Add(Clauses[i]);
-            }
-            Clauses.Clear();
-            Clauses.AddRange(normalized);
+            if (Root != null)
+                Root = NormalizeNode(Root);
         }
 
-        private static bool ContainsClause(List<List<BoolTerm>> list, List<BoolTerm> clause)
+        /// <summary>Normalizes <paramref name="node"/> and returns the (possibly new) simplified node.</summary>
+        private BoolNode NormalizeNode(BoolNode node)
+        {
+            while (true)
+            {
+                if (node is BoolConstant || node is BoolTermLeaf)
+                    return node;
+
+                if (node is BoolNot n)
+                {
+                    var inner = NormalizeNode(n.Child);
+                    if (inner is BoolConstant c)
+                        return new BoolConstant(!c.Value);
+                    if (inner is BoolAnd andNode)
+                    {
+                        // De Morgan: !(a & b & ...) = !a | !b | ...
+                        var kids = new List<BoolNode>(andNode.Children.Count);
+                        foreach (var child in andNode.Children)
+                            kids.Add(new BoolNot(child));
+                        node = kids.Count == 1 ? kids[0] : new BoolOr(kids);
+                        continue;
+                    }
+                    if (inner is BoolOr orNode)
+                    {
+                        // De Morgan: !(a | b | ...) = !a & !b & ...
+                        var kids = new List<BoolNode>(orNode.Children.Count);
+                        foreach (var child in orNode.Children)
+                            kids.Add(new BoolNot(child));
+                        node = kids.Count == 1 ? kids[0] : new BoolAnd(kids);
+                        continue;
+                    }
+                    if (inner is BoolTermLeaf termLeaf)
+                        return NegateTerm(termLeaf);
+                    return new BoolConstant(true); // unreachable - NormalizeNode never returns a Not
+                }
+
+                if (node is BoolAnd a)
+                {
+                    var result = new List<BoolNode>(a.Children.Count);
+                    for (var i = 0; i < a.Children.Count; i++)
+                    {
+                        var child = NormalizeNode(a.Children[i]);
+                        if (child is BoolConstant c)
+                        {
+                            if (!c.Value)
+                                return child; // And{..., false} -> false
+                            continue; // swallow true
+                        }
+                        if (child is BoolAnd inner)
+                        {
+                            foreach (var gc in inner.Children)
+                                result.Add(gc);
+                            continue;
+                        }
+                        if (!ContainsNode(result, child))
+                            result.Add(child);
+                    }
+                    if (result.Count == 0)
+                        return new BoolConstant(true);
+                    if (result.Count == 1)
+                        return result[0];
+                    if (ReduceTermPairsInPlace(result, out var becameFalse))
+                    {
+                        if (becameFalse)
+                            return new BoolConstant(false);
+                        if (result.Count == 0)
+                            return new BoolConstant(true);
+                        if (result.Count == 1)
+                            return result[0];
+                    }
+                    return new BoolAnd(result);
+                }
+
+                if (node is BoolOr o)
+                {
+                    var result = new List<BoolNode>(o.Children.Count);
+                    for (var i = 0; i < o.Children.Count; i++)
+                    {
+                        var child = NormalizeNode(o.Children[i]);
+                        if (child is BoolConstant c)
+                        {
+                            if (c.Value)
+                                return child; // Or{..., true} -> true
+                            continue; // swallow false
+                        }
+                        if (child is BoolOr inner)
+                        {
+                            foreach (var gc in inner.Children)
+                                result.Add(gc);
+                            continue;
+                        }
+                        if (!ContainsNode(result, child))
+                            result.Add(child);
+                    }
+                    // No pair reduction here: a contradiction cannot appear inside an Or,
+                    // and subsumption between Or children (absorption) is deliberately not
+                    // performed so equality behavior matches the old DNF normalizer.
+                    if (result.Count == 0)
+                        return new BoolConstant(false);
+                    if (result.Count == 1)
+                        return result[0];
+                    return new BoolOr(result);
+                }
+
+                return node;
+            }
+        }
+
+        private static bool ContainsNode(List<BoolNode> list, BoolNode node)
         {
             for (var i = 0; i < list.Count; i++)
-            {
-                if (ClausesEqual(list[i], clause))
+                if (node.EqualsNode(list[i]))
                     return true;
-            }
             return false;
         }
 
-        private static bool ClausesEqual(List<BoolTerm> a, List<BoolTerm> b)
+        /// <summary>
+        /// Reduces pairs of same-parameter terms in <paramref name="children"/> in place
+        /// (subsumption drops the weaker term, equal terms dedupe, contradiction drops the
+        /// whole list via <paramref name="becameFalse"/>). Returns true when anything changed.
+        /// </summary>
+        private bool ReduceTermPairsInPlace(List<BoolNode> children, out bool becameFalse)
         {
-            if (a.Count != b.Count)
-                return false;
-            for (var i = 0; i < a.Count; i++)
+            becameFalse = false;
+            var pass = false;
+            var loop = true;
+            while (loop && children.Count > 1)
             {
-                var found = false;
-                for (var j = 0; j < b.Count; j++)
+                loop = false;
+                for (var i = 0; i < children.Count - 1; i++)
                 {
-                    if (a[i].Equals(b[j]))
+                    if (!(children[i] is BoolTermLeaf li))
+                        continue;
+                    for (var j = children.Count - 1; j > i; j--)
                     {
-                        found = true;
+                        if (!(children[j] is BoolTermLeaf lj))
+                            continue;
+                        var r = SimplifyPair(li.Term, lj.Term);
+                        if (r == PairResult.Contradiction)
+                        {
+                            becameFalse = true;
+                            return true;
+                        }
+                        if (r == PairResult.DropFirst)
+                        {
+                            children.RemoveAt(i);
+                            i--;
+                            pass = true;
+                        }
+                        else if (r == PairResult.DropSecond)
+                        {
+                            children.RemoveAt(j);
+                            pass = true;
+                        }
+                    }
+                    if (pass)
+                    {
+                        loop = true; // rescan from the top
                         break;
                     }
                 }
-                if (!found)
-                    return false;
             }
-            return true;
+            return pass || becameFalse;
         }
 
-        private static void SimplifyClause(List<BoolTerm> clause)
+        private BoolTermLeaf NegateTerm(BoolTermLeaf leaf)
         {
-            var unique = new List<BoolTerm>();
-            for (var i = 0; i < clause.Count; i++)
+            // Int parameters are discrete, so the inverted comparison IS representable:
+            // !(x > t) == x <= t == x < t+1;   !(x < t) == x >= t == x > t-1.
+            switch (leaf.Term.Op)
             {
-                if (!unique.Contains(clause[i]))
-                    unique.Add(clause[i]);
-            }
-            clause.Clear();
-            clause.AddRange(unique);
-
-            var changed = true;
-            while (changed && clause.Count > 0)
-            {
-                changed = false;
-                for (var i = 0; i < clause.Count - 1 && !changed; i++)
-                {
-                    for (var j = clause.Count - 1; j > i; j--)
-                    {
-                        var result = SimplifyPair(clause[i], clause[j]);
-                        if (result == PairResult.Contradiction)
-                        {
-                            clause.Clear();
-                            changed = true;
-                            break;
-                        }
-                        if (result == PairResult.DropFirst)
-                        {
-                            clause.RemoveAt(i);
-                            i--;
-                            changed = true;
-                        }
-                        else if (result == PairResult.DropSecond)
-                        {
-                            clause.RemoveAt(j);
-                            changed = true;
-                        }
-                    }
-                }
+                case BoolTermOp.If:
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.IfNot));
+                case BoolTermOp.IfNot:
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.If));
+                case BoolTermOp.Equals:
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.NotEquals, leaf.Term.Threshold));
+                case BoolTermOp.NotEquals:
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Equals, leaf.Term.Threshold));
+                case BoolTermOp.Greater:
+                    if (IsInt(leaf.Term.Parameter))
+                        return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Less, leaf.Term.Threshold + 1f));
+                    throw new ParseException("Cannot negate '>' - the inverted form is not representable for this parameter type");
+                case BoolTermOp.Less:
+                    if (IsInt(leaf.Term.Parameter))
+                        return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Greater, leaf.Term.Threshold - 1f));
+                    throw new ParseException("Cannot negate '<' - the inverted form is not representable for this parameter type");
+                default:
+                    throw new ParseException("Cannot negate this condition");
             }
         }
+
+        private bool IsInt(string parameter)
+            => _parameterTypes != null
+            && parameter != null
+            && _parameterTypes.TryGetValue(parameter, out var t)
+            && t == AnimatorControllerParameterType.Int;
 
         private enum PairResult
         {
@@ -398,12 +841,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             private readonly string _text;
             private int _pos;
             private readonly HashSet<string> _knownTokens;
-            private readonly Dictionary<string, AnimatorControllerParameterType> _parameterTypes;
 
-            public Parser(string text, IEnumerable<string> knownTokens = null, Dictionary<string, AnimatorControllerParameterType> parameterTypes = null)
+            public Parser(string text, IEnumerable<string> knownTokens = null)
             {
                 _text = text;
-                _parameterTypes = parameterTypes;
                 if (knownTokens != null)
                 {
                     _knownTokens = new HashSet<string>();
@@ -413,116 +854,59 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 }
             }
 
-            public void ParseInto(BoolExpression expr)
+            public void ParseIntoRoot(BoolExpression expr)
             {
                 SkipWs();
                 if (string.IsNullOrWhiteSpace(_text))
+                {
+                    expr.Root = null;
                     return;
-                expr.Clauses.AddRange(ParseOr());
+                }
+                expr.Root = ParseOr();
                 SkipWs();
                 if (_pos != _text.Length)
                     throw new ParseException($"Unexpected '{_text[_pos]}' at position {_pos}");
             }
 
-            private List<List<BoolTerm>> ParseOr()
+            private BoolNode ParseOr()
             {
-                var clauses = ParseAnd();
+                var children = new List<BoolNode> { ParseAnd() };
                 while (true)
                 {
                     SkipWs();
                     if (!MatchOr())
                         break;
                     SkipWs();
-                    clauses.AddRange(ParseAnd());
+                    children.Add(ParseAnd());
                 }
-                return clauses;
+                return children.Count == 1 ? children[0] : new BoolOr(children);
             }
 
-            private List<List<BoolTerm>> ParseAnd()
+            private BoolNode ParseAnd()
             {
-                var clauses = ParseNot();
+                var children = new List<BoolNode> { ParseNot() };
                 while (true)
                 {
                     SkipWs();
                     if (!MatchAnd())
                         break;
                     SkipWs();
-                    var right = ParseNot();
-                    var distributed = new List<List<BoolTerm>>();
-                    for (var i = 0; i < clauses.Count; i++)
-                    {
-                        for (var j = 0; j < right.Count; j++)
-                        {
-                            var merged = new List<BoolTerm>(clauses[i]);
-                            merged.AddRange(right[j]);
-                            distributed.Add(merged);
-                        }
-                    }
-                    clauses = distributed;
+                    children.Add(ParseNot());
                 }
-                return clauses;
+                return children.Count == 1 ? children[0] : new BoolAnd(children);
             }
 
-            private List<List<BoolTerm>> ParseNot()
+            private BoolNode ParseNot()
             {
                 if (Match("!"))
                 {
                     SkipWs();
-                    var inner = ParseNot();
-                    if (inner.Count == 1)
-                    {
-                        // !(a & b) == !a | !b : each negated term becomes its own OR clause.
-                        var negated = new List<List<BoolTerm>>();
-                        for (var i = 0; i < inner[0].Count; i++)
-                            negated.Add(new List<BoolTerm> { Negate(inner[0][i], _parameterTypes) });
-                        return negated;
-                    }
-                    // !(a | b) == !a & !b : all negated terms form one AND clause.
-                    var clause = new List<BoolTerm>();
-                    for (var i = 0; i < inner.Count; i++)
-                    {
-                        for (var j = 0; j < inner[i].Count; j++)
-                            clause.Add(Negate(inner[i][j], _parameterTypes));
-                    }
-                    return new List<List<BoolTerm>> { clause };
+                    return new BoolNot(ParseNot());
                 }
                 return ParsePrimary();
             }
 
-private static BoolTerm Negate(BoolTerm term, Dictionary<string, AnimatorControllerParameterType> types)
-        {
-            switch (term.Op)
-            {
-                case BoolTermOp.If:
-                    return new BoolTerm(term.Parameter, BoolTermOp.IfNot);
-                case BoolTermOp.IfNot:
-                    return new BoolTerm(term.Parameter, BoolTermOp.If);
-                case BoolTermOp.Equals:
-                    return new BoolTerm(term.Parameter, BoolTermOp.NotEquals, term.Threshold);
-                case BoolTermOp.NotEquals:
-                    return new BoolTerm(term.Parameter, BoolTermOp.Equals, term.Threshold);
-                // Int parameters are discrete, so the inverted comparison IS representable:
-                // !(x > t) == x <= t == x < t+1;   !(x < t) == x >= t == x > t-1.
-                case BoolTermOp.Greater:
-                    if (IsInt(types, term.Parameter))
-                        return new BoolTerm(term.Parameter, BoolTermOp.Less, term.Threshold + 1f);
-                    throw new ParseException("Cannot negate '>' - the inverted form is not representable for this parameter type");
-                case BoolTermOp.Less:
-                    if (IsInt(types, term.Parameter))
-                        return new BoolTerm(term.Parameter, BoolTermOp.Greater, term.Threshold - 1f);
-                    throw new ParseException("Cannot negate '<' - the inverted form is not representable for this parameter type");
-                default:
-                    throw new ParseException("Cannot negate this condition");
-            }
-        }
-
-        private static bool IsInt(Dictionary<string, AnimatorControllerParameterType> types, string parameter)
-            => types != null
-            && parameter != null
-            && types.TryGetValue(parameter, out var t)
-            && t == AnimatorControllerParameterType.Int;
-
-            private List<List<BoolTerm>> ParsePrimary()
+            private BoolNode ParsePrimary()
             {
                 SkipWs();
                 if (Match("("))
@@ -534,8 +918,7 @@ private static BoolTerm Negate(BoolTerm term, Dictionary<string, AnimatorControl
                         throw new ParseException($"Expected ')' at position {_pos}");
                     return inner;
                 }
-                var term = ParseTerm();
-                return new List<List<BoolTerm>> { new List<BoolTerm> { term } };
+                return new BoolTermLeaf(ParseTerm());
             }
 
             private BoolTerm ParseTerm()

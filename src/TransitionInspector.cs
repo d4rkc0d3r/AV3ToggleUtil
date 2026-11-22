@@ -246,9 +246,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 string negatePreviewError = null;
                 var negatable = parseOk && parsed != null && !parsed.IsEmpty;
-                var negateSource = state.UseTextMode ? SweepAliases(state.Text, aliasRows, AliasSweepMode.Expand) : state.Text;
-                var canNegate = negatable
-                    && BoolExpression.TryParse("!(" + negateSource.Replace("\n", " ") + ")", knownParameterNames, parameterTypes, out _, out negatePreviewError);
+                var canNegate = negatable && BoolExpression.TryNegate(parsed, out _, out negatePreviewError);
                 var negateTooltip = !parseOk ? parseError
                     : parsed == null || parsed.IsEmpty
                         ? "Nothing to negate - give the expression at least one condition first"
@@ -258,8 +256,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     if (GUILayout.Button(new GUIContent("Negate", negateTooltip)))
                     {
-                        var negatedText = "!(" + negateSource.Replace("\n", " ") + ")";
-                        if (BoolExpression.TryParse(negatedText, knownParameterNames, parameterTypes, out var negated, out _))
+                        if (BoolExpression.TryNegate(parsed, out var negated, out _))
                         {
                             state.Text = state.UseTextMode ? SweepAliases(FormatConditionText(negated), aliasRows, AliasSweepMode.Compress) : FormatConditionText(negated);
                             state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames, parameterTypes);
@@ -480,9 +477,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var rows = state.AliasRows;
 
             var used = new HashSet<string>(StringComparer.Ordinal);
-            for (var i = 0; i < parsed.Clauses.Count; i++)
-                for (var j = 0; j < parsed.Clauses[i].Count; j++)
-                    used.Add(parsed.Clauses[i][j].Parameter);
+            parsed.CollectParameters(used);
 
             // Forget removals for parameters that are no longer referenced at all.
             var stale = new List<string>(state.RemovedAliasParams.Count);
@@ -699,9 +694,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             bool isEmpty = trimmed.Length == 0;
 
             if (!isEmpty && BoolExpression.TryParse(trimmed, names, types, out var expr, out _)
-                && expr.Clauses.Count == 1 && expr.Clauses[0].Count == 1)
+                && expr.TryGetSingleTerm(out var t))
             {
-                var t = expr.Clauses[0][0];
                 var idx = Array.IndexOf(names, t.Parameter);
                 if (idx >= 0)
                     return new TermEdit { Structured = true, ParamIndex = idx, Op = t.Op, Threshold = BoolTerm.FormatThreshold(t.Threshold), ThresholdValid = true };
@@ -946,13 +940,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static List<List<string>> BuildVisualClauses(BoolExpression expr)
         {
             var result = new List<List<string>>();
-            if (expr == null)
+            if (expr == null || expr.IsEmpty)
                 return result;
-            for (var i = 0; i < expr.Clauses.Count; i++)
+            var clauses = expr.ToDisjunctiveClauses();
+            for (var i = 0; i < clauses.Count; i++)
             {
-                var row = new List<string>(expr.Clauses[i].Count);
-                for (var j = 0; j < expr.Clauses[i].Count; j++)
-                    row.Add(expr.Clauses[i][j].ToString());
+                var row = new List<string>(clauses[i].Count);
+                for (var j = 0; j < clauses[i].Count; j++)
+                    row.Add(clauses[i][j].ToString());
                 result.Add(row);
             }
             return result;
@@ -1005,18 +1000,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     return old;
                 return new List<List<string>>();
             }
-            var result = new List<List<string>>(expr.Clauses.Count);
-            for (var i = 0; i < expr.Clauses.Count; i++)
+            var clauses = expr.ToDisjunctiveClauses();
+            var result = new List<List<string>>(clauses.Count);
+            for (var i = 0; i < clauses.Count; i++)
             {
-                var row = new List<string>(expr.Clauses[i].Count);
-                for (var j = 0; j < expr.Clauses[i].Count; j++)
+                var row = new List<string>(clauses[i].Count);
+                for (var j = 0; j < clauses[i].Count; j++)
                 {
-                    var term = expr.Clauses[i][j];
+                    var term = clauses[i][j];
                     var text = term.ToString();
                     if (old != null && i < old.Count && j < old[i].Count
                         && BoolExpression.TryParse(old[i][j], knownParameterNames, parameterTypes, out var single, out _)
-                        && single.Clauses.Count == 1 && single.Clauses[0].Count == 1
-                        && single.Clauses[0][0].Equals(term))
+                        && single.TryGetSingleTerm(out var oldTerm)
+                        && oldTerm.Equals(term))
                         text = old[i][j];
                     row.Add(text);
                 }
@@ -1026,30 +1022,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>
-        /// Formats an expression as one |-clause per line so the multi-line field
-        /// never overflows the window width. Single clauses stay on a single line;
-        /// the parser treats newlines as whitespace, so any layout round-trips.
+        /// Formats the expression in tree form - parens only where precedence needs them
+        /// (e.g. "a & (b | c)"). Newlines are whitespace and "&"/"|" accept the "&&"/"||"
+        /// spelling, so the result always round-trips through the parser.
         /// </summary>
         private static string FormatConditionText(BoolExpression expr)
-        {
-            if (expr == null) return string.Empty;
-            var clauses = expr.Clauses;
-            var count = clauses.Count;
-            if (count == 0) return string.Empty;
-
-            var lines = new string[count];
-            for (var i = 0; i < count; i++)
-            {
-                var terms = clauses[i];
-                var line = string.Empty;
-                for (var j = 0; j < terms.Count; j++)
-                {
-                    line += line.Length == 0 ? terms[j].ToString() : " & " + terms[j];
-                }
-                lines[i] = line;
-            }
-            return JoinClauseLines(lines);
-        }
+            => expr == null ? string.Empty : expr.ToDisplayString();
 
         private static bool TryGetSourceLocation(AnimatorStateTransition transition, out AnimatorState sourceState, out AnimatorStateMachine sourceMachine)
         {
@@ -1190,9 +1168,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
             display = AnyMatches(transitions, t => t.isExit) ? "(exit transition)" : (displayParts.Count > 0 ? string.Join(" || ", displayParts) : "(no conditions)");
 
-            var canonical = new BoolExpression();
+            var roots = new List<BoolNode>();
             for (var i = 0; i < expressions.Count; i++)
-                canonical.Clauses.AddRange(expressions[i].Clauses);
+                if (expressions[i].Root != null)
+                    roots.Add(expressions[i].Root);
+
+            var canonical = new BoolExpression();
+            if (roots.Count == 1)
+                canonical.Root = roots[0];
+            else if (roots.Count > 1)
+                canonical.Root = new BoolOr(roots);
             canonical.Normalize();
             return canonical;
         }
@@ -1200,15 +1185,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static BoolExpression ExpressionFromTransition(AnimatorStateTransition transition)
         {
             var expr = new BoolExpression();
-            var clause = new List<BoolTerm>();
             var conditions = transition.conditions;
+            var terms = new List<BoolNode>(conditions.Length);
             for (var i = 0; i < conditions.Length; i++)
             {
                 var c = conditions[i];
-                clause.Add(new BoolTerm(c.parameter, MapModeToOp(c.mode), c.threshold));
+                terms.Add(new BoolTermLeaf(new BoolTerm(c.parameter, MapModeToOp(c.mode), c.threshold)));
             }
-            expr.Clauses.Add(clause);
+            if (terms.Count == 0)
+                return expr; // no conditions: unconditional (null root)
+            expr.Root = terms.Count == 1 ? terms[0] : new BoolAnd(terms);
             expr.Normalize();
+            if (expr.IsContradiction)
+                expr.Root = null; // impossible conditions: drop, like the old DNF normalizer did
             return expr;
         }
 
@@ -1258,7 +1247,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var key = group.Key;
             var transitions = group.Value;
-            var clauses = parsed.Clauses;
+            var clauses = parsed.ToDisjunctiveClauses();
 
             if (!key.HasSourceLocation)
                 return;
