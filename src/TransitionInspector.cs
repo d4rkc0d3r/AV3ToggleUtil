@@ -19,8 +19,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private class ConditionFieldState
         {
             public string Text;
-            public bool UseTextMode; // false = structured layout (default); true = raw text box
-            public List<List<string>> VisualClauses; // null until initialized
+            public bool UseTextMode;
+            public List<List<string>> VisualClauses;
         }
 
         [MenuItem("Tools/d4rkpl4y3r/AV3 Toggle Util/Transition Inspector")]
@@ -51,7 +51,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     visibleHeaders.Add(stateKey);
                     GUILayout.Label(headerText, EditorStyles.boldLabel);
 
-                    // Multiple transitions from the same source to the same target act as OR; each condition inside a single transition acts as AND
                     DrawConditionEditor(stateKey, group);
 
                     // Apply (inside DrawConditionEditor) may remove transitions mid-frame;
@@ -126,10 +125,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var parseOk = BoolExpression.TryParse(state.Text, knownNames, knownTypes, out var parsed, out var parseError);
             var editable = !settingsMixed && !hasExitTransition;
             var differs = parseOk && canonical.Differs(parsed);
-            // The structured layout is the default; the raw text box is a manual fallback
-            // for debugging. A broken draft does NOT force the text box in - the term
-            // fields stay editable and show the error - so half-typed terms don't yank
-            // the user away from the structured layout.
             var useText = state.UseTextMode;
 
             string tooltip = null;
@@ -159,8 +154,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
             else
             {
-                // If the draft drifted from the stored clause drafts (e.g. the user edited
-                // it in text mode before toggling back), rebuild them from the parsed draft.
                 if (state.Text != BuildDraftText(state.VisualClauses))
                     state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownNames, knownTypes);
                 newClauses = DrawVisualConditions(state.VisualClauses, parameterInfo);
@@ -175,9 +168,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (editable)
                 DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownNames, knownTypes);
 
-            // IMGUI draws the fields before the buttons in the same frame/event, so on the
-            // frame a button is clicked the field values still hold the PRE-click data.
-            // Only write the fields' value back if a button didn't already change it this frame.
             if (useText)
             {
                 if (state.Text == preButtonText && newText != state.Text)
@@ -192,7 +182,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private void DrawConditionButtons(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, ConditionFieldState state, BoolExpression parsed, bool parseOk, string parseError, bool differs, string formattedText, BoolExpression canonical, IEnumerable<string> knownParameterNames, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> parameterTypes)
+        private void DrawConditionButtons(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, ConditionFieldState state, BoolExpression parsed, bool parseOk, string parseError, bool differs, string formattedText, BoolExpression canonical, IEnumerable<string> knownParameterNames, Dictionary<string, AnimatorControllerParameterType> parameterTypes)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -222,9 +212,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
 
-                // Pre-check the negation: conditions whose inverted form is not representable
-                // (float Greater/Less) would leave unparsable text - disable whenever the
-                // result would not parse. Int Greater/Less IS representable (threshold shift).
                 string negatePreviewError = null;
                 var negatable = parseOk && parsed != null && !parsed.IsEmpty;
                 var canNegate = negatable
@@ -238,7 +225,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     if (GUILayout.Button(new GUIContent("Negate", negateTooltip)))
                     {
-                        // Raw text wrap; the parser's '!' handles flattening.
                         var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
                         if (BoolExpression.TryParse(negatedText, knownParameterNames, parameterTypes, out var negated, out _))
                         {
@@ -249,7 +235,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
 
-                // parseOk implies parsed is non-null here.
                 var canNormalize = parseOk && !parsed.IsEmpty;
                 var normalizeTooltip = !parseOk ? parseError
                     : canNormalize ? "Show the simplified canonical form (deduped, simplified, contradictions removed)"
@@ -271,9 +256,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 if (GUILayout.Button(new GUIContent(toggleLabel, toggleTooltip)))
                 {
                     state.UseTextMode = !state.UseTextMode;
-                    // The focused control from the old layout (e.g. a threshold field)
-                    // no longer exists next frame; drop focus so IMGUI doesn't try to
-                    // feed input into a gone control.
                     GUI.FocusControl(null);
                 }
             }
@@ -297,9 +279,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>Breaks a draft term string into display parts; falls back to raw text when it can't be read.</summary>
-        private static TermEdit ParseTermForEdit(string term, string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        private static TermEdit ParseTermForEdit(string term, string[] names, Dictionary<string, AnimatorControllerParameterType> types)
         {
-            // No known parameter list (unresolvable controller) = plain raw text fields.
             if (names == null || names.Length == 0)
                 return new TermEdit { Structured = false };
 
@@ -310,7 +291,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 && expr.Clauses.Count == 1 && expr.Clauses[0].Count == 1)
             {
                 var t = expr.Clauses[0][0];
-                var idx = System.Array.IndexOf(names, t.Parameter);
+                var idx = Array.IndexOf(names, t.Parameter);
                 if (idx >= 0)
                     return new TermEdit { Structured = true, ParamIndex = idx, Op = t.Op, Threshold = BoolTerm.FormatThreshold(t.Threshold), ThresholdValid = true };
             }
@@ -320,19 +301,19 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // start-of-name prefix ("Pool " -> "Pool Spawn") is auto-completed so
             // partially typed conditions keep their structured display.
             var not = !isEmpty && trimmed.StartsWith("!");
-            var scan = not ? trimmed.Substring(1).Trim() : trimmed;
+            var scan = not ? trimmed[1..].Trim() : trimmed;
             string best = null;
             string completion = null;
             for (var i = 0; i < names.Length; i++)
             {
                 if (names[i].Length == 0)
                     continue;
-                if (scan.StartsWith(names[i], System.StringComparison.Ordinal))
+                if (scan.StartsWith(names[i], StringComparison.Ordinal))
                 {
                     if (best == null || names[i].Length > best.Length)
                         best = names[i];
                 }
-                else if (names[i].StartsWith(scan, System.StringComparison.Ordinal))
+                else if (names[i].StartsWith(scan, StringComparison.Ordinal))
                     completion = completion == null ? names[i] : null; // null = ambiguous
             }
             var paramToUse = best ?? completion;
@@ -340,8 +321,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 return new TermEdit { Structured = false };
             var paramLength = best != null ? best.Length : scan.Length;
 
-            var result = new TermEdit { Structured = true, ParamIndex = System.Array.IndexOf(names, paramToUse) };
-            var rest = scan.Substring(paramLength).Trim();
+            var result = new TermEdit { Structured = true, ParamIndex = Array.IndexOf(names, paramToUse) };
+            var rest = scan[paramLength..].Trim();
             if (rest.Length == 0)
             {
                 result.Op = not ? BoolTermOp.IfNot : BoolTermOp.If;
@@ -356,7 +337,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 else if (rest.StartsWith("<")) { token = "<"; result.Op = BoolTermOp.Less; }
                 else if (rest.StartsWith("=")) { token = "="; result.Op = BoolTermOp.Equals; }
                 else return new TermEdit { Structured = false };
-                result.Threshold = rest.Substring(token.Length).Trim();
+                result.Threshold = rest[token.Length..].Trim();
                 result.ThresholdValid = TryParseThreshold(result.Threshold, out _);
             }
             else
@@ -381,10 +362,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         private static bool TryParseThreshold(string s, out float value)
             => float.TryParse(s, System.Globalization.NumberStyles.Float, Invariant, out value);
 
-        private static bool IsBoolOrTrigger(string name, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        private static bool IsBoolOrTrigger(string name, Dictionary<string, AnimatorControllerParameterType> types)
         {
-            AnimatorControllerParameterType t;
-            return name != null && types.TryGetValue(name, out t)
+            return name != null && types.TryGetValue(name, out AnimatorControllerParameterType t)
                 && (t == AnimatorControllerParameterType.Bool || t == AnimatorControllerParameterType.Trigger);
         }
 
@@ -393,7 +373,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// using the first available parameter and a valid default op ("true" for bools,
         /// "Equals 0" for int/float/trigger).
         /// </summary>
-        private static string BuildNewTermDraft(string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        private static string BuildNewTermDraft(string[] names, Dictionary<string, AnimatorControllerParameterType> types)
         {
             if (names == null || names.Length == 0)
                 return string.Empty;
@@ -410,7 +390,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         /// <summary>Draws one structured term and returns the draft term string it produces.</summary>
-        private static string DrawStructuredTerm(TermEdit edit, string[] names, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> types)
+        private static string DrawStructuredTerm(TermEdit edit, string[] names, Dictionary<string, AnimatorControllerParameterType> types)
         {
             var boolish = IsBoolOrTrigger(names[edit.ParamIndex], types);
 
@@ -421,7 +401,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             // The current op's label is carried over to the new parameter's option set if it appears there; otherwise the first option is shown.
             var currentLabel = boolish ? BoolOpLabels[GetOpIndex(edit.Op, boolish)] : CompareOpLabels[GetOpIndex(edit.Op, boolish)];
             var labels = newBoolish ? BoolOpLabels : CompareOpLabels;
-            var idx = System.Array.IndexOf(labels, currentLabel);
+            var idx = Array.IndexOf(labels, currentLabel);
             var newOpIndex = EditorGUILayout.Popup(idx >= 0 ? idx : 0, labels, GUILayout.Width(75f));
             var chosenOp = newBoolish ? (newOpIndex == 1 ? BoolTermOp.IfNot : BoolTermOp.If) : CompareOpValues[newOpIndex];
 
@@ -460,7 +440,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
         private static List<List<string>> DrawVisualConditions(List<List<string>> clauses, ParameterInfo parameterInfo)
         {
-            clauses = clauses ?? new List<List<string>>();
+            clauses ??= new List<List<string>>();
             var newClauses = new List<List<string>>(clauses.Count);
 
             for (var i = 0; i < clauses.Count; i++)
@@ -472,8 +452,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    // An empty label (not a Space) so the first row's indent matches the
-                    // OR labels' control geometry exactly, keeping the boxes aligned.
                     GUILayout.Label(
                         i > 0 ? new GUIContent("OR", "Any of these groups can trigger the transition") : new GUIContent(string.Empty),
                         EditorStyles.miniLabel,
@@ -481,9 +459,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                     using (new EditorGUILayout.VerticalScope("box"))
                     {
-                        // The AND header row is only worth drawing with 2+ conditions; a
-                        // single-condition group has no group-level remove button either,
-                        // since removing that one condition already drops the whole group.
                         if (terms.Count > 1)
                         {
                             using (new EditorGUILayout.HorizontalScope())
@@ -499,15 +474,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
-                                // The add button of the last row (below) only sets a flag; the
-                                // new term is appended after the row loop so it lands at the END
-                                // of the group (appending during the loop would put it first, and
-                                // it would not be drawn until the next repaint regardless).
-                                // The add button lives in the row of the last condition,
-                                // in the indent column the AND label would occupy. The indent
-                                // is reserved with the button's own style + width constraints
-                                // in every row, so the fields line up - GUILayout.Space would
-                                // not account for the button's margin/padding.
                                 var indentRect = GUILayoutUtility.GetRect(GUIContent.none, EditorStyles.miniButton, GUILayout.Width(30f));
                                 if (j == terms.Count - 1)
                                 {
@@ -516,11 +482,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 }
 
                                 var term = terms[j] ?? string.Empty;
-                                // A brand-new condition row (added as an empty string by the
-                                // "+" buttons) cannot be read as a structured term, so it
-                                // shows a "could not read" help box instead of fields. Seed
-                                // an empty last row with a valid parameter + op right away
-                                // so the dropdowns are usable immediately.
                                 if (j == terms.Count - 1 && string.IsNullOrEmpty(term))
                                     term = BuildNewTermDraft(parameterInfo?.Names, parameterInfo?.Types);
                                 var edit = ParseTermForEdit(term, parameterInfo?.Names, parameterInfo?.Types);
@@ -536,7 +497,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 else
                                 {
                                     term = DrawStructuredTerm(edit, parameterInfo.Names, parameterInfo.Types);
-                                    GUILayout.FlexibleSpace(); // fill extra row width after the threshold field
+                                    GUILayout.FlexibleSpace();
                                 }
 
                                 if (GUILayout.Button(new GUIContent("\u2715", "Remove this condition"), GUILayout.Width(26f)))
@@ -545,15 +506,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             }
                         }
 
-                        // Seed the fresh condition with a valid parameter + op so it appears
-                        // (next repaint) as structured fields ready to edit, not an empty one.
                         if (addTermRequested)
                             newTerms.Add(BuildNewTermDraft(parameterInfo?.Names, parameterInfo?.Types));
                     }
                 }
 
-                // A group whose conditions were all removed is dropped along with it,
-                // so the layout matches the draft text (empty groups are not part of it).
                 if (!removeClause && newTerms.Count > 0)
                     newClauses.Add(newTerms);
             }
@@ -629,7 +586,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         /// old row structure is kept and any term that is missing from the parse result is
         /// shown as raw text, so a half-typed condition is never wiped from the fields.
         /// </summary>
-        private static List<List<string>> SyncVisualClauses(List<List<string>> old, BoolExpression expr, IEnumerable<string> knownParameterNames, System.Collections.Generic.Dictionary<string, AnimatorControllerParameterType> parameterTypes)
+        private static List<List<string>> SyncVisualClauses(List<List<string>> old, BoolExpression expr, IEnumerable<string> knownParameterNames, Dictionary<string, AnimatorControllerParameterType> parameterTypes)
         {
             if (expr == null || expr.IsEmpty)
             {
@@ -765,7 +722,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
             foreach (var selected in selectedObjects)
             {
-                if (selected == null) // destroyed
+                if (selected == null)
                     continue;
                 if (selected is AnimatorStateTransition transition)
                 {
@@ -778,7 +735,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
 
-            // If no transitions are selected, treat all outgoing transitions of any selected state as selected
             if (!anyTransitionSelected && selectedStates.Count > 0)
             {
                 foreach (var state in selectedStates)
@@ -1094,7 +1050,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             EditorGUI.showMixedValue = false;
         }
 
-        private static void DrawEnumSetting<T>(string label, List<AnimatorStateTransition> transitions, Func<AnimatorStateTransition, T> get, Action<AnimatorStateTransition, T> set, bool enabled = true) where T : struct, System.Enum
+        private static void DrawEnumSetting<T>(string label, List<AnimatorStateTransition> transitions, Func<AnimatorStateTransition, T> get, Action<AnimatorStateTransition, T> set, bool enabled = true) where T : struct, Enum
         {
             var value = get(transitions[0]);
             var mixed = transitions.Count > 1;
