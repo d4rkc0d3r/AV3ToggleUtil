@@ -31,6 +31,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             public string Alias;
             public string Param;
+            /// <summary>The alias token that the text field currently contains. Updated whenever a valid rename takes effect.</summary>
+            public string CommittedAlias;
         }
 
         private enum AliasSweepMode
@@ -338,6 +340,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         GUILayout.Width(70f));
                     GUI.contentColor = wasColor;
                     row.Alias = newAlias;
+                    // Live-rename: once the freshly typed alias is valid, rewrite every
+                    // occurrence of the previous alias in the text field. Invalid interim
+                    // values (while a word is half-typed, collisions, ...) simply wait.
+                    if (IsValidAlias(newAlias, knownNames, rows, i)
+                        && row.CommittedAlias != null
+                        && row.CommittedAlias != newAlias)
+                    {
+                        state.Text = ReplaceTokens(state.Text, row.CommittedAlias, newAlias);
+                        row.CommittedAlias = newAlias;
+                    }
 
                     var paramIndex = row.Param == null ? -1 : Array.IndexOf(knownNames, row.Param);
                     var newParamIndex = EditorGUILayout.Popup(paramIndex < 0 ? 0 : paramIndex, knownNames, GUILayout.Width(220f));
@@ -395,7 +407,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (param == null)
                         param = knownNames[0];
 
-                    rows.Add(new AliasRow { Alias = NextFreeAlias(rows), Param = param });
+                    var seededAlias = NextFreeAlias(rows);
+                    rows.Add(new AliasRow { Alias = seededAlias, Param = param, CommittedAlias = seededAlias });
                     state.RemovedAliasParams.Remove(param);
                 }
 
@@ -497,7 +510,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
                 if (!hasRow)
-                    rows.Add(new AliasRow { Alias = NextFreeAlias(rows), Param = param });
+                {
+                    var seededAlias = NextFreeAlias(rows);
+                    rows.Add(new AliasRow { Alias = seededAlias, Param = param, CommittedAlias = seededAlias });
+                }
             }
         }
 
@@ -576,6 +592,36 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         }
                     }
                     sb.Append(replacement ?? candidate);
+                    i = end;
+                }
+                else
+                {
+                    sb.Append(c);
+                    i++;
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Replaces whole-token occurrences of <paramref name="from"/> in the text with
+        /// <paramref name="to"/> using the same tokenization as <see cref="SweepAliases"/>.
+        /// </summary>
+        private static string ReplaceTokens(string text, string from, string to)
+        {
+            if (string.IsNullOrEmpty(from) || from == to)
+                return text ?? string.Empty;
+
+            var sb = new StringBuilder(text.Length);
+            var i = 0;
+            while (i < text.Length)
+            {
+                var c = text[i];
+                if (char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.' || c == '$')
+                {
+                    var end = ScanCandidateRunEnd(text, i);
+                    var candidate = text.Substring(i, end - i);
+                    sb.Append(string.Equals(candidate, from, StringComparison.Ordinal) ? to : candidate);
                     i = end;
                 }
                 else
