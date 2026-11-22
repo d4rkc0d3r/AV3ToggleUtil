@@ -265,15 +265,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
 
-                var canNormalize = parseOk && !parsed.IsEmpty;
-                var normalizeTooltip = !parseOk ? parseError
-                    : canNormalize ? "Show the simplified canonical form (deduped, simplified, contradictions removed)"
-                    : "Nothing to normalize - the expression is empty";
-                using (new EditorGUI.DisabledScope(!outerEnabled || !canNormalize))
+                var canDnf = parseOk && !parsed.IsEmpty;
+                var dnfTooltip = !parseOk ? parseError
+                    : canDnf ? "Rewrite the expression to disjunctive normal form (AND terms joined with OR)"
+                    : "Nothing to rewrite - the expression is empty";
+                using (new EditorGUI.DisabledScope(!outerEnabled || !canDnf))
                 {
-                    if (GUILayout.Button(new GUIContent("Normalize", normalizeTooltip)))
+                    if (GUILayout.Button(new GUIContent("DNF", dnfTooltip)))
                     {
-                        state.Text = state.UseTextMode ? SweepAliases(FormatConditionText(parsed), aliasRows, AliasSweepMode.Compress) : FormatConditionText(parsed);
+                        var dnfText = parsed.ToDnfString();
+                        state.Text = state.UseTextMode ? SweepAliases(dnfText, aliasRows, AliasSweepMode.Compress) : dnfText;
                         GUI.FocusControl(null);
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
                     }

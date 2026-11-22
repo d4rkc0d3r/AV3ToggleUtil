@@ -369,20 +369,127 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         }
 
         /// <summary>
-        /// Converts this expression to DNF (flat AND term lists) for use with Unity
-        /// transitions, which only support a flat AND of conditions per transition.
-        /// Distributes any And-over-Or structure so the result is a full DNF regardless
-        /// of how the (normalized) tree is shaped. A null Root returns an empty list
-        /// (unconditional); an unsatisfiable root throws.
+        /// Converts this expression to simplified DNF (flat AND term lists) for use with
+        /// Unity transitions, which only support a flat AND of conditions per transition.
+        /// Distributes any And-over-Or structure, then simplifies each clause (dedupe,
+        /// contradiction/subsumption via <see cref="SimplifyPair"/>) and removes duplicate
+        /// and subsumed clauses. A null Root returns an empty list (unconditional);
+        /// an unsatisfiable root throws.
         /// </summary>
         public List<List<BoolTerm>> ToDisjunctiveClauses()
         {
             var dnf = DnfOf(Root == null ? new BoolConstant(true) : Root);
             if (dnf.Count == 0)
                 throw new InvalidOperationException("Cannot project an unsatisfiable expression to DNF");
+            SimplifyDnf(dnf);
             if (dnf.Count == 1 && dnf[0].Count == 0) // tautology -> unconditional -> no clauses
                 return new List<List<BoolTerm>>();
             return dnf;
+        }
+
+        /// <summary>
+        /// Simplifies a DNF clause list in place: each clause is deduped and reduced with
+        /// <see cref="SimplifyPair"/> (a contradicted clause is dropped), then duplicate
+        /// and subsumed clauses (one whose terms are a superset of another's) are removed.
+        /// </summary>
+        private static void SimplifyDnf(List<List<BoolTerm>> clauses)
+        {
+            var remove = new bool[clauses.Count];
+            for (var i = 0; i < clauses.Count; i++)
+            {
+                var clause = clauses[i];
+
+                // Dedupe first, then reduce same-parameter pairs until stable.
+                for (var j = clause.Count - 1; j > 0; j--)
+                    for (var k = 0; k < j; k++)
+                        if (clause[j].Equals(clause[k]))
+                        {
+                            clause.RemoveAt(j);
+                            break;
+                        }
+
+                var changed = true;
+                while (changed && clause.Count > 1)
+                {
+                    changed = false;
+                    for (var a = 0; a < clause.Count - 1; a++)
+                    {
+                        for (var b = clause.Count - 1; b > a; b--)
+                        {
+                            var r = SimplifyPair(clause[a], clause[b]);
+                            if (r == PairResult.Contradiction)
+                            {
+                                remove[i] = true; // contradiction: this clause is unsatisfiable
+                                break;
+                            }
+                            if (r == PairResult.DropFirst)
+                            {
+                                clause.RemoveAt(a);
+                                a--;
+                                changed = true;
+                            }
+                            else if (r == PairResult.DropSecond)
+                            {
+                                clause.RemoveAt(b);
+                                changed = true;
+                            }
+                        }
+                        if (remove[i])
+                            break;
+                    }
+                }
+
+                if (remove[i])
+                    continue;
+
+                // Skip clauses already covered by a kept clause (subset relation).
+                var redundant = false;
+                for (var j = 0; j < i; j++)
+                {
+                    if (remove[j])
+                        continue;
+                    if (ClauseSubsumes(clauses[j], clause))
+                    {
+                        redundant = true;
+                        break;
+                    }
+                }
+                if (!redundant)
+                {
+                    // Also absorb any earlier kept clauses this one subsumes.
+                    for (var j = 0; j < i; j++)
+                    {
+                        if (!remove[j] && ClauseSubsumes(clause, clauses[j]))
+                            remove[j] = true;
+                    }
+                }
+                else
+                    remove[i] = true;
+            }
+
+            for (var i = clauses.Count - 1; i >= 0; i--)
+                if (remove[i])
+                    clauses.RemoveAt(i);
+        }
+
+        /// <summary>True when every term of <paramref name="subset"/> appears in <paramref name="superset"/>.</summary>
+        private static bool ClauseSubsumes(List<BoolTerm> subset, List<BoolTerm> superset)
+        {
+            for (var i = 0; i < subset.Count; i++)
+            {
+                var found = false;
+                for (var j = 0; j < superset.Count; j++)
+                {
+                    if (subset[i].Equals(superset[j]))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    return false;
+            }
+            return true;
         }
 
         // DNF (list of flat conjunctions) of <paramref name="node"/> itself.
@@ -488,6 +595,31 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 return "";
             var sb = new StringBuilder();
             Root.AppendToDisplay(sb, -1);
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Prints the expression in simplified DNF: flat AND clauses joined with " | "
+        /// (e.g. "(a | b) & (a | !c)" -> "a | b & !c").
+        /// </summary>
+        public string ToDnfString()
+        {
+            var clauses = ToDisjunctiveClauses();
+            if (clauses.Count == 0)
+                return "";
+            var sb = new StringBuilder();
+            for (var i = 0; i < clauses.Count; i++)
+            {
+                if (i > 0)
+                    sb.Append(" | ");
+                var clause = clauses[i];
+                for (var j = 0; j < clause.Count; j++)
+                {
+                    if (j > 0)
+                        sb.Append(" & ");
+                    sb.Append(clause[j].ToString());
+                }
+            }
             return sb.ToString();
         }
 
