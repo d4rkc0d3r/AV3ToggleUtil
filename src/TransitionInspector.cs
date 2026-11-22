@@ -156,12 +156,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             if (useText && parseOk)
             {
                 SeedAliasRows(state, parsed, knownNames);
-                // A group starts in text mode with the fully spelled-out expression -
-                // compress it to aliases once, right after the rows have been seeded.
+                // A group starts in text mode with the fully spelled-out expression.
+                // Compress it to aliases once, right after the rows have been seeded -
+                // but only when the expression is long enough that aliases help more
+                // than they hurt (a couple of conditions read fine spelled out).
                 if (!state.AliasInitDone)
                 {
                     state.AliasInitDone = true;
-                    state.Text = SweepAliases(state.Text, GetValidAliasRows(state.AliasRows, knownNames), AliasSweepMode.Compress);
+                    state.Text = CompressIfWorthIt(state.Text, GetValidAliasRows(state.AliasRows, knownNames), parsed);
                 }
             }
             var editable = !settingsMixed && !hasExitTransition;
@@ -246,7 +248,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (GUILayout.Button(new GUIContent("Revert",
                         canRevert ? null : "Nothing to revert - the expression matches the current states")))
                     {
-                        state.Text = state.UseTextMode ? SweepAliases(formattedText, aliasRows, AliasSweepMode.Compress) : formattedText;
+                        state.Text = state.UseTextMode ? CompressIfWorthIt(formattedText, aliasRows, canonical) : formattedText;
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, canonical, knownParameterNames, parameterTypes);
                         GUI.FocusControl(null);
                     }
@@ -265,7 +267,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         if (BoolExpression.TryNegate(parsed, out var negated, out _))
                         {
-                            state.Text = state.UseTextMode ? SweepAliases(FormatConditionText(negated), aliasRows, AliasSweepMode.Compress) : FormatConditionText(negated);
+                            state.Text = state.UseTextMode ? CompressIfWorthIt(FormatConditionText(negated), aliasRows, negated) : FormatConditionText(negated);
                             state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames, parameterTypes);
                         }
                         GUI.FocusControl(null);
@@ -281,7 +283,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (GUILayout.Button(new GUIContent("DNF", dnfTooltip)))
                     {
                         var dnfText = parsed.ToDnfString();
-                        state.Text = state.UseTextMode ? SweepAliases(dnfText, aliasRows, AliasSweepMode.Compress) : dnfText;
+                        state.Text = state.UseTextMode ? CompressIfWorthIt(dnfText, aliasRows, parsed) : dnfText;
                         GUI.FocusControl(null);
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
                     }
@@ -297,7 +299,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         parsed.Minify();
                         var minText = parsed.ToDisplayString();
-                        state.Text = state.UseTextMode ? SweepAliases(minText, aliasRows, AliasSweepMode.Compress) : minText;
+                        state.Text = state.UseTextMode ? CompressIfWorthIt(minText, aliasRows, parsed) : minText;
                         GUI.FocusControl(null);
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
                     }
@@ -564,6 +566,51 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Alias compression only kicks in past a handful of conditions - a short
+        /// expression like "a hat &amp; !b hat" reads better spelled out than as "a &amp; !b".
+        /// </summary>
+        private static bool ShouldUseAliases(BoolExpression expr) => CountConditions(expr) > 4;
+
+        private static string CompressIfWorthIt(string text, List<AliasRow> rows, BoolExpression expr)
+            => ShouldUseAliases(expr) ? SweepAliases(text, rows, AliasSweepMode.Compress) : text;
+
+        /// <summary>
+        /// Counts the individual conditions (term leaves) in the parsed expression tree,
+        /// so the inspector can decide whether alias compression is worth it.
+        /// </summary>
+        private static int CountConditions(BoolExpression parsed)
+        {
+            if (parsed == null || parsed.IsEmpty)
+                return 0;
+            return CountConditions(parsed.Root);
+        }
+
+        private static int CountConditions(BoolNode node)
+        {
+            var and = node as BoolAnd;
+            if (and != null)
+            {
+                var total = 0;
+                for (var i = 0; i < and.Children.Count; i++)
+                    total += CountConditions(and.Children[i]);
+                return total;
+            }
+            var or = node as BoolOr;
+            if (or != null)
+            {
+                var total = 0;
+                for (var i = 0; i < or.Children.Count; i++)
+                    total += CountConditions(or.Children[i]);
+                return total;
+            }
+            if (node is BoolTermLeaf)
+                return 1;
+            if (node is BoolNot not)
+                return CountConditions(not.Child);
+            return 0; // BoolConstant
         }
 
         /// <summary>
