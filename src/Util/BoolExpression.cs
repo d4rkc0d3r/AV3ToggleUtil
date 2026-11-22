@@ -872,22 +872,49 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
         public override string ToString() => ToDisplayString();
 
-        public bool Differs(BoolExpression other)
-            => other == null || !IsSameExpression(other);
+        /// <summary>
+        /// True when the expressions describe the same truth conditions - irrespective
+        /// of how the trees happen to be shaped. Compared via the canonicalized
+        /// simplified DNF (terms and clauses sorted), so this is a complete logical
+        /// invariant: equal DNFs are logically equal, and vice versa. This is also the
+        /// form transitions actually store, so it is the right basis for apply/revert
+        /// status.
+        /// </summary>
+        public bool LogicallyEquals(BoolExpression other)
+            => other != null && Fingerprint() == other.Fingerprint();
 
-        public bool IsSameExpression(BoolExpression other)
+        public bool LogicallyDiffers(BoolExpression other)
+            => other == null || !LogicallyEquals(other);
+
+        // Canonical simplified-DNF fingerprint: each clause's terms are emitted as a
+        // sorted ";"-joined text, then the clause texts are sorted and "|"-joined.
+        // Tautologies/unconditional all map to the empty string, every unsatisfiable
+        // expression to a shared sentinel (ToDisjunctiveClauses throws for those).
+        // ";" and "|" cannot clash with term text - the parser's identifier rules
+        // never admit them in a term.
+        private string Fingerprint()
         {
-            if (other == null)
-                return false;
-            if (Root == null || other.Root == null)
+            List<List<BoolTerm>> clauses;
+            try
             {
-                var bothEmpty = Root == null && other.Root == null;
-                var bothTrue = Root is BoolConstant ca && ca.Value && other.Root is BoolConstant cb && cb.Value;
-                return bothEmpty || bothTrue;
+                clauses = ToDisjunctiveClauses();
             }
-            if (Root is BoolConstant c1 && other.Root is BoolConstant c2)
-                return c1.Value == c2.Value;
-            return Root.EqualsNode(other.Root);
+            catch (InvalidOperationException)
+            {
+                return "$unsatisfiable$";
+            }
+            var clauseTexts = new string[clauses.Count];
+            for (var i = 0; i < clauses.Count; i++)
+            {
+                var clause = clauses[i];
+                var terms = new string[clause.Count];
+                for (var j = 0; j < clause.Count; j++)
+                    terms[j] = clause[j].ToString();
+                Array.Sort(terms, StringComparer.Ordinal);
+                clauseTexts[i] = string.Join(";", terms);
+            }
+            Array.Sort(clauseTexts, StringComparer.Ordinal);
+            return string.Join("|", clauseTexts);
         }
 
         /// <summary>

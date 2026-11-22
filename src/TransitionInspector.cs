@@ -165,7 +165,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 }
             }
             var editable = !settingsMixed && !hasExitTransition;
-            var differs = parseOk && canonical.Differs(parsed);
+            // Compare logical content (canonical DNF), not tree shape - that is what
+            // the transitions actually store, so structurally different but equivalent
+            // text (e.g. right after Minify) does not light up Apply/Revert.
+            var differs = parseOk && canonical.LogicallyDiffers(parsed);
 
             string tooltip = null;
             if (!parseOk)
