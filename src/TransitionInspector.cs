@@ -252,14 +252,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     }
                 }
 
-                string negatePreviewError = null;
-                var negatable = parseOk && parsed != null && !parsed.IsEmpty;
-                var canNegate = negatable && BoolExpression.TryNegate(parsed, out _, out negatePreviewError);
+                // Negation is total — every term op has a complement — so no preview
+                // is needed; the button is simply enabled whenever there's something to flip.
+                var canNegate = parseOk && !parsed.IsEmpty;
                 var negateTooltip = !parseOk ? parseError
-                    : parsed == null || parsed.IsEmpty
+                    : !canNegate
                         ? "Nothing to negate - give the expression at least one condition first"
-                        : canNegate ? "Flip the expression (De Morgan)"
-                        : "Cannot negate - " + negatePreviewError;
+                        : "Flip the expression (De Morgan)";
                 using (new EditorGUI.DisabledScope(!outerEnabled || !canNegate))
                 {
                     if (GUILayout.Button(new GUIContent("Negate", negateTooltip)))
@@ -693,10 +692,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         }
 
         private static readonly string[] BoolOpLabels = { "true", "false" };
-        private static readonly string[] CompareOpLabels = { "Greater", "Less", "Equals", "NotEqual" };
+        private static readonly string[] CompareOpLabels =
+        {
+            "GreaterOrEqual", "Greater", "LessOrEqual", "Less", "Equals", "NotEqual"
+        };
         private static readonly BoolTermOp[] CompareOpValues =
         {
-            BoolTermOp.Greater, BoolTermOp.Less, BoolTermOp.Equals, BoolTermOp.NotEquals
+            BoolTermOp.GreaterEqual, BoolTermOp.Greater, BoolTermOp.LessEqual, BoolTermOp.Less,
+            BoolTermOp.Equals, BoolTermOp.NotEquals
         };
         private static readonly System.Globalization.CultureInfo Invariant = System.Globalization.CultureInfo.InvariantCulture;
 
@@ -762,8 +765,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             else if (!not)
             {
                 string token;
+                // Two-char operators must be tested before their single-char prefixes.
                 if (rest.StartsWith("!=")) { token = "!="; result.Op = BoolTermOp.NotEquals; }
+                else if (rest.StartsWith(">=")) { token = ">="; result.Op = BoolTermOp.GreaterEqual; }
                 else if (rest.StartsWith(">")) { token = ">"; result.Op = BoolTermOp.Greater; }
+                else if (rest.StartsWith("<=")) { token = "<="; result.Op = BoolTermOp.LessEqual; }
                 else if (rest.StartsWith("<")) { token = "<"; result.Op = BoolTermOp.Less; }
                 else if (rest.StartsWith("=")) { token = "="; result.Op = BoolTermOp.Equals; }
                 else return new TermEdit { Structured = false };
@@ -783,7 +789,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 case BoolTermOp.IfNot: return "!" + param;
                 case BoolTermOp.Equals: return param + " = " + threshold;
                 case BoolTermOp.NotEquals: return param + " != " + threshold;
+                case BoolTermOp.GreaterEqual: return param + " >= " + threshold;
                 case BoolTermOp.Greater: return param + " > " + threshold;
+                case BoolTermOp.LessEqual: return param + " <= " + threshold;
                 case BoolTermOp.Less: return param + " < " + threshold;
                 default: return string.Empty;
             }
@@ -1247,27 +1255,6 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private static AnimatorConditionMode MapOpToMode(BoolTermOp op)
-        {
-            switch (op)
-            {
-                case BoolTermOp.Equals:
-                    return AnimatorConditionMode.Equals;
-                case BoolTermOp.NotEquals:
-                    return AnimatorConditionMode.NotEqual;
-                case BoolTermOp.Greater:
-                    return AnimatorConditionMode.Greater;
-                case BoolTermOp.Less:
-                    return AnimatorConditionMode.Less;
-                case BoolTermOp.If:
-                    return AnimatorConditionMode.If;
-                case BoolTermOp.IfNot:
-                    return AnimatorConditionMode.IfNot;
-                default:
-                    return AnimatorConditionMode.If;
-            }
-        }
-
         private static void ApplyExpression(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, BoolExpression parsed)
         {
             var key = group.Key;
@@ -1280,6 +1267,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var controller = ResolveController(transitions[0]);
             var sourceState = key.SourceState;
             var anyMachine = key.AnySourceMachine;
+            // Needed to project >= / <= onto Unity's > / < with the correct type-based
+            // offset (Int: ±1, Float: one ulp) at store time.
+            var parameterTypes = GetKnownParameterInfo(transitions)?.Types;
 
             // Reuse existing transitions for the first clauses, add new ones, remove surplus
             var remainingPool = new List<AnimatorStateTransition>();
@@ -1328,7 +1318,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     created.Add(use);
                 }
 
-                SetConditions(use, clauses[i]);
+                SetConditions(use, clauses[i], parameterTypes);
             }
 
             // Remove transitions that were not reused
@@ -1354,19 +1344,24 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             Selection.objects = merged; // OnSelectionChange repaints the window
         }
 
-        private static void SetConditions(AnimatorStateTransition transition, List<BoolTerm> clause)
+        private static void SetConditions(AnimatorStateTransition transition, List<BoolTerm> clause, Dictionary<string, AnimatorControllerParameterType> parameterTypes)
         {
             var conditions = new AnimatorCondition[clause.Count];
             for (var i = 0; i < clause.Count; i++)
             {
                 var term = clause[i];
-                var op = term.Op;
-                var isBare = op == BoolTermOp.If || op == BoolTermOp.IfNot;
+                // Project onto Unity's supported modes here: >= / <= become > / < with the
+                // type-based offset (Int ±1, Float one ulp), exactly mirroring the
+                // fingerprint so Apply never shows a spurious diff after a round trip.
+                var type = parameterTypes != null && parameterTypes.TryGetValue(term.Parameter, out var t)
+                    ? t
+                    : AnimatorControllerParameterType.Float;
+                var (mode, threshold) = BoolExpression.ProjectForStorage(term.Op, term.Threshold, type);
                 conditions[i] = new AnimatorCondition
                 {
                     parameter = term.Parameter,
-                    mode = MapOpToMode(op),
-                    threshold = isBare ? 0f : term.Threshold
+                    mode = mode,
+                    threshold = threshold
                 };
             }
             transition.conditions = conditions;

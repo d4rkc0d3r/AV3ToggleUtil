@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using UnityEngine;
+using UnityEditor.Animations;
 
 namespace d4rkpl4y3r.AV3ToggleUtil.Util
 {
@@ -13,7 +14,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         IfNot,
         Equals,
         NotEquals,
+        GreaterEqual,
         Greater,
+        LessEqual,
         Less
     }
 
@@ -36,6 +39,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         public static string FormatThreshold(float value)
             => value.ToString("0.####", Invariant);
 
+        // Round-trip, lossless formatting of a float. Used only for the logical fingerprint
+        // where two values that differ even by one ulp MUST produce distinct tokens - the
+        // display-oriented FormatThreshold rounds to 4 decimals, which would collapse
+        // "a > 0.1000000" and "a >= 0.1000000" into the same token.
+        public static string FormatThresholdExact(float value)
+            => value.ToString("R", Invariant);
+
         public override string ToString()
         {
             switch (Op)
@@ -48,8 +58,12 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                     return Parameter + " = " + FormatThreshold(Threshold);
                 case BoolTermOp.NotEquals:
                     return Parameter + " != " + FormatThreshold(Threshold);
+                case BoolTermOp.GreaterEqual:
+                    return Parameter + " >= " + FormatThreshold(Threshold);
                 case BoolTermOp.Greater:
                     return Parameter + " > " + FormatThreshold(Threshold);
+                case BoolTermOp.LessEqual:
+                    return Parameter + " <= " + FormatThreshold(Threshold);
                 case BoolTermOp.Less:
                     return Parameter + " < " + FormatThreshold(Threshold);
                 default:
@@ -263,9 +277,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             => TryParse(text, knownParameterNames, null, out result, out error);
 
         /// <summary>
-        /// Like the name-only overload but additionally given the parameters' types. For
-        /// Int parameters, negating Greater/Less IS representable (by shifting the threshold
-        /// by 1), so negation succeeds where the name-only parse would refuse it.
+        /// Like the name-only overload but additionally given the parameters' types, which are
+        /// carried on the result so that (a) >= / &lt;= can be projected onto Unity's &gt; / &lt;
+        /// with the correct per-type offset at store time, and (b) the logical fingerprint can
+        /// compare a written open/closed bound against a stored one.
         /// </summary>
         public static bool TryParse(string text, IEnumerable<string> knownParameterNames, Dictionary<string, AnimatorControllerParameterType> parameterTypes, out BoolExpression result, out string error)
         {
@@ -731,11 +746,17 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                     return b.Op == BoolTermOp.NotEquals && b.Threshold == a.Threshold;
                 case BoolTermOp.NotEquals:
                     return b.Op == BoolTermOp.Equals && b.Threshold == a.Threshold;
-                // Int parameters are discrete: !(x > t) == x < t + 1, !(x < t) == x > t - 1.
+                // With full >=/<= support every comparison has an exact complement at the
+                // same threshold, independent of the parameter type:
+                // !(x > t) == x <= t, !(x < t) == x >= t, and vice versa.
                 case BoolTermOp.Greater:
-                    return IsInt(a.Parameter) && b.Op == BoolTermOp.Less && b.Threshold == a.Threshold + 1f;
+                    return b.Op == BoolTermOp.LessEqual && b.Threshold == a.Threshold;
                 case BoolTermOp.Less:
-                    return IsInt(a.Parameter) && b.Op == BoolTermOp.Greater && b.Threshold == a.Threshold - 1f;
+                    return b.Op == BoolTermOp.GreaterEqual && b.Threshold == a.Threshold;
+                case BoolTermOp.GreaterEqual:
+                    return b.Op == BoolTermOp.Less && b.Threshold == a.Threshold;
+                case BoolTermOp.LessEqual:
+                    return b.Op == BoolTermOp.Greater && b.Threshold == a.Threshold;
                 default:
                     return false;
             }
@@ -886,12 +907,78 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         public bool LogicallyDiffers(BoolExpression other)
             => other == null || !LogicallyEquals(other);
 
-        // Canonical simplified-DNF fingerprint: each clause's terms are emitted as a
-        // sorted ";"-joined text, then the clause texts are sorted and "|"-joined.
-        // Tautologies/unconditional all map to the empty string, every unsatisfiable
-        // expression to a shared sentinel (ToDisjunctiveClauses throws for those).
-        // ";" and "|" cannot clash with term text - the parser's identifier rules
-        // never admit them in a term.
+        /// <summary>
+        /// Projects a term onto the forms Unity's <see cref="AnimatorCondition"/> can store.
+        /// Unity only accepts "&gt;", "&lt;", "=", "!=" and If/IfNot - the closed bounds
+        /// (>= / &lt;=) are expressed by shifting the threshold by the parameter's smallest
+        /// representable step (Int: 1, Float: one ulp via <see cref="Mathf.NextAfter"/>).
+        /// This is the single source of truth shared by the logical fingerprint and the
+        /// stored-condition writer so the two can never diverge.
+        /// </summary>
+        public static (AnimatorConditionMode Mode, float Threshold) ProjectForStorage(
+            BoolTermOp op, float threshold, AnimatorControllerParameterType type)
+        {
+            switch (op)
+            {
+                case BoolTermOp.GreaterEqual:
+                    // x >= t  ==  x > prevFloat(t): shift one ulp toward -infinity.
+                    return (AnimatorConditionMode.Greater,
+                        type == AnimatorControllerParameterType.Int
+                            ? threshold - 1f
+                            : ShiftFloatUlp(threshold, towardsPositiveInfinity: false));
+                case BoolTermOp.LessEqual:
+                    // x <= t  ==  x < nextFloat(t): shift one ulp toward +infinity.
+                    return (AnimatorConditionMode.Less,
+                        type == AnimatorControllerParameterType.Int
+                            ? threshold + 1f
+                            : ShiftFloatUlp(threshold, towardsPositiveInfinity: true));
+                case BoolTermOp.Greater:
+                    return (AnimatorConditionMode.Greater, threshold);
+                case BoolTermOp.Less:
+                    return (AnimatorConditionMode.Less, threshold);
+                case BoolTermOp.Equals:
+                    return (AnimatorConditionMode.Equals, threshold);
+                case BoolTermOp.NotEquals:
+                    return (AnimatorConditionMode.NotEqual, threshold);
+                case BoolTermOp.If:
+                    return (AnimatorConditionMode.If, 0f);
+                case BoolTermOp.IfNot:
+                    return (AnimatorConditionMode.IfNot, 0f);
+                default:
+                    return (AnimatorConditionMode.If, 0f);
+            }
+        }
+
+        // Moves a float by a single representable step (ulp). No NextAfter exists in
+        // UnityEngine's Mathf on this runtime, so the IEEE-754 bit pattern is shifted by
+        // hand through BitConverter's byte-array round trip (universally supported). For a
+        // normal positive threshold this yields the exact "adjacent float" needed so that
+        //  x > prevFloat(t)  is equivalent to  x >= t.
+        private static float ShiftFloatUlp(float value, bool towardsPositiveInfinity)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                return value; // not a valid comparison threshold
+            var bytes = BitConverter.GetBytes(value);
+            int bits = BitConverter.ToInt32(bytes, 0);
+            // Non-negative: the bit pattern grows toward +inf, so +inf == +1, -inf == -1.
+            // Negative: the pattern grows toward -inf, so the directions flip.
+            var delta = (value >= 0f)
+                ? (towardsPositiveInfinity ? 1 : -1)
+                : (towardsPositiveInfinity ? -1 : 1);
+            bits += delta;
+            bytes = BitConverter.GetBytes(bits);
+            var result = BitConverter.ToSingle(bytes, 0);
+            // A parsed threshold can never be exactly at float.Max/Min, but guard anyway:
+            // rolling off into infinity would break the comparison.
+            return float.IsInfinity(result) ? value : result;
+        }
+
+        // Canonical simplified-DNF fingerprint: each term is emitted as its STORED projection
+        // ("param mode threshold"), a clause's terms are sorted and ";"-joined, then the clause
+        // texts are sorted and "|"-joined. Projecting means a written "a >= 7" (Int) and a stored
+        // "a > 6" map to the same token - which is exactly the store-time identity we rely on.
+        // Tautologies/unconditional map to the empty string, every unsatisfiable expression to a
+        // shared sentinel (ToDisjunctiveClauses throws for those).
         private string Fingerprint()
         {
             List<List<BoolTerm>> clauses;
@@ -909,7 +996,14 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 var clause = clauses[i];
                 var terms = new string[clause.Count];
                 for (var j = 0; j < clause.Count; j++)
-                    terms[j] = clause[j].ToString();
+                {
+                    var term = clause[j];
+                    var type = _parameterTypes != null && _parameterTypes.TryGetValue(term.Parameter, out var t)
+                        ? t
+                        : AnimatorControllerParameterType.Float;
+                    var (mode, threshold) = ProjectForStorage(term.Op, term.Threshold, type);
+                    terms[j] = term.Parameter + " " + mode + " " + BoolTerm.FormatThresholdExact(threshold);
+                }
                 Array.Sort(terms, StringComparer.Ordinal);
                 clauseTexts[i] = string.Join(";", terms);
             }
@@ -1097,8 +1191,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
         private BoolTermLeaf NegateTerm(BoolTermLeaf leaf)
         {
-            // Int parameters are discrete, so the inverted comparison IS representable:
-            // !(x > t) == x <= t == x < t+1;   !(x < t) == x >= t == x > t-1.
+            // Negation is total: every comparison op has an exact complement at the
+            // same threshold (>= pairs with <, > pairs with <=, etc). Unity still only
+            // accepts > / < / = / != at store time, so >=/<= are projected back to
+            // those forms with offset thresholds (see ProjectCondition).
             switch (leaf.Term.Op)
             {
                 case BoolTermOp.If:
@@ -1110,23 +1206,16 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 case BoolTermOp.NotEquals:
                     return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Equals, leaf.Term.Threshold));
                 case BoolTermOp.Greater:
-                    if (IsInt(leaf.Term.Parameter))
-                        return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Less, leaf.Term.Threshold + 1f));
-                    throw new ParseException("Cannot negate '>' - the inverted form is not representable for this parameter type");
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.LessEqual, leaf.Term.Threshold));
                 case BoolTermOp.Less:
-                    if (IsInt(leaf.Term.Parameter))
-                        return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Greater, leaf.Term.Threshold - 1f));
-                    throw new ParseException("Cannot negate '<' - the inverted form is not representable for this parameter type");
-                default:
-                    throw new ParseException("Cannot negate this condition");
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.GreaterEqual, leaf.Term.Threshold));
+                case BoolTermOp.GreaterEqual:
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Less, leaf.Term.Threshold));
+                case BoolTermOp.LessEqual:
+                    return new BoolTermLeaf(new BoolTerm(leaf.Term.Parameter, BoolTermOp.Greater, leaf.Term.Threshold));
             }
+            throw new ParseException("Cannot negate this condition");
         }
-
-        private bool IsInt(string parameter)
-            => _parameterTypes != null
-            && parameter != null
-            && _parameterTypes.TryGetValue(parameter, out var t)
-            && t == AnimatorControllerParameterType.Int;
 
         private enum PairResult
         {
@@ -1138,141 +1227,139 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
         // "If" is treated as "parameter = 1". Reduces a pair of same-parameter terms
         // to a single term if one subsumes the other, or flags a contradiction.
+        //
+        // Comparisons are handled with a uniform "rank" model rather than per-op rows:
+        // GreaterEqual/Greater are lower bounds (rank 1 / 2), LessEqual/Less are upper
+        // bounds (rank 1 / 2), and a larger rank at the same/stricter threshold means the
+        // term is implied by the other. Because >=/<= exist now, same-direction bounds
+        // collapse cleanly for every parameter type (no discrete-Int special casing).
         private PairResult SimplifyPair(BoolTerm a, BoolTerm b)
         {
             if (!string.Equals(a.Parameter, b.Parameter, StringComparison.Ordinal))
                 return PairResult.KeepBoth;
-
-            // Int parameters are discrete: x >= t is the same as x > t - 1, so
-            // for Int parameters x = t is the same as x > t - 1 & x < t + 1.
-            // x > ta & x > tb -> x > max(ta, tb). x < ta & x < tb -> x < min(ta, tb).
-            int intOpA = -1, intOpB = -1;
-            if (IsInt(a.Parameter))
-            {
-                intOpA = a.Op == BoolTermOp.Greater ? 1 : a.Op == BoolTermOp.Less ? -1 : 0;
-                intOpB = b.Op == BoolTermOp.Greater ? 1 : b.Op == BoolTermOp.Less ? -1 : 0;
-            }
 
             if (a.Op == BoolTermOp.If && b.Op == BoolTermOp.IfNot)
                 return PairResult.Contradiction;
             if (a.Op == BoolTermOp.IfNot && b.Op == BoolTermOp.If)
                 return PairResult.Contradiction;
 
+            if (a.Op == BoolTermOp.IfNot)
+            {
+                // Keep the original conservative reductions with `!a` (a == 0) first, now
+                // extended to the >=/<= forms; anything else is left untouched.
+                switch (b.Op)
+                {
+                    case BoolTermOp.Equals:
+                        return b.Threshold == 1f ? PairResult.Contradiction : PairResult.DropSecond;
+                    case BoolTermOp.Greater:
+                    case BoolTermOp.GreaterEqual:
+                        if (b.Threshold >= 1f)
+                            return PairResult.DropFirst;
+                        break;
+                    case BoolTermOp.Less:
+                    case BoolTermOp.LessEqual:
+                        if (b.Threshold <= 1f)
+                            return PairResult.DropFirst;
+                        break;
+                    default:
+                        break;
+                }
+                return PairResult.KeepBoth;
+            }
+
             if (a.Op == BoolTermOp.If)
                 a = new BoolTerm(a.Parameter, BoolTermOp.Equals, 1f);
             if (b.Op == BoolTermOp.If)
                 b = new BoolTerm(b.Parameter, BoolTermOp.Equals, 1f);
 
-            switch (a.Op)
-            {
-                case BoolTermOp.Equals:
-                    switch (b.Op)
-                    {
-                        case BoolTermOp.Equals:
-                            return b.Threshold == a.Threshold ? PairResult.DropSecond : PairResult.Contradiction;
-                        case BoolTermOp.NotEquals:
-                            return b.Threshold == a.Threshold ? PairResult.Contradiction : PairResult.DropSecond;
-                        case BoolTermOp.Greater:
-                            return a.Threshold > b.Threshold ? PairResult.DropSecond : PairResult.Contradiction;
-                        case BoolTermOp.Less:
-                            return a.Threshold < b.Threshold ? PairResult.DropSecond : PairResult.Contradiction;
-                        default:
-                            break;
-                    }
-                    break;
-                case BoolTermOp.NotEquals:
-                    switch (b.Op)
-                    {
-                        case BoolTermOp.Equals:
-                            return b.Threshold == a.Threshold ? PairResult.Contradiction : PairResult.DropFirst;
-                        case BoolTermOp.Greater:
-                            if (b.Threshold == a.Threshold)
-                                return PairResult.DropFirst;
-                            break;
-                        case BoolTermOp.Less:
-                            if (b.Threshold == a.Threshold)
-                                return PairResult.DropFirst;
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                case BoolTermOp.Greater:
-                    switch (b.Op)
-                    {
-                        case BoolTermOp.Equals:
-                            return b.Threshold > a.Threshold ? PairResult.DropFirst : PairResult.Contradiction;
-                        case BoolTermOp.NotEquals:
-                            if (b.Threshold == a.Threshold)
-                                return PairResult.DropFirst;
-                            break;
-                        case BoolTermOp.Greater:
-                            // a > ta  and  b > tb:  the higher threshold is stronger.
-                            if (b.Threshold <= a.Threshold)
-                                return PairResult.DropSecond;
-                            // Int: both are upper bounds on the same discrete line.
-                            if (intOpA == 1 && intOpB == 1)
-                            {
-                                if (a.Threshold >= b.Threshold) return PairResult.DropSecond;
-                                return PairResult.DropFirst;
-                            }
-                            break;
-                        case BoolTermOp.Less:
-                            if (a.Threshold >= b.Threshold)
-                                return PairResult.Contradiction;
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                case BoolTermOp.Less:
-                    switch (b.Op)
-                    {
-                        case BoolTermOp.Equals:
-                            return b.Threshold < a.Threshold ? PairResult.DropFirst : PairResult.Contradiction;
-                        case BoolTermOp.NotEquals:
-                            if (b.Threshold == a.Threshold)
-                                return PairResult.DropFirst;
-                            break;
-                        case BoolTermOp.Greater:
-                            if (b.Threshold >= a.Threshold)
-                                return PairResult.Contradiction;
-                            break;
-                        case BoolTermOp.Less:
-                            // a < ta  and  b < tb:  the lower threshold is stronger.
-                            if (b.Threshold >= a.Threshold)
-                                return PairResult.DropSecond;
-                            // Int: both are lower bounds on the same discrete line.
-                            if (intOpA == -1 && intOpB == -1)
-                            {
-                                if (a.Threshold <= b.Threshold) return PairResult.DropSecond;
-                                return PairResult.DropFirst;
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                case BoolTermOp.IfNot:
-                    switch (b.Op)
-                    {
-                        case BoolTermOp.Equals:
-                            return b.Threshold == 1f ? PairResult.Contradiction : PairResult.DropSecond;
-                        case BoolTermOp.Greater:
-                            if (b.Threshold >= 1f)
-                                return PairResult.DropFirst;
-                            break;
-                        case BoolTermOp.Less:
-                            if (b.Threshold <= 1f)
-                                return PairResult.DropFirst;
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-            }
+            var aIsBound = IsLower(a.Op) || IsUpper(a.Op);
+            var bIsBound = IsLower(b.Op) || IsUpper(b.Op);
+
+            if (aIsBound && bIsBound)
+                return CompareBounds(a, b);
+
+            if (aIsBound && b.Op == BoolTermOp.Equals)
+                return SatisfiesBound(a, b.Threshold) ? PairResult.DropFirst : PairResult.Contradiction;
+            if (bIsBound && a.Op == BoolTermOp.Equals)
+                return SatisfiesBound(b, a.Threshold) ? PairResult.DropSecond : PairResult.Contradiction;
+
+            // A strict bound (>, <) at the same threshold implies "!=", so the inequality
+            // is redundant; >=/<= include the threshold and must keep it.
+            if (aIsBound && b.Op == BoolTermOp.NotEquals)
+                return BoundImpliesNotEquals(a, b.Threshold) ? PairResult.DropSecond : PairResult.KeepBoth;
+            if (bIsBound && a.Op == BoolTermOp.NotEquals)
+                return BoundImpliesNotEquals(b, a.Threshold) ? PairResult.DropFirst : PairResult.KeepBoth;
+
+            if (a.Op == BoolTermOp.Equals && b.Op == BoolTermOp.Equals)
+                return a.Threshold == b.Threshold ? PairResult.DropSecond : PairResult.Contradiction;
+            if (a.Op == BoolTermOp.Equals && b.Op == BoolTermOp.NotEquals)
+                return a.Threshold == b.Threshold ? PairResult.Contradiction : PairResult.DropSecond;
+            if (a.Op == BoolTermOp.NotEquals && b.Op == BoolTermOp.Equals)
+                return a.Threshold == b.Threshold ? PairResult.Contradiction : PairResult.DropFirst;
+
             return PairResult.KeepBoth;
         }
+
+        private static bool IsLower(BoolTermOp op) => op == BoolTermOp.GreaterEqual || op == BoolTermOp.Greater;
+        private static bool IsUpper(BoolTermOp op) => op == BoolTermOp.LessEqual || op == BoolTermOp.Less;
+
+        // Reduces a pair of same-parameter bound terms: same-direction bounds collapse to
+        // the stricter one, opposite-direction bounds are checked for a gap conflict.
+        private PairResult CompareBounds(BoolTerm a, BoolTerm b)
+        {
+            if (IsLower(a.Op) == IsLower(b.Op))
+            {
+                if (IsLower(a.Op))
+                {
+                    if (LowerImplies(a, b)) return PairResult.DropSecond;
+                    return LowerImplies(b, a) ? PairResult.DropFirst : PairResult.KeepBoth;
+                }
+                if (UpperImplies(a, b)) return PairResult.DropSecond;
+                return UpperImplies(b, a) ? PairResult.DropFirst : PairResult.KeepBoth;
+            }
+            var (lower, upper) = IsLower(a.Op) ? (a, b) : (b, a);
+            return LowerUpperConflict(lower, upper) ? PairResult.Contradiction : PairResult.KeepBoth;
+        }
+
+        // True when every value satisfying lower bound `a` also satisfies lower bound `b`.
+        private static bool LowerImplies(BoolTerm a, BoolTerm b)
+        {
+            if (b.Op == BoolTermOp.GreaterEqual)
+                return a.Threshold >= b.Threshold;
+            return a.Op == BoolTermOp.GreaterEqual ? a.Threshold > b.Threshold : a.Threshold >= b.Threshold;
+        }
+
+        // True when every value satisfying upper bound `a` also satisfies upper bound `b`.
+        private static bool UpperImplies(BoolTerm a, BoolTerm b)
+        {
+            if (b.Op == BoolTermOp.LessEqual)
+                return a.Threshold <= b.Threshold;
+            return a.Op == BoolTermOp.LessEqual ? a.Threshold < b.Threshold : a.Threshold <= b.Threshold;
+        }
+
+        // Opposite-direction bounds conflict when no value lies in the closed-open cut;
+        // a fully closed interval [lo, hi] still holds when lo == hi.
+        private static bool LowerUpperConflict(BoolTerm lower, BoolTerm upper)
+        {
+            var closedBoth = lower.Op == BoolTermOp.GreaterEqual && upper.Op == BoolTermOp.LessEqual;
+            return closedBoth ? lower.Threshold > upper.Threshold : lower.Threshold >= upper.Threshold;
+        }
+
+        private static bool SatisfiesBound(BoolTerm bound, float value)
+        {
+            switch (bound.Op)
+            {
+                case BoolTermOp.GreaterEqual: return value >= bound.Threshold;
+                case BoolTermOp.Greater: return value > bound.Threshold;
+                case BoolTermOp.LessEqual: return value <= bound.Threshold;
+                case BoolTermOp.Less: return value < bound.Threshold;
+            }
+            return false;
+        }
+
+        private static bool BoundImpliesNotEquals(BoolTerm bound, float notEqualsThreshold)
+            => (bound.Op == BoolTermOp.Greater || bound.Op == BoolTermOp.Less)
+               && bound.Threshold == notEqualsThreshold;
 
         private sealed class ParseException : Exception
         {
@@ -1373,9 +1460,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 SkipWs();
 
                 if (Match(">="))
-                    throw new ParseException("'>=' is not supported - only single comparison operators are allowed");
+                    return new BoolTerm(parameter, BoolTermOp.GreaterEqual, ParseNumber());
                 if (Match("<="))
-                    throw new ParseException("'<=' is not supported - only single comparison operators are allowed");
+                    return new BoolTerm(parameter, BoolTermOp.LessEqual, ParseNumber());
                 if (Match("!="))
                     return new BoolTerm(parameter, BoolTermOp.NotEquals, ParseNumber());
                 if (Match("="))
