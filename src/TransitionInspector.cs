@@ -337,7 +337,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                                 ? null
                                 : "Invalid alias - use letters/digits/underscore, start with a letter, and don't clash with a parameter name or another alias"),
                         row.Alias,
-                        GUILayout.Width(70f));
+                        GUILayout.Width(120f));
                     GUI.contentColor = wasColor;
                     row.Alias = newAlias;
                     // Live-rename: once the freshly typed alias is valid, rewrite every
