@@ -392,7 +392,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         /// <see cref="SimplifyPair"/> (a contradicted clause is dropped), then duplicate
         /// and subsumed clauses (one whose terms are a superset of another's) are removed.
         /// </summary>
-        private static void SimplifyDnf(List<List<BoolTerm>> clauses)
+        private void SimplifyDnf(List<List<BoolTerm>> clauses)
         {
             var remove = new bool[clauses.Count];
             for (var i = 0; i < clauses.Count; i++)
@@ -587,6 +587,253 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                 result = next;
             }
             return result;
+        }
+
+        /// <summary>
+        /// Heuristically rewrites <see cref="Root"/> with fewer operators, keeping it
+        /// logically equivalent. Two candidates are compared: the current normalized
+        /// tree, and a DNF-derived form (distribute, simplify clauses, consensus
+        /// absorption, factor out common terms, normalize again). Only the strictly
+        /// cheaper candidate is kept, so the operation is idempotent and can never
+        /// make the expression longer.
+        /// </summary>
+        public void Minify()
+        {
+            if (Root == null)
+                return;
+            Normalize();
+            var baseline = NodeCost(Root);
+            try
+            {
+                var clauses = ToDisjunctiveClauses();
+                ConsensusAbsorb(clauses);
+                if (clauses.Count == 0) // tautology -> unconditional
+                {
+                    if (baseline > 0)
+                        Root = null;
+                    return;
+                }
+                var candidate = new BoolExpression();
+                candidate.Root = FactorClauses(clauses);
+                candidate._parameterTypes = _parameterTypes;
+                candidate.Normalize();
+                if (NodeCost(candidate.Root) < baseline)
+                    Root = candidate.Root;
+            }
+            catch (InvalidOperationException)
+            {
+                // Unsatisfiable expression: DNF projection failed. Keep the original tree.
+            }
+        }
+
+        // Operator count used for minimization: each term = 1, each And/Or beyond the
+        // first child = 1 connective, each Not = 1. Constants are free.
+        private static int NodeCost(BoolNode node)
+        {
+            if (node == null)
+                return 0;
+            if (node is BoolTermLeaf)
+                return 1;
+            if (node is BoolConstant)
+                return 0;
+            if (node is BoolNot n)
+                return 1 + NodeCost(n.Child);
+            if (node is BoolAnd a)
+            {
+                var sum = a.Children.Count - 1;
+                foreach (var child in a.Children)
+                    sum += NodeCost(child);
+                return sum;
+            }
+            if (node is BoolOr o)
+            {
+                var sum = o.Children.Count - 1;
+                foreach (var child in o.Children)
+                    sum += NodeCost(child);
+                return sum;
+            }
+            throw new InvalidOperationException("Unknown node type in NodeCost");
+        }
+
+        // Repeatedly add consensus clauses until fixpoint: for two clauses C1, C2 that
+        // contain a complementary term pair (x, !x), the consensus (C1 u C2) \ {x, !x}
+        // is implied by C1 | C2 and usually subsumes both - the re-simplification then
+        // drops the terms/clauses it covers. Capped so pathological input cannot loop.
+        private void ConsensusAbsorb(List<List<BoolTerm>> clauses)
+        {
+            for (var pass = 0; pass < 64; pass++)
+            {
+                var next = TryFindConsensus(clauses);
+                if (next == null)
+                    return;
+                clauses.Add(next);
+                SimplifyDnf(clauses);
+            }
+        }
+
+        // Finds one pair of clauses with a complementary term pair and returns their
+        // consensus (union minus the pair), or null when none adds new information
+        // (a consensus already subsumed by an existing clause counts as none).
+        private List<BoolTerm> TryFindConsensus(List<List<BoolTerm>> clauses)
+        {
+            for (var i = 0; i < clauses.Count; i++)
+            {
+                var ci = clauses[i];
+                for (var j = i + 1; j < clauses.Count; j++)
+                {
+                    var cj = clauses[j];
+                    for (var a = 0; a < ci.Count; a++)
+                    {
+                        for (var b = 0; b < cj.Count; b++)
+                        {
+                            if (!TermsComplement(ci[a], cj[b]))
+                                continue;
+                            var consensus = new List<BoolTerm>(ci.Count + cj.Count - 2);
+                            for (var x = 0; x < ci.Count; x++)
+                                if (x != a)
+                                    consensus.Add(ci[x]);
+                            for (var x = 0; x < cj.Count; x++)
+                                if (x != b)
+                                    consensus.Add(cj[x]);
+                            var redundant = false;
+                            for (var k = 0; k < clauses.Count; k++)
+                            {
+                                if (ClauseSubsumes(clauses[k], consensus))
+                                {
+                                    redundant = true;
+                                    break;
+                                }
+                            }
+                            if (redundant)
+                                continue; // try another pair
+                            return consensus;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        // True when two terms on the same parameter exclude each other's satisfaction
+        // - i.e. they are exactly one another's logical negation within the
+        // parameter's value domain.
+        private bool TermsComplement(BoolTerm a, BoolTerm b)
+        {
+            if (!string.Equals(a.Parameter, b.Parameter, StringComparison.Ordinal))
+                return false;
+            switch (a.Op)
+            {
+                case BoolTermOp.If:
+                    return b.Op == BoolTermOp.IfNot;
+                case BoolTermOp.IfNot:
+                    return b.Op == BoolTermOp.If;
+                case BoolTermOp.Equals:
+                    return b.Op == BoolTermOp.NotEquals && b.Threshold == a.Threshold;
+                case BoolTermOp.NotEquals:
+                    return b.Op == BoolTermOp.Equals && b.Threshold == a.Threshold;
+                // Int parameters are discrete: !(x > t) == x < t + 1, !(x < t) == x > t - 1.
+                case BoolTermOp.Greater:
+                    return IsInt(a.Parameter) && b.Op == BoolTermOp.Less && b.Threshold == a.Threshold + 1f;
+                case BoolTermOp.Less:
+                    return IsInt(a.Parameter) && b.Op == BoolTermOp.Greater && b.Threshold == a.Threshold - 1f;
+                default:
+                    return false;
+            }
+        }
+
+        // Builds a (possibly nested) tree from DNF clauses by recursively factoring a
+        // common term:  T & A | T & B | C  ==  T & (A | B) | C.
+        private BoolNode FactorClauses(List<List<BoolTerm>> clauses)
+        {
+            if (clauses.Count == 0)
+                return new BoolConstant(true);
+            if (clauses.Count == 1)
+                return NodeFromClause(clauses[0]);
+
+            // Pick the term that appears in the most clauses.
+            var counts = new Dictionary<BoolTerm, int>();
+            foreach (var clause in clauses)
+            {
+                foreach (var t in clause)
+                {
+                    int previous;
+                    counts.TryGetValue(t, out previous);
+                    counts[t] = previous + 1;
+                }
+            }
+            var best = default(BoolTerm);
+            var bestCount = 1;
+            foreach (var kv in counts)
+            {
+                if (kv.Value > bestCount)
+                {
+                    bestCount = kv.Value;
+                    best = kv.Key;
+                    if (bestCount >= clauses.Count)
+                        break; // present in every clause - cannot do better
+                }
+            }
+
+            if (bestCount <= 1)
+            {
+                // No shared term: plain OR of AND clauses.
+                var kids = new List<BoolNode>(clauses.Count);
+                foreach (var clause in clauses)
+                    kids.Add(NodeFromClause(clause));
+                return new BoolOr(kids);
+            }
+
+            var withTerm = new List<List<BoolTerm>>();
+            var withoutTerm = new List<List<BoolTerm>>();
+            foreach (var clause in clauses)
+            {
+                if (clause.Contains(best))
+                {
+                    var reduced = new List<BoolTerm>(clause.Count - 1);
+                    foreach (var t in clause)
+                        if (!t.Equals(best))
+                            reduced.Add(t);
+                    withTerm.Add(reduced);
+                }
+                else
+                    withoutTerm.Add(clause);
+            }
+
+            var branch = FactorClauses(withTerm);
+            BoolNode folded;
+            if (branch is BoolAnd and)
+            {
+                var merged = new List<BoolNode>(and.Children.Count + 1);
+                merged.Add(new BoolTermLeaf(best));
+                foreach (var c in and.Children)
+                    merged.Add(c);
+                folded = merged.Count == 1 ? merged[0] : new BoolAnd(merged);
+            }
+            else if (branch is BoolConstant bc && bc.Value)
+            {
+                folded = new BoolTermLeaf(best); // T & true == T
+            }
+            else
+            {
+                folded = new BoolAnd(new List<BoolNode> { new BoolTermLeaf(best), branch });
+            }
+            if (withoutTerm.Count == 0)
+                return folded;
+            var rest = FactorClauses(withoutTerm);
+            return new BoolOr(new List<BoolNode> { folded, rest });
+        }
+
+        // Turns one flat DNF conjunction into a tree node.
+        private static BoolNode NodeFromClause(List<BoolTerm> clause)
+        {
+            if (clause.Count == 0)
+                return new BoolConstant(true);
+            if (clause.Count == 1)
+                return new BoolTermLeaf(clause[0]);
+            var kids = new List<BoolNode>(clause.Count);
+            foreach (var t in clause)
+                kids.Add(new BoolTermLeaf(t));
+            return new BoolAnd(kids);
         }
 
         public string ToDisplayString()
@@ -864,10 +1111,20 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
         // "If" is treated as "parameter = 1". Reduces a pair of same-parameter terms
         // to a single term if one subsumes the other, or flags a contradiction.
-        private static PairResult SimplifyPair(BoolTerm a, BoolTerm b)
+        private PairResult SimplifyPair(BoolTerm a, BoolTerm b)
         {
             if (!string.Equals(a.Parameter, b.Parameter, StringComparison.Ordinal))
                 return PairResult.KeepBoth;
+
+            // Int parameters are discrete: x >= t is the same as x > t - 1, so
+            // for Int parameters x = t is the same as x > t - 1 & x < t + 1.
+            // x > ta & x > tb -> x > max(ta, tb). x < ta & x < tb -> x < min(ta, tb).
+            int intOpA = -1, intOpB = -1;
+            if (IsInt(a.Parameter))
+            {
+                intOpA = a.Op == BoolTermOp.Greater ? 1 : a.Op == BoolTermOp.Less ? -1 : 0;
+                intOpB = b.Op == BoolTermOp.Greater ? 1 : b.Op == BoolTermOp.Less ? -1 : 0;
+            }
 
             if (a.Op == BoolTermOp.If && b.Op == BoolTermOp.IfNot)
                 return PairResult.Contradiction;
@@ -922,6 +1179,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                             if (b.Threshold == a.Threshold)
                                 return PairResult.DropFirst;
                             break;
+                        case BoolTermOp.Greater:
+                            // a > ta  and  b > tb:  the higher threshold is stronger.
+                            if (b.Threshold <= a.Threshold)
+                                return PairResult.DropSecond;
+                            // Int: both are upper bounds on the same discrete line.
+                            if (intOpA == 1 && intOpB == 1)
+                            {
+                                if (a.Threshold >= b.Threshold) return PairResult.DropSecond;
+                                return PairResult.DropFirst;
+                            }
+                            break;
+                        case BoolTermOp.Less:
+                            if (a.Threshold >= b.Threshold)
+                                return PairResult.Contradiction;
+                            break;
                         default:
                             break;
                     }
@@ -934,6 +1206,21 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                         case BoolTermOp.NotEquals:
                             if (b.Threshold == a.Threshold)
                                 return PairResult.DropFirst;
+                            break;
+                        case BoolTermOp.Greater:
+                            if (b.Threshold >= a.Threshold)
+                                return PairResult.Contradiction;
+                            break;
+                        case BoolTermOp.Less:
+                            // a < ta  and  b < tb:  the lower threshold is stronger.
+                            if (b.Threshold >= a.Threshold)
+                                return PairResult.DropSecond;
+                            // Int: both are lower bounds on the same discrete line.
+                            if (intOpA == -1 && intOpB == -1)
+                            {
+                                if (a.Threshold <= b.Threshold) return PairResult.DropSecond;
+                                return PairResult.DropFirst;
+                            }
                             break;
                         default:
                             break;

@@ -124,6 +124,11 @@ namespace d4rkpl4y3r.AV3ToggleUtil
         {
             var transitions = group.Value;
             var canonical = GetCanonicalExpression(transitions, out _);
+            // Show the cheapest known equivalent from the very first frame (Minify is
+            // idempotent, so this is frame-stable) and keep Apply/Revert in sync by
+            // diffing against the same minified form. Also guarantees a freshly
+            // selected group is displayed minified.
+            canonical.Minify();
             var settingsMixed = AnyMixedValue(transitions);
             var hasExitTransition = AnyMatches(transitions, t => t.isExit);
             var parameterInfo = GetKnownParameterInfo(transitions);
@@ -275,6 +280,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     {
                         var dnfText = parsed.ToDnfString();
                         state.Text = state.UseTextMode ? SweepAliases(dnfText, aliasRows, AliasSweepMode.Compress) : dnfText;
+                        GUI.FocusControl(null);
+                        state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
+                    }
+                }
+
+                var canMinify = canDnf;
+                var minifyTooltip = !parseOk ? parseError
+                    : canMinify ? "Rewrite the expression with (heuristically) fewer operators - may stay nested, unlike DNF"
+                    : "Nothing to rewrite - the expression is empty";
+                using (new EditorGUI.DisabledScope(!outerEnabled || !canMinify))
+                {
+                    if (GUILayout.Button(new GUIContent("Minify", minifyTooltip)))
+                    {
+                        parsed.Minify();
+                        var minText = parsed.ToDisplayString();
+                        state.Text = state.UseTextMode ? SweepAliases(minText, aliasRows, AliasSweepMode.Compress) : minText;
                         GUI.FocusControl(null);
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
                     }
