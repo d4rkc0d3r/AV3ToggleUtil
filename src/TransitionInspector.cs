@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -21,6 +22,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             public string Text;
             public bool UseTextMode;
             public List<List<string>> VisualClauses;
+            public List<AliasRow> AliasRows;
+            public HashSet<string> RemovedAliasParams;
+            public bool AliasInitDone;
+        }
+
+        private class AliasRow
+        {
+            public string Alias;
+            public string Param;
+        }
+
+        private enum AliasSweepMode
+        {
+            Expand,
+            Compress,
+            Swap
         }
 
         [MenuItem("Tools/d4rkpl4y3r/AV3 Toggle Util/Transition Inspector")]
@@ -114,6 +131,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 state = new ConditionFieldState
                 {
                     Text = formattedText,
+                    UseTextMode = true,
                     VisualClauses = BuildVisualClauses(canonical)
                 };
                 conditionFieldStates[stateKey] = state;
@@ -122,10 +140,25 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var preButtonText = state.Text; // snapshot before any button can mutate it this frame
             var knownNames = parameterInfo?.Names;
             var knownTypes = parameterInfo?.Types;
-            var parseOk = BoolExpression.TryParse(state.Text, knownNames, knownTypes, out var parsed, out var parseError);
+            var useText = state.UseTextMode;
+            // Text mode accepts short aliases ("a & !b"); expand them to the real parameter
+            // names before parsing so everything downstream works on conventional text.
+            var aliasRows = useText ? GetValidAliasRows(state.AliasRows, knownNames) : null;
+            var parseText = aliasRows != null ? SweepAliases(state.Text, aliasRows, AliasSweepMode.Expand) : state.Text;
+            var parseOk = BoolExpression.TryParse(parseText, knownNames, knownTypes, out var parsed, out var parseError);
+            if (useText && parseOk)
+            {
+                SeedAliasRows(state, parsed, knownNames);
+                // A group starts in text mode with the fully spelled-out expression -
+                // compress it to aliases once, right after the rows have been seeded.
+                if (!state.AliasInitDone)
+                {
+                    state.AliasInitDone = true;
+                    state.Text = SweepAliases(state.Text, GetValidAliasRows(state.AliasRows, knownNames), AliasSweepMode.Compress);
+                }
+            }
             var editable = !settingsMixed && !hasExitTransition;
             var differs = parseOk && canonical.Differs(parsed);
-            var useText = state.UseTextMode;
 
             string tooltip = null;
             if (!parseOk)
@@ -147,10 +180,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             var newText = state.Text;
             if (useText)
             {
-                var fieldRect = EditorGUILayout.GetControlRect(true, 80f);
-                newText = EditorGUI.TextArea(fieldRect, state.Text);
-                if (tooltip != null)
-                    GUI.Label(fieldRect, new GUIContent("", tooltip));
+                DrawAliasTable(state, knownNames, out newText, tooltip);
             }
             else
             {
@@ -166,7 +196,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             GUI.enabled = wasEnabled;
 
             if (editable)
-                DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownNames, knownTypes);
+                DrawConditionButtons(group, state, parsed, parseOk, parseError, differs, formattedText, canonical, knownNames, knownTypes, aliasRows);
 
             if (useText)
             {
@@ -182,7 +212,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
             }
         }
 
-        private void DrawConditionButtons(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, ConditionFieldState state, BoolExpression parsed, bool parseOk, string parseError, bool differs, string formattedText, BoolExpression canonical, IEnumerable<string> knownParameterNames, Dictionary<string, AnimatorControllerParameterType> parameterTypes)
+        private void DrawConditionButtons(KeyValuePair<TransitionGroupKey, List<AnimatorStateTransition>> group, ConditionFieldState state, BoolExpression parsed, bool parseOk, string parseError, bool differs, string formattedText, BoolExpression canonical, IEnumerable<string> knownParameterNames, Dictionary<string, AnimatorControllerParameterType> parameterTypes, List<AliasRow> aliasRows)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -206,7 +236,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     if (GUILayout.Button(new GUIContent("Revert",
                         canRevert ? null : "Nothing to revert - the expression matches the current states")))
                     {
-                        state.Text = formattedText;
+                        state.Text = state.UseTextMode ? SweepAliases(formattedText, aliasRows, AliasSweepMode.Compress) : formattedText;
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, canonical, knownParameterNames, parameterTypes);
                         GUI.FocusControl(null);
                     }
@@ -214,8 +244,9 @@ namespace d4rkpl4y3r.AV3ToggleUtil
 
                 string negatePreviewError = null;
                 var negatable = parseOk && parsed != null && !parsed.IsEmpty;
+                var negateSource = state.UseTextMode ? SweepAliases(state.Text, aliasRows, AliasSweepMode.Expand) : state.Text;
                 var canNegate = negatable
-                    && BoolExpression.TryParse("!(" + state.Text.Replace("\n", " ") + ")", knownParameterNames, parameterTypes, out _, out negatePreviewError);
+                    && BoolExpression.TryParse("!(" + negateSource.Replace("\n", " ") + ")", knownParameterNames, parameterTypes, out _, out negatePreviewError);
                 var negateTooltip = !parseOk ? parseError
                     : parsed == null || parsed.IsEmpty
                         ? "Nothing to negate - give the expression at least one condition first"
@@ -225,10 +256,10 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     if (GUILayout.Button(new GUIContent("Negate", negateTooltip)))
                     {
-                        var negatedText = "!(" + state.Text.Replace("\n", " ") + ")";
+                        var negatedText = "!(" + negateSource.Replace("\n", " ") + ")";
                         if (BoolExpression.TryParse(negatedText, knownParameterNames, parameterTypes, out var negated, out _))
                         {
-                            state.Text = FormatConditionText(negated);
+                            state.Text = state.UseTextMode ? SweepAliases(FormatConditionText(negated), aliasRows, AliasSweepMode.Compress) : FormatConditionText(negated);
                             state.VisualClauses = SyncVisualClauses(state.VisualClauses, negated, knownParameterNames, parameterTypes);
                         }
                         GUI.FocusControl(null);
@@ -243,7 +274,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                 {
                     if (GUILayout.Button(new GUIContent("Normalize", normalizeTooltip)))
                     {
-                        state.Text = FormatConditionText(parsed);
+                        state.Text = state.UseTextMode ? SweepAliases(FormatConditionText(parsed), aliasRows, AliasSweepMode.Compress) : FormatConditionText(parsed);
                         GUI.FocusControl(null);
                         state.VisualClauses = SyncVisualClauses(state.VisualClauses, parsed, knownParameterNames, parameterTypes);
                     }
@@ -259,6 +290,340 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                     GUI.FocusControl(null);
                 }
             }
+        }
+
+        // ---- Text-mode aliases -----------------------------------------------------
+        //
+        // The text field accepts both real parameter names and short aliases ("a & !b").
+        // Aliases are stored per transition group (in ConditionFieldState), seeded from the
+        // parameters actually used in the expression, and applied to the raw text just
+        // before it is parsed, so all parsing / diffing logic works on the expanded form.
+
+        private void DrawAliasTable(ConditionFieldState state, string[] knownNames, out string newText, string tooltip)
+        {
+            DrawAliasRowsAndButtons(state, knownNames);
+
+            var fieldRect = EditorGUILayout.GetControlRect(true, 80f);
+            newText = EditorGUI.TextArea(fieldRect, state.Text);
+            if (tooltip != null)
+                GUI.Label(fieldRect, new GUIContent("", tooltip));
+        }
+
+        private void DrawAliasRowsAndButtons(ConditionFieldState state, string[] knownNames)
+        {
+            if (knownNames == null || knownNames.Length == 0)
+                return;
+
+            state.AliasRows ??= new List<AliasRow>();
+            state.RemovedAliasParams ??= new HashSet<string>();
+            var rows = state.AliasRows;
+
+            var removedIndices = new List<int>();
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i] ?? new AliasRow { Alias = string.Empty };
+                rows[i] = row;
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    var aliasValid = IsValidAlias(row.Alias, knownNames, rows, i);
+                    var wasColor = GUI.contentColor;
+                    if (!aliasValid)
+                        GUI.contentColor = new Color(1f, 0.36f, 0.36f);
+                    var newAlias = EditorGUILayout.TextField(
+                        new GUIContent(string.Empty,
+                            aliasValid
+                                ? null
+                                : "Invalid alias - use letters/digits/underscore, start with a letter, and don't clash with a parameter name or another alias"),
+                        row.Alias,
+                        GUILayout.Width(70f));
+                    GUI.contentColor = wasColor;
+                    row.Alias = newAlias;
+
+                    var paramIndex = row.Param == null ? -1 : Array.IndexOf(knownNames, row.Param);
+                    var newParamIndex = EditorGUILayout.Popup(paramIndex < 0 ? 0 : paramIndex, knownNames, GUILayout.Width(220f));
+                    var newParam = knownNames[newParamIndex];
+                    if (newParam != row.Param)
+                    {
+                        // Parameter names are unique across rows - hand this row's old
+                        // parameter to whichever row had the newly chosen one.
+                        for (var j = 0; j < rows.Count; j++)
+                        {
+                            if (j != i && rows[j] != null && string.Equals(rows[j].Param, newParam, StringComparison.Ordinal))
+                            {
+                                rows[j].Param = row.Param;
+                                break;
+                            }
+                        }
+                        // The freed parameter is no longer explicitly aliased - let it re-seed.
+                        state.RemovedAliasParams.Remove(row.Param);
+                        row.Param = newParam;
+                        state.RemovedAliasParams.Remove(newParam);
+                    }
+
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button(new GUIContent("\u2715", "Remove this alias"), GUILayout.Width(26f)))
+                        removedIndices.Add(i);
+                }
+            }
+            for (var k = removedIndices.Count - 1; k >= 0; k--)
+            {
+                // Remember the removal so the seed loop doesn't immediately re-add the row.
+                var index = removedIndices[k];
+                if (rows[index] != null && !string.IsNullOrEmpty(rows[index].Param))
+                    state.RemovedAliasParams.Add(rows[index].Param);
+                rows.RemoveAt(index);
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button(new GUIContent("+ Alias", "Add a new alias row"), GUILayout.Width(70f)))
+                {
+                    var usedParams = new HashSet<string>(StringComparer.Ordinal);
+                    for (var r = 0; r < rows.Count; r++)
+                        if (rows[r] != null && rows[r].Param != null)
+                            usedParams.Add(rows[r].Param);
+
+                    string param = null;
+                    for (var r = 0; r < knownNames.Length; r++)
+                    {
+                        if (knownNames[r] != null && !usedParams.Contains(knownNames[r]))
+                        {
+                            param = knownNames[r];
+                            break;
+                        }
+                    }
+                    if (param == null)
+                        param = knownNames[0];
+
+                    rows.Add(new AliasRow { Alias = NextFreeAlias(rows), Param = param });
+                    state.RemovedAliasParams.Remove(param);
+                }
+
+                var validRows = GetValidAliasRows(rows, knownNames);
+                using (new EditorGUI.DisabledScope(validRows.Count == 0))
+                {
+                    if (GUILayout.Button(new GUIContent("\u21C4 Swap", "Rewrite the text field, turning aliases into real parameter names and real parameter names into aliases"), GUILayout.Width(80f)))
+                    {
+                        state.Text = SweepAliases(state.Text, validRows, AliasSweepMode.Swap);
+                        GUI.FocusControl(null);
+                    }
+                }
+                GUILayout.FlexibleSpace();
+            }
+        }
+
+        private static bool IsValidAlias(string alias, string[] knownNames, List<AliasRow> rows, int selfIndex)
+        {
+            if (string.IsNullOrEmpty(alias) || !char.IsLetter(alias[0]))
+                return false;
+            for (var i = 1; i < alias.Length; i++)
+            {
+                var c = alias[i];
+                if (!char.IsLetterOrDigit(c) && c != '_')
+                    return false;
+            }
+            for (var i = 0; i < knownNames.Length; i++)
+            {
+                if (knownNames[i] != null && string.Equals(alias, knownNames[i], StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            for (var r = 0; r < rows.Count; r++)
+            {
+                if (r == selfIndex || rows[r] == null)
+                    continue;
+                if (string.Equals(alias, rows[r].Alias, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            return true;
+        }
+
+        private static List<AliasRow> GetValidAliasRows(List<AliasRow> rows, string[] knownNames)
+        {
+            var valid = new List<AliasRow>();
+            if (rows == null || knownNames == null)
+                return valid;
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                if (row == null || string.IsNullOrEmpty(row.Param))
+                    continue;
+                if (IsValidAlias(row.Alias, knownNames, rows, i))
+                    valid.Add(row);
+            }
+            return valid;
+        }
+
+        /// <summary>
+        /// Makes sure every parameter used in the expression has an alias row (seeded with the
+        /// next free letter), unless the user explicitly removed that row via the X button.
+        /// </summary>
+        private static void SeedAliasRows(ConditionFieldState state, BoolExpression parsed, string[] knownNames)
+        {
+            if (knownNames == null || knownNames.Length == 0 || parsed == null)
+                return;
+
+            state.AliasRows ??= new List<AliasRow>();
+            state.RemovedAliasParams ??= new HashSet<string>();
+            var rows = state.AliasRows;
+
+            var used = new HashSet<string>(StringComparer.Ordinal);
+            for (var i = 0; i < parsed.Clauses.Count; i++)
+                for (var j = 0; j < parsed.Clauses[i].Count; j++)
+                    used.Add(parsed.Clauses[i][j].Parameter);
+
+            // Forget removals for parameters that are no longer referenced at all.
+            var stale = new List<string>(state.RemovedAliasParams.Count);
+            foreach (var param in state.RemovedAliasParams)
+            {
+                if (!used.Contains(param))
+                    stale.Add(param);
+            }
+            for (var i = 0; i < stale.Count; i++)
+                state.RemovedAliasParams.Remove(stale[i]);
+
+            for (var i = 0; i < knownNames.Length; i++)
+            {
+                var param = knownNames[i];
+                if (string.IsNullOrEmpty(param) || !used.Contains(param) || state.RemovedAliasParams.Contains(param))
+                    continue;
+
+                var hasRow = false;
+                for (var r = 0; r < rows.Count; r++)
+                {
+                    if (rows[r] != null && string.Equals(rows[r].Param, param, StringComparison.Ordinal))
+                    {
+                        hasRow = true;
+                        break;
+                    }
+                }
+                if (!hasRow)
+                    rows.Add(new AliasRow { Alias = NextFreeAlias(rows), Param = param });
+            }
+        }
+
+        private static string NextFreeAlias(List<AliasRow> rows)
+        {
+            for (var i = 0; i < 26; i++)
+            {
+                var candidate = ((char)('a' + i)).ToString();
+                if (!AliasTaken(rows, candidate))
+                    return candidate;
+            }
+            for (var n = 2; n < 100; n++)
+            {
+                for (var i = 0; i < 26; i++)
+                {
+                    var candidate = ((char)('a' + i)).ToString() + n;
+                    if (!AliasTaken(rows, candidate))
+                        return candidate;
+                }
+            }
+            return "alias" + rows.Count;
+        }
+
+        private static bool AliasTaken(List<AliasRow> rows, string candidate)
+        {
+            for (var i = 0; i < rows.Count; i++)
+            {
+                if (rows[i] != null && string.Equals(rows[i].Alias, candidate, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Sweeps the text token by token and substitutes alias tokens / real parameter names
+        /// per mode. A token is a run of identifier characters (plus internal whitespace, like the
+        /// parser's candidate scan), so alias "a" never rewrites the parameter "a hat". Real
+        /// parameter names are never aliased by validation, so matching is exact and unambiguous.
+        /// </summary>
+        private static string SweepAliases(string text, List<AliasRow> rows, AliasSweepMode mode)
+        {
+            if (text == null || rows == null || rows.Count == 0)
+                return text ?? string.Empty;
+
+            var sb = new StringBuilder(text.Length);
+            var i = 0;
+            while (i < text.Length)
+            {
+                var c = text[i];
+                if (char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.' || c == '$')
+                {
+                    var end = ScanCandidateRunEnd(text, i);
+                    var candidate = text.Substring(i, end - i);
+                    string replacement = null;
+                    for (var r = 0; r < rows.Count && replacement == null; r++)
+                    {
+                        var row = rows[r];
+                        if (row == null || string.IsNullOrEmpty(row.Alias) || string.IsNullOrEmpty(row.Param))
+                            continue;
+                        if (mode == AliasSweepMode.Expand)
+                        {
+                            if (string.Equals(candidate, row.Alias, StringComparison.Ordinal))
+                                replacement = row.Param;
+                        }
+                        else if (mode == AliasSweepMode.Compress)
+                        {
+                            if (string.Equals(candidate, row.Param, StringComparison.Ordinal))
+                                replacement = row.Alias;
+                        }
+                        else
+                        {
+                            if (string.Equals(candidate, row.Alias, StringComparison.Ordinal))
+                                replacement = row.Param;
+                            else if (string.Equals(candidate, row.Param, StringComparison.Ordinal))
+                                replacement = row.Alias;
+                        }
+                    }
+                    sb.Append(replacement ?? candidate);
+                    i = end;
+                }
+                else
+                {
+                    sb.Append(c);
+                    i++;
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Returns the end index of the identifier-ish run starting at <paramref name="start"/>
+        /// (which must begin with an identifier character), consuming internal whitespace runs
+        /// exactly like BoolExpression's candidate scan.
+        /// </summary>
+        private static int ScanCandidateRunEnd(string text, int start)
+        {
+            var pos = start;
+            var lastNonWs = start;
+            while (pos < text.Length)
+            {
+                var c = text[pos];
+                if (char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.' || c == '$')
+                {
+                    lastNonWs = pos + 1;
+                    pos++;
+                }
+                else if (char.IsWhiteSpace(c))
+                {
+                    var t = pos;
+                    while (t < text.Length && char.IsWhiteSpace(text[t]))
+                        t++;
+                    if (t < text.Length)
+                    {
+                        var nc = text[t];
+                        if (char.IsLetterOrDigit(nc) || nc == '_' || nc == '-' || nc == '.' || nc == '$')
+                        {
+                            pos = t;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                else
+                    break;
+            }
+            return lastNonWs;
         }
 
         private static readonly string[] BoolOpLabels = { "true", "false" };
