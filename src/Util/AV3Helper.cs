@@ -36,8 +36,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
                     return "Bool";
                 case VRCExpressionParameters.ValueType.Int:
                 case VRCExpressionParameters.ValueType.Float:
-                    bool isSigned = GetParameterRepresentation(valueType, parameter.flippedRepresentation)
-                        == VRCExpressionParameters.Parameter.ValueRepresentation.Signed;
+                    bool isSigned = IsParameterSigned(valueType, parameter.flippedRepresentation);
                     var bitWidth = Mathf.Clamp(parameter.bitWidth, (int)VRCExpressionParameters.Parameter.MinBitWidth, (int)VRCExpressionParameters.Parameter.MaxBitWidth);
                     return $"{valueType} ({(isSigned ? "s" : "u")}{bitWidth})";
                 default:
@@ -46,21 +45,18 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
         }
 
         /// <summary>
-        /// Resolves a parameter's value representation to signed/unsigned.
+        /// Whether a parameter's value representation is signed.
         /// Float defaults to Signed, Int defaults to Unsigned; flippedRepresentation inverts the default.
         /// </summary>
-        public static VRCExpressionParameters.Parameter.ValueRepresentation GetParameterRepresentation(
+        public static bool IsParameterSigned(
             VRCExpressionParameters.ValueType valueType, bool flipped)
         {
-            bool isSigned = valueType switch
+            return valueType switch
             {
                 VRCExpressionParameters.ValueType.Float => !flipped,
                 VRCExpressionParameters.ValueType.Int => flipped,
                 _ => false // Bool is always unsigned
             };
-            return isSigned
-                ? VRCExpressionParameters.Parameter.ValueRepresentation.Signed
-                : VRCExpressionParameters.Parameter.ValueRepresentation.Unsigned;
         }
 
         public static void ForEachClipInMotion(Motion motion, Action<AnimationClip> onClip, HashSet<BlendTree> visitedTrees = null)
@@ -75,7 +71,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
 
             if (motion is BlendTree tree)
             {
-                if (visitedTrees == null) visitedTrees = new HashSet<BlendTree>();
+                visitedTrees ??= new();
                 if (!visitedTrees.Add(tree)) return;
 
                 var children = tree.children;
@@ -232,20 +228,22 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             if (av == null)
                 return results;
 
-            void Add(string displayName, string assetPath)
+            void Add(UnityEngine.Object asset)
             {
+                if (asset == null)
+                    return;
+                var assetPath = AssetDatabase.GetAssetPath(asset);
                 if (string.IsNullOrEmpty(assetPath) || results.Any(r => r.assetPath == assetPath))
                     return;
                 var (path, repoRoot) = ResolveAssetRepoInfo(assetPath);
-                results.Add((displayName, path, repoRoot));
+                results.Add((asset.name, path, repoRoot));
             }
 
             if (controllers != null)
                 foreach (var controller in controllers)
-                    if (controller != null)
-                        Add(controller.name, AssetDatabase.GetAssetPath(controller));
-            Add(av.expressionParameters?.name, AssetDatabase.GetAssetPath(av.expressionParameters));
-            Add(av.expressionsMenu?.name, AssetDatabase.GetAssetPath(av.expressionsMenu));
+                    Add(controller);
+            Add(av.expressionParameters);
+            Add(av.expressionsMenu);
             return results;
         }
 
@@ -444,9 +442,15 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             return true;
         }
 
-        public static bool ClickableLastRect()
+        /// <summary>
+        /// Whether the last drawn rect was left-clicked in this event (the click is consumed when it was).
+        /// When <paramref name="tooltip"/> is given, it is applied to the rect for hover feedback.
+        /// </summary>
+        public static bool ClickableLastRect(string tooltip = null)
         {
             var rect = GUILayoutUtility.GetLastRect();
+            if (!string.IsNullOrEmpty(tooltip))
+                EditorGUI.LabelField(rect, new GUIContent("", tooltip));
             EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
             var clicked = Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition) && Event.current.button == 0;
             if (clicked)
@@ -488,13 +492,13 @@ namespace d4rkpl4y3r.AV3ToggleUtil.Util
             return GetTransformFromPath(root, path);
         }
 
-        public static bool SelectTransformByPathFromLastRect(Transform root, string path)
+        public static bool SelectTransformByPathFromLastRect(Transform root, string path, string tooltip = null)
         {
             var transform = FindTransformByAvatarPath(root, path);
             if (transform == null)
                 return false;
 
-            if (!ClickableLastRect())
+            if (!ClickableLastRect(tooltip))
                 return false;
 
             Selection.activeGameObject = transform.gameObject;

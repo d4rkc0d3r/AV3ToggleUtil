@@ -2208,10 +2208,8 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         continue;
 
                     // only optimize parameters still at the default signed 8-bit representation
-                    var isSigned = GetParameterRepresentation(
-                        VRCExpressionParameters.ValueType.Float, parameterInfo.flippedRepresentation)
-                        == VRCExpressionParameters.Parameter.ValueRepresentation.Signed;
-                    if (!isSigned || parameterInfo.bitWidth != 8)
+                    if (!IsParameterSigned(VRCExpressionParameters.ValueType.Float, parameterInfo.flippedRepresentation)
+                        || parameterInfo.bitWidth != 8)
                         continue;
 
                     candidates.Add(parameter);
@@ -2710,7 +2708,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         else if (componentWriters.Count == 1)
                         {
                             GUILayout.Label($"{componentWriters[0].sourceType}: '{componentWriters[0].path}'");
-                            SelectTransformByPathFromLastRect(av.transform, componentWriters[0].path);
+                            SelectTransformByPathFromLastRect(av.transform, componentWriters[0].path, "Click to select the transform");
                         }
                     }
 
@@ -2720,7 +2718,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                         using var controllerInfoRow = new EditorGUILayout.HorizontalScope();
                         GUILayout.Space(innerIndent);
                         GUILayout.Label($"{info.controllerName}", GUILayout.Width(width));
-                        if (ClickableLastRect())
+                        if (ClickableLastRect("Click to select and ping the controller"))
                             SelectAndPingObject(info.controller);
                         GUILayout.Label($"{info.parameterType}");
                     }
@@ -2751,7 +2749,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             using var writerRow = new EditorGUILayout.HorizontalScope();
                             GUILayout.Space(innerIndent + 15);
                             GUILayout.Label($"{writer.sourceType}: '{writer.path}'");
-                            SelectTransformByPathFromLastRect(av.transform, writer.path);
+                            SelectTransformByPathFromLastRect(av.transform, writer.path, "Click to select the transform");
                         }
                     }
                 }
@@ -2780,7 +2778,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             {
                                 GUILayout.Space(15);
                                 GUILayout.Label(group.Key, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
-                                if (ClickableLastRect())
+                                if (ClickableLastRect("Click to select and ping the menu"))
                                     SelectAndPingObject(groupedMenu);
                             }
 
@@ -2793,7 +2791,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             columnGrid.DrawEntries(controls, control =>
                             {
                                 GUILayout.Label($"{control.controlName}   ({control.controlType})", GUILayout.Width(entryWidth));
-                                if (ClickableLastRect())
+                                if (ClickableLastRect("Click to select and ping the menu"))
                                     SelectAndPingObject(groupedMenu);
                             });
                         }
@@ -2823,7 +2821,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             {
                                 GUILayout.Space(15);
                                 GUILayout.Label(representative.statePath, EditorStyles.boldLabel, GUILayout.ExpandWidth(true));
-                                if (ClickableLastRect())
+                                if (ClickableLastRect("Click to focus the layer"))
                                     FocusAnimatorLayer(representative);
                             }
 
@@ -2840,7 +2838,7 @@ namespace d4rkpl4y3r.AV3ToggleUtil
                             columnGrid.DrawEntries(states, stateUsage =>
                             {
                                 GUILayout.Label(stateUsage.stateName, GUILayout.Width(entryWidth));
-                                if (ClickableLastRect())
+                                if (ClickableLastRect("Click to select and focus the state"))
                                     FocusAnimatorState(stateUsage);
                             });
                         }

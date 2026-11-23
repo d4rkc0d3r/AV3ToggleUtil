@@ -1005,20 +1005,20 @@ public class CreateAV3ToggleMenu : EditorWindow
         EditorGUILayout.LabelField("Avatar", descriptor?.name);
         if (descriptor == null)
             return;
-        if (ClickableLastRect())
+        if (ClickableLastRect("Click to ping"))
             EditorGUIUtility.PingObject(descriptor);
         EditorGUILayout.LabelField("AnimationFolder", GetAnimationsFolderPath());
-        if (ClickableLastRect())
+        if (ClickableLastRect("Click to ping"))
             EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<DefaultAsset>(GetAnimationsFolderPath()));
         EditorGUILayout.LabelField("ParamAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionParameters));
-        if (ClickableLastRect())
+        if (ClickableLastRect("Click to ping"))
             EditorGUIUtility.PingObject(descriptor.expressionParameters);
         EditorGUILayout.LabelField("MenuAssetPath", AssetDatabase.GetAssetPath(descriptor.expressionsMenu));
-        if (ClickableLastRect())
+        if (ClickableLastRect("Click to ping"))
             EditorGUIUtility.PingObject(descriptor.expressionsMenu);
         var fxLayerInfo = GetFxController();
         EditorGUILayout.LabelField("FxLayerAssetPath", AssetDatabase.GetAssetPath(fxLayerInfo));
-        if (ClickableLastRect())
+        if (ClickableLastRect("Click to ping"))
             EditorGUIUtility.PingObject(fxLayerInfo);
     }
 

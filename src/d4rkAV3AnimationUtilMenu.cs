@@ -148,7 +148,7 @@ public class d4rkAV3AnimationUtilMenu : EditorWindow
         var root = AvatarDescriptor?.gameObject?.transform;
         GUILayout.Label(string.IsNullOrEmpty(path) ? "(root)" : path, options);
         var t = root != null && !string.IsNullOrEmpty(path) ? root.Find(path) : root;
-        if (t != null && ClickableLastRect())
+        if (t != null && ClickableLastRect("Click to select the transform"))
         {
             Selection.activeGameObject = t.gameObject;
             EditorGUIUtility.PingObject(t.gameObject);
